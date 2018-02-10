@@ -1,0 +1,5 @@
+-cp src
+-main compiler.Main
+-lib equals
+-lib hxparse
+-neko main.n

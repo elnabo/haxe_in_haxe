@@ -1,0 +1,3691 @@
+package typing;
+
+import haxe.ds.Option;
+import ocaml.PMap;
+
+using equals.Equal;
+using haxe.EnumTools.EnumValueTools;
+using ocaml.Cloner;
+using ocaml.Ref;
+using StringTools;
+
+class GenericException {
+	public var s:String;
+	public var p:core.Globals.Pos;
+	public function new(s:String, p:core.Globals.Pos) {
+		this.s = s;
+		this.p = p;
+	}
+}
+
+typedef Generic_context = {
+	ctx:context.Typecore.Typer,
+	subst:Array<{fst:core.Type.T, snd:core.Type.T}>,
+	name: String,
+	p: core.Globals.Pos,
+	mg: Option<core.Type.ModuleDef>
+}
+
+class Build_canceled {
+	public var bs:core.Type.BuildState;
+	public function new(bs:core.Type.BuildState) {
+		this.bs = bs;
+	}
+}
+
+class Typeload {
+
+	public static var locate_macro_error:Ref<Bool> = new Ref(true);
+	public static var build_count:Ref<Int> = new Ref(0);
+
+	public static function transform_abstract_field(com:context.Common.Context, this_t:core.Ast.TypeHint, a_t:core.Ast.TypeHint, a:core.Type.TAbstract, f:core.Ast.ClassField) : core.Ast.ClassField {
+		trace("TODO: typing.Typeload.transform_abstract_field");
+		return null;
+	}
+
+	public static function get_policy (ctx:context.Typecore.Typer, mpath:core.Path) {
+		var sl1 = core.Ast.full_dot_path(mpath, mpath);
+		function f (acc, mcp) {
+			var sl2 = mcp.l;
+			var policy = mcp.mcps;
+			var recursive = mcp.b;
+			if (core.Ast.match_path(recursive, sl1, sl2)) {
+				return policy.concat(acc);
+			}
+			else {
+				return acc;
+			}
+		}
+		return ocaml.List.fold_left(f, [], ctx.g.module_check_policies);
+	}
+
+	public static function make_module (ctx:context.Typecore.Typer, mpath:core.Path, file:String, loadp:core.Globals.Pos) : core.Type.ModuleDef {
+		return {
+			m_id:core.Type.alloc_mid(),
+			m_path: mpath,
+			m_types: [],
+			m_extra: core.Type.module_extra(core.Path.unique_full_path(file), core.Define.get_signature(ctx.com.defines), context.Common.file_time(file), ((ctx.in_macro) ? MMacro : MCode), get_policy(ctx, mpath))
+		};
+	}
+
+	/*
+	 * Build module structure : should be atomic - no type loading is possible
+	 */
+	public static function module_pass_1 (ctx:context.Typecore.Typer, m:core.Type.ModuleDef, tdecls:Array<core.Ast.TypeDecl>, loadp:core.Globals.Pos) : {fst:Array<{fst:core.Type.ModuleType, snd:core.Ast.TypeDecl}>, snd:Array<core.Ast.TypeDecl>} {
+		var com = ctx.com;
+		var decls:Array<{fst:core.Type.ModuleType, snd:core.Ast.TypeDecl}> = [];
+		function make_path(name:String, priv:Bool) : core.Path {
+			function f (a:{fst:core.Type.ModuleType, snd:core.Type.ModuleType}) {
+				return core.Type.t_path(a.fst).b == name;
+			}
+			if (ocaml.List.exists(f, decls)) {
+				core.Error.error("Type name " + name + " is already defined in this module", loadp);
+			}
+			if (priv) {
+				return new core.Path(m.m_path.a.concat(["_"+m.m_path.b]), name);
+			}
+			else {
+				return new core.Path(m.m_path.a, name);
+			}
+		}
+		var pt:Option<core.Globals.Pos> = None;
+		function make_decl (acc:Array<core.Ast.TypeDecl>, decl:core.Ast.TypeDecl) : Array<core.Ast.TypeDecl>{
+			var p = decl.pos;
+			var acc = switch (decl.decl) {
+				case EImport(_), EUsing(_):
+					switch (pt) {
+						case None: acc;
+						case Some(_):
+							core.Error.error("import and using may not appear after a type declaration", p);
+					};
+				case EClass(d):
+					var name = d.d_name.pack;
+					if (name.length > 0 && name.charAt(0) == "$") {
+						core.Error.error("Type names starting with a dollar are not allowed",p);
+					}
+					pt = Some(p);
+					var priv = ocaml.List.mem(core.Ast.ClassFlag.HPrivate, d.d_flags);
+					var path = make_path(name, priv);
+					var c = core.Type.mk_class(m, path, p, d.d_name.pos);
+					// we shouldn't load any other type until we propertly set cl_build
+					c.cl_build = function() {
+						return core.Error.error(core.Globals.s_type_path(c.cl_path) + " is not ready to be accessed, separate your type declarations in several files", p);
+					}
+					c.cl_module = m;
+					c.cl_private = priv;
+					c.cl_doc = d.d_doc;
+					c.cl_meta = d.d_meta;
+					decls.unshift({fst:TClassDecl(c), snd:decl});
+					acc;
+				case EEnum(d):
+					var name = d.d_name.pack;
+					if (name.length > 0 && name.charAt(0) == "$") {
+						core.Error.error("Type names starting with a dollar are not allowed",p);
+					}
+					pt = Some(p);
+					var priv = ocaml.List.mem(core.Ast.EnumFlag.EPrivate, d.d_flags);
+					var path = make_path(name, priv);
+					var e = {
+						e_path: path,
+						e_module: m,
+						e_pos: p,
+						e_name_pos: d.d_name.pos,
+						e_doc: d.d_doc,
+						e_meta: d.d_meta,
+						e_params: [],
+						e_private: priv,
+						e_extern: ocaml.List.mem(core.Ast.EnumFlag.EExtern, d.d_flags),
+						e_constrs: new Map<String, core.Type.TEnumField>(),
+						e_names: [],
+						e_type: core.Type.enum_module_type(m, path, p)
+					};
+					decls.unshift({fst:TEnumDecl(e), snd:decl});
+					acc;
+				case ETypedef(d):
+					var name = d.d_name.pack;
+					if (name.length > 0 && name.charAt(0) == "$") {
+						core.Error.error("Type names starting with a dollar are not allowed",p);
+					}
+					pt = Some(p);
+					var priv = ocaml.List.mem(core.Ast.EnumFlag.EPrivate, d.d_flags);
+					var path = make_path(name, priv);
+					var t = {
+						t_path: path,
+						t_module: m,
+						t_pos: p,
+						t_name_pos: d.d_name.pos,
+						t_doc: d.d_doc,
+						t_private: priv,
+						t_params: [],
+						t_type: core.Type.mk_mono(),
+						t_meta: d.d_meta
+					};
+					// failsafe in case the typedef is not initialized (see #3933)
+					context.Typecore.delay(ctx, PBuildModule, function () {
+						switch (t.t_type) {
+							case TMono(r):
+								switch (r.get()) {
+									case None:
+										t.t_type = TMono(new Ref(Some(com.basic.tvoid)));
+									default:
+								}
+							default:
+						}
+					});
+					decls.unshift({fst:TTypeDecl(t), snd:decl});
+					acc;
+				case EAbstract(d):
+					var name = d.d_name.pack;
+					if (name.length > 0 && name.charAt(0) == "$") {
+						core.Error.error("Type names starting with a dollar are not allowed",p);
+					}
+					pt = Some(p);
+					var priv = ocaml.List.mem(core.Ast.AbstractFlag.APrivAbstract, d.d_flags);
+					var path = make_path(name, priv);
+					var a = {
+						a_path: path,
+						a_private: priv,
+						a_module: m,
+						a_pos: p,
+						a_name_pos: d.d_name.pos,
+						a_doc: d.d_doc,
+						a_params: [],
+						a_meta: d.d_meta,
+						a_from: [],
+						a_to: [],
+						a_from_field: [],
+						a_to_field: [],
+						a_ops: [],
+						a_unops: [],
+						a_impl: None,
+						a_array: [],
+						a_this: core.Type.mk_mono(),
+						a_resolve: None
+					};
+					decls.unshift({fst:TAbstractDecl(a), snd:decl});
+					var fields = d.d_data;
+					if (fields.length == 0 && core.Meta.has(CoreType, a.a_meta)) {
+						a.a_this = core.Type.t_dynamic;
+						acc;
+					}
+					else {
+						function a_t () : core.Ast.TypeHint {
+							var params = ocaml.List.map(function (t:core.Ast.TypeParam) : core.Ast.TypeParamOrConst {
+								return TPType({ct:CTPath({tname:t.tp_name.pack, tparams:[], tsub:None, tpackage:[]}), pos:core.Globals.null_pos});
+							}, d.d_params);
+							return {ct: CTPath({tpackage:[], tname:d.d_name.pack, tparams:params, tsub:None}), pos:core.Globals.null_pos};
+						}
+						function loop (l:Array<core.Ast.AbstractFlag>) : core.Ast.TypeHint {
+							if (l.length == 0) {
+								return a_t();
+							}
+							switch (l[0]) {
+								case AIsType(t) : return t;
+								default: return loop(l.slice(1));
+							}
+						}
+						var this_t = loop(d.d_flags);
+						var fields = ocaml.List.map(function (e) { return transform_abstract_field(com, this_t, a_t(), a, e); }, fields);
+						var meta:core.Ast.Metadata = [];
+						if (core.Type.has_meta(Dce, a.a_meta)) {
+							meta.unshift({name:Dce, params:[], pos:core.Globals.null_pos});
+						}
+						var acc = make_decl(acc, {decl:EClass({d_name: {pack:d.d_name.pack + "_Impl_", pos:d.d_name.pos}, d_flags: [HPrivate], d_data: fields, d_doc: None, d_params: [], d_meta: meta }), pos:p});
+						if (decls.length > 0) {
+							switch (decls[0].fst) {
+								case TClassDecl(c):
+									for (m in a.a_meta) {
+										switch (m.name) {
+											case Build, CoreApi, Allow, Access, Enum, Dce, Native, JsRequire, PythonImport, Expose, Deprecated, PhpGlobal:
+												c.cl_meta.unshift(m);
+											default:
+										}
+									}
+									a.a_impl = Some(c);
+									c.cl_kind = KAbstractImpl(a);
+									c.cl_meta.unshift({name:Final, params:[], pos:core.Globals.null_pos});
+								default:
+									throw false;
+							}
+						}
+						else { throw false; }
+						acc;
+					}
+			}
+			acc.unshift(decl);
+			return acc;
+		}
+		var tdecls = ocaml.List.fold_left(make_decl, [], tdecls);
+		var decls = ocaml.List.rev(decls);
+		return {fst:decls, snd:ocaml.List.rev(tdecls)};
+	}
+
+	public static var current_stdin:Option<String> = None; // TODO: we're supposed to clear this at some point
+
+	public static function parse_file_from_lexbuf (com:context.Common.Context, file:String, p:core.Globals.Pos, buf:byte.ByteData) : {pack:Array<String>, decls:Array<core.Ast.TypeDecl>} {
+		var t = core.Timer.timer(["parsing"]);
+		syntax.Lexer.init(file, true);
+		context.Common.stats.s_files_parsed.set(context.Common.stats.s_files_parsed.get()+1);
+		var data = try {
+			new haxeparser.HaxeParser(buf, file, com.defines).parse();
+		}
+		catch (e:Dynamic) {
+			t();
+			throw (e);
+		}
+		switch(context.Common.display_default.get()) {
+			case DMModuleSymbols(filter):
+				if (filter != None || context.Display.is_display_file(file)) {
+					var ds = context.display.DocumentSymbols.collect_module_symbols(data);
+					com.shared.shared_display_information.document_symbols.unshift({s:file, l:ds});
+				}
+			default:
+		}
+		t();
+		context.Common.log(com, "Parsed "+file);
+		return data;
+	}
+
+	public static function parse_file_from_string (com:context.Common.Context, file:String, p:core.Globals.Pos, s:String) : {pack:Array<String>, decls:Array<core.Ast.TypeDecl>} {
+		var data = byte.ByteData.ofString(s);
+		return parse_file_from_lexbuf(com, file, p, data);
+	}
+
+	public static function parse_file (com:context.Common.Context, file:String, p:core.Globals.Pos) : {pack:Array<String>, decls:Array<core.Ast.TypeDecl>} {
+		var use_stdin = context.Common.defined(com, DisplayStdin) && context.Display.is_display_file(file);
+		if (use_stdin) {
+			var s = switch (current_stdin) {
+				case Some(v): v;
+				case None:
+					var ss = Sys.stdin().readAll().toString();
+					Sys.stdin().close();
+					current_stdin = Some(ss);
+					ss;
+			};
+			return parse_file_from_string(com, file, p, s);
+		}
+		else {
+			var ch = try {
+				sys.io.File.read(file, true);
+			}
+			catch (e:Any) {
+				core.Error.error("Could not open " + file, p);
+				null;
+			};
+			try {
+				var data = byte.ByteData.ofBytes(ch.readAll());
+				var res = parse_file_from_lexbuf(com, file, p, data);
+				ch.close();
+				return res;
+			}
+			catch (e:Dynamic) {
+				ch.close();
+				throw e;
+			}
+		}
+		return null;
+	}
+	public static var parse_hook = new Ref(parse_file);
+	public static var type_module_hook = new Ref(function(ctx: context.Typecore.Typer, m:core.Path, p:core.Globals.Pos) : Option<core.Type.ModuleDef> {
+		return None;
+	});
+	public static var type_function_params_rec = new Ref(type_function_params);
+	public static var return_partial_type = new Ref(false);
+
+	public static function type_function_arg (ctx:context.Typecore.Typer, t:core.Type.T, e:Option<core.Ast.Expr>, opt:Bool, p:core.Globals.Pos) : {fst:core.Type.T, snd:Option<core.Ast.Expr>} {
+		if (opt) {
+			var e:Option<core.Ast.Expr> = switch (e) {
+				case None: Some({expr:EConst(CIdent("null")), pos:p});
+				case _: e;
+			}
+			return {fst:ctx.t.tnull(t), snd:e};
+		}
+		else
+			var t = switch (e) {
+				case Some({expr:EConst(CIdent("null")), pos:p}):
+					ctx.t.tnull(t);
+				case _: t;
+			}
+			return {fst:t, snd:e};
+	}
+
+	public static function type_var_field (ctx:context.Typecore.Typer, t:core.Type.T, e:core.Ast.Expr, stat:Bool, do_display:Bool, p:core.Globals.Pos) {
+		ctx.curfun = (stat) ? FunStatic : FunMember;
+		var e = (do_display) ? context.display.ExprPreprocessing.process_expr(ctx.com, e) : e;
+		var e1 = context.Typecore.type_expr(ctx, e, WithType(t));
+		var e2 = context.Typecore.cast_or_unify_ref.get()(ctx, t, e1, p);
+		return switch (t) {
+			case TType({t_path:path}, l), TAbstract({a_path:path}, l) if (stat && l.length == 0 && path.a.length == 0 && path.b == "Float"):
+				var _e = e2.clone();
+				_e.etype = t;
+				_e;
+			case _: e2;
+		}
+	}
+
+	public static function apply_macro (ctx:context.Typecore.Typer, mode:context.Typecore.MacroMode, path:String, el:Array<core.Ast.Expr>, p:core.Globals.Pos) : Option<core.Ast.Expr> {
+		var pack = path.split(".");
+		if (pack.length > 2) {
+			core.Error.error("Invalid macro path", p);
+		}
+		var meth = pack.pop();
+		var name = pack.pop();
+		return ctx.g.do_macro(ctx, mode, new core.Path(pack, name), meth, el, p);
+	}
+	/* since load_type_def and load_instance are used in PASS2, they should not access the structure of a type */
+	/*
+	 *load a type or a subtype definition
+	 */
+	public static function load_type_def(ctx:context.Typecore.Typer, p:core.Globals.Pos, t:core.Ast.TypePath) : core.Type.ModuleType {
+		var no_pack = t.tpackage.length == 0;
+		var tname = switch (t.tsub) {
+			case None: t.tname;
+			case Some(n): n;
+		}
+		if (tname == "") {
+			throw context.Display.DisplayException.DisplayToplevel(context.DisplayToplevel.collect(ctx, true));
+		}
+		try {
+			if (t.tsub != None) {
+				throw ocaml.Not_found.instance;
+			}
+			function path_matches (t2:core.Type.ModuleType) {
+				var tp = core.Type.t_path(t2);
+				return  (tp == new core.Path(t.tpackage, tname)) || (no_pack && tp.b == tname);
+			}
+			try {
+				for (m in ctx.m.curmod.m_types) {
+					if (path_matches(m)) {
+						return m;
+					}
+				}
+
+				var mt:core.Type.ModuleType = null;
+				var pi:core.Globals.Pos = null;
+				for (m in ctx.m.module_types) {
+					if (path_matches(m.mt)) {
+						mt = m.mt;
+						pi = m.pos;
+					}
+				}
+				if (pi == null) { throw ocaml.Not_found.instance; }
+				context.display.ImportHandling.mark_import_position(ctx.com, pi);
+				return mt;
+			}
+		}
+		catch (e:ocaml.Not_found) {
+			function next() {
+				var _t:core.Ast.TypePath;
+				var _m:core.Type.ModuleDef;
+				try {
+					_t = t;
+					_m = ctx.g.do_load_module(ctx, new core.Path(t.tpackage, t.tname), p);
+				}
+				catch (err:core.Error) {
+					switch (err.msg) {
+						case Module_not_found(_) if (p == err.pos) :
+							if (t.tpackage.length > 0 && t.tpackage[0] == "std") {
+								var l = t.tpackage.slice(1);
+								_t = {
+									tpackage:l,
+									tname : t.tname,
+									tparams : t.tparams,
+									tsub : t.tsub
+								};
+								_m = ctx.g.do_load_module(ctx, new core.Path(t.tpackage, t.tname), p);
+							}
+							else {
+								throw err;
+							}
+						default: throw err;
+					}
+				}
+				var tpath = new core.Path(_t.tpackage, tname);
+				try {
+					return ocaml.List.find(function (t) {
+						return !(core.Type.t_infos(t).mt_private && core.Type.t_path(t).equals(tpath));
+					}, _m.m_types);
+				}
+				catch (_:ocaml.Not_found) {
+					throw new core.Error(Type_not_found(_m.m_path,tname),p);
+				}
+				// for (ttt in _m.m_types) {
+				// 	if (!core.Type.t_infos(ttt).mt_private && core.Type.t_path(ttt) == tpath) {
+				// 		return ttt;
+				// 	}
+				// }
+				// throw new core.Error(Type_not_found(_m.m_path,tname),p);
+			}
+			// lookup in wildcard imported packages
+			try {
+				if (!no_pack) {
+					throw new ocaml.Exit();
+				}
+				function loop (l:Array<{pos:core.Globals.Pos, l:Array<String>}>) : core.Type.ModuleType {
+					if (l.length == 0) {
+						throw new ocaml.Exit();
+					}
+					var wp = l[0].l;
+					var pi = l[0].pos;
+					try {
+						var ttt = {
+							tname: t.tname,
+							tpackage: wp,
+							tsub: t.tsub,
+							tparams: t.tparams
+						}
+						var tt = load_type_def(ctx, p, ttt);
+						context.display.ImportHandling.mark_import_position(ctx.com, pi);
+						return tt;
+					}
+					catch (e:core.Error) {
+						switch (e.msg) {
+							case Module_not_found(_), Type_not_found(_, _):
+								if (p == e.pos) { 
+									loop(l.slice(1));
+								}
+							default: throw e;
+						}
+					}
+					return null; // shall not be reach if I understood code correctly
+				}
+				return loop(ctx.m.wildcard_packages);
+			}
+			catch (ee:ocaml.Exit) {
+				// lookup in our own package - and its upper packages
+				function loop (l:Array<Dynamic>) {
+					if (l.length == 0) { throw new ocaml.Exit(); }
+					try {
+						var ll = l.copy();
+						ll.reverse();
+						var tt = {
+							tname: t.tname,
+							tpackage: ll,
+							tsub: t.tsub,
+							tparams: t.tparams
+						};
+						return load_type_def(ctx, p, tt);
+					}
+					catch (e:core.Error) {
+						switch (e.msg) {
+							case Module_not_found(_), Type_not_found(_, _):
+								if (p == e.pos) {
+									return loop(l.slice(1));
+								}
+								throw e; // not sure
+							default: throw e;
+						}
+					} 
+				}
+				try {
+					if (!no_pack) { throw new ocaml.Exit(); }
+					var l = ctx.m.curmod.m_path.a;
+					if (l.length == 0) { throw new ocaml.Exit(); }
+					var x = l[0];
+					/* this can occur due to haxe remoting : a module can be
+						already defined in the "js" package and is not allowed
+						to access the js classes */
+					var v = ctx.com.package_rules.get(x);
+					if (v != null) {
+						switch (v) {
+							case Forbidden: throw new ocaml.Exit();
+							default:
+						}
+					}
+					var rev = ocaml.List.rev(ctx.m.curmod.m_path.a);
+					return loop(rev);
+				}
+				catch (eee:ocaml.Exit) {
+					return next();
+				}
+			}
+		}
+	}
+
+	public static function resolve_position_by_path (ctx:context.Typecore.Typer, path:core.Ast.TypePath, p:core.Globals.Pos) : Dynamic {
+		var mt = load_type_def(ctx, p, path);
+		var p = core.Type.t_infos(mt).mt_pos;
+		throw context.Display.DisplayException.DisplayPosition([p]);
+	}
+
+	public static function check_param_constraints (ctx:context.Typecore.Typer, types:core.Type.TypeParams, t:core.Type.T, pl:Array<core.Type.T>, c:core.Type.TClass, p:core.Globals.Pos) {
+		switch (core.Type.follow(t)) {
+			case TMono(_):
+			case _:
+				var ctl = switch (c.cl_kind) {
+					case KTypeParameter(l): l;
+					case _: [];
+				}
+				for (ti in ctl) {
+					var _ti = core.Type.apply_params(types, pl, ti);
+					_ti = switch (core.Type.follow(_ti)) {
+						case TInst(c, pl) if (c.cl_kind == KGeneric):
+							// if we solve a generic contraint, let's substitute with the actual generic instance before unifying
+							var f = ctx.g.do_build_instance(ctx, TClassDecl(c), p).f;
+							f(pl);
+						case _: ti;
+					}
+					try {
+						context.Typecore.unify_raise(ctx, t, ti, p);
+					}
+					catch (err:core.Error) {
+						switch (err.msg) {
+							case Unify(l):
+								if (!ctx.untyped_) {
+									// if not ctx.untyped then display_error ctx (error_msg (Unify (Constraint_failure (s_type_path c.cl_path) :: l))) p;
+									l.unshift(Constraint_failure(core.Globals.s_type_path(c.cl_path)));
+									context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+								}
+							case _: throw err;
+						}
+					}
+				}
+		}
+	}
+
+	public static function requires_value_meta (com:context.Common.Context, co:Option<core.Type.TClass>) : Bool {
+		if (context.Common.defined(com, DocGen)) { return true; }
+		return switch (co) {
+			case None: false;
+			case Some(c): c.cl_extern || core.Meta.has(Rtti, c.cl_meta);
+		}
+	}
+
+	public static function generate_value_meta (com:context.Common.Context, co:Option<core.Type.TClass>, cf:core.Type.TClassField, args:Array<core.Ast.FunArg>) : Void {
+		if (requires_value_meta(com, co)) {
+			var values:Array<core.Ast.ObjectField> = [];
+			for (farg in args) {
+				switch (farg.value) {
+					case Some(e): values.unshift({name:farg.name.pack, pos:farg.name.pos, quotes:NoQuotes, expr: e});
+					case _:
+				}
+			}
+			if (values.length > 0) {
+				cf.cf_meta.unshift({name:Value, params:[{expr:EObjectDecl(values), pos:cf.cf_pos}], pos:core.Globals.null_pos});
+			}
+		}
+	}
+
+	public static function pselect (p1:core.Globals.Pos, p2:core.Globals.Pos) {
+		return (p1.equals(core.Globals.null_pos)) ? p2 : p1;
+	}
+
+	public static function load_instance (allow_display:Bool=false, ctx:context.Typecore.Typer, tp:core.Ast.PlacedTypePath, allow_no_params:Bool, p:core.Globals.Pos) : core.Type.T {
+		var t = tp.tp;
+		var pn = tp.pos;
+		var p = pselect(pn, p);
+		var t:core.Type.T = try {
+			if (t.tpackage.length > 0 || t.tsub != None) {
+				throw ocaml.Not_found.instance;
+			}
+			var pt = null;
+			for (type_param in ctx.type_params) {
+				if (type_param.name == t.tname) {
+					pt = type_param.t;
+					break;
+				}
+			}
+			if (pt == null) {
+				throw ocaml.Not_found.instance;
+			}
+			if (t.tparams.length > 0) {
+				core.Error.error("Class type parameter "+t.tname + " can't have parameters", p);
+			}
+			pt;
+		}
+		catch (_:ocaml.Not_found) {
+			var mt = load_type_def(ctx, p, t);
+			var is_generic = false;
+			var is_generic_build = false;
+			switch (mt) {
+				case TClassDecl(c):
+					switch (c.cl_kind) {
+						case KGeneric: is_generic = true;
+						case KGenericBuild(_): is_generic_build = true;
+						case _:
+					} 
+				case _:
+			}
+			var tmp = ctx.g.do_build_instance(ctx, mt, p);
+			var types = tmp.types;
+			var path = tmp.path;
+			var f = tmp.f;
+			var is_rest = is_generic_build && (types.length == 1 && types[0].name == "Rest");
+			if (allow_no_params && t.tparams.length == 0 && !is_rest) {
+				var pl = new Ref<Array<core.Type.T>>([]);
+				pl.set(types.map(function (tp) {
+					var name = tp.name;
+					var t = tp.t;
+					return switch (core.Type.follow(t)) {
+						case TInst(c, _):
+							var t = core.Type.mk_mono();
+							if (!c.cl_kind.equals(KTypeParameter([])) || is_generic) {
+								context.Typecore.delay(ctx, PCheckConstraint, function(){
+									check_param_constraints(ctx, types, t, pl.get(), c, p);
+								});
+							}
+							return t;
+						case _: throw false;
+					}
+				}));
+				f(pl.get());
+			}
+			else if (path.equals(new core.Path([], "Dynamic"))) {
+				var length = t.tparams.length;
+				if (length == 0) { core.Type.t_dynamic; }
+				else if (length == 1) { 
+					switch (t.tparams[0]) {
+						case TPType(t): TDynamic(new Ref(load_complex_type(ctx, true, p, t)));
+						case _: core.Error.error("Too many parameteres for Dynamic", p); throw false;
+					}
+				}
+				else {
+					core.Error.error("Too many parameteres for Dynamic", p);
+				}
+			}
+			else {
+				if (!is_rest && ctx.com.display.dms_error_policy != EPIgnore && types.length != t.tparams.length) {
+					core.Error.error ("Invalid number of type parameters for " + core.Globals.s_type_path(path), p);
+				}
+				var tparams:Array<core.Type.T> = t.tparams.map(function (t:core.Ast.TypeParamOrConst) : core.Type.T {
+					return switch (t) {
+						case TPExpr(e):
+							var name = switch (e.expr) {
+								case EConst(CString(s)): "S"+s;
+								case EConst(CInt(i)): "I"+i;
+								case EConst(CFloat(f)): "F"+f;
+								case _: "Expr";
+							}
+							var c = core.Type.mk_class(ctx.m.curmod, new core.Path([], name), p, e.pos);
+							c.cl_kind = KExpr(e);
+							TInst(c, []);
+						case TPType(t): load_complex_type(ctx, true, p, t);
+					}
+				});
+				function loop(tl1:Array<core.Type.T>, tl2:core.Type.TypeParams, is_rest:Bool) : Array<core.Type.T>{
+					var length1 = tl1.length;
+					var length2 = tl2.length;
+					if (length1 > 0 && length2 > 0) {
+						var t = tl1[0];
+						var name = tl2[0].name;
+						var t2 = tl2[0].t;
+						function check_const(c) {
+							var is_expression = switch (t) {
+								case TInst(c,_) if (c.cl_kind.getIndex() == core.Type.TClassKind.KExpr(null).getIndex()):
+									true;
+								case _: false;
+							}
+							var expects_expression = name == "Const" || core.Meta.has(Const, c.cl_meta);
+							var accepts_expression = name == "Rest";
+							if (is_expression) {
+								if (!expects_expression && !accepts_expression) {
+									core.Error.error("Constant value unexpected here", p);
+								}
+							}
+							else if (expects_expression) {
+								core.Error.error("Type parameter is expected to be constant value", p);
+							}
+						}
+						var is_rest = is_rest || name == "Rest" && is_generic_build;
+						var t:core.Type.T = switch (core.Type.follow(t2)) {
+							case TInst(c, params) if (c.cl_kind.equals(KTypeParameter([])) && params.length == 0 && !is_generic):
+								check_const(c);
+								t;
+							case TInst(c, params) if (params.length == 0):
+								check_const(c);
+								var r = context.Typecore.exc_protect(ctx, function (r) {
+									r.set(core.Type.lazy_available(t));
+									context.Typecore.delay(ctx, PCheckConstraint, function () {
+										check_param_constraints(ctx, types, t, tparams, c, p);
+									});
+									return t;
+								}, "constraint");
+								TLazy(r);
+							case _: throw false;
+						}
+						var res = loop(tl1.slice(1), tl2.slice(1), is_rest);
+						res.unshift(t);
+						return res;
+					}
+					else if (length1 == 0 && length2 == 0) {
+						return [];
+					}
+					else if (length1 == 0 && length2 == 1 && tl2[0].name == "Rest" && is_generic_build) {
+						return [];
+					}
+					else if (length1 == 0 && ctx.com.display.dms_error_policy == EPIgnore) {
+						var res = loop([], tl2.slice(1), true);
+						res.unshift(tl2[0].t);
+						return res;
+					}
+					else if (length1 == 0) {
+						return core.Error.error("Not enough type parameters for "+core.Globals.s_type_path(path), p);
+					}
+					else if (length1 > 0 && length2 == 0) {
+						if (is_rest) {
+							var res = loop(tl1.slice(1), [], true);
+							res.unshift(tl1[0]);
+							return res;
+						}
+						else {
+							return core.Error.error("Too many parameters for "+core.Globals.s_type_path(path), p);
+						}
+					}
+					else {
+						throw false;
+					}
+				}
+				var params = loop(tparams, types, false);
+				f(params);
+			}
+		}
+		if (allow_display) {
+			context.display.DisplayEmitter.check_display_type(ctx, t, pn);
+		}
+		return t;
+	}
+
+	/*
+	 * build an instance from a complex type
+	 */
+	public static function load_complex_type (ctx:context.Typecore.Typer, allow_display:Bool, p:core.Globals.Pos, tp:core.Ast.TypeHint) : core.Type.T {
+		var t = tp.ct;
+		var pn = tp.pos;
+		var p = pselect(pn, p);
+		return switch (t) {
+			case CTParent(_t): load_complex_type(ctx, allow_display,p, _t);
+			case CTPath(_t): load_instance(allow_display, ctx, {tp:_t, pos:pn}, false, p);
+			case CTOptional(_): core.Error.error("Optional type not allowed here", p);
+			case CTNamed(_): core.Error.error("Named type not allowed here", p);
+			case CTExtend(tl, l):
+				var ta = load_complex_type(ctx, allow_display, p, {ct:CTAnonymous(l), pos:p});
+				switch (ta) {
+					case TAnon(a):
+						function is_redefined(cf1:core.Type.TClassField, a2:core.Type.TAnon) : Bool {
+							try {
+								var cf2 = PMap.find(cf1.cf_name, a2.a_fields);
+								var st = core.Type.s_type.bind(core.Type.print_context());
+								if (!core.Type.type_iseq(cf1.cf_type, cf2.cf_type)) {
+									context.Typecore.display_error(ctx, "Cannot redefine field "+ cf1.cf_name + " with different type", p);
+									context.Typecore.display_error(ctx, "First type was "+ st(cf1.cf_type), cf1.cf_pos);
+									return core.Error.error("Second type was "+st(cf2.cf_type), cf2.cf_pos);
+								}
+								else {
+									return true;
+								}
+							}
+							catch (_:ocaml.Not_found) {
+								return false;
+							}
+						}
+						function mk_extension(t:core.Type.T) : core.Type.T {
+							return switch (core.Type.follow(t)) {
+								case TInst({cl_kind:KTypeParameter(_)},_):
+									core.Error.error("Cannot structurally extend type parameters", p);
+								case TMono(_):
+									core.Error.error("Loop found in cascading signatures definitions. Please change order/import", p);
+								case TAnon(a2):
+									PMap.iter(function (_, cf) {is_redefined(cf, a2);}, a.a_fields);
+									TAnon({a_fields: PMap.foldi(PMap.add, a.a_fields, a2.a_fields), a_status:new Ref(core.Type.AnonStatus.Extend([t]))});
+								case _: 
+									core.Error.error("Can only extend structures", p);
+								
+							}
+						}
+						function loop (t) {
+							switch (core.Type.follow(t)) {
+								case TAnon(a2):
+									PMap.iter(function (f, cf) {
+										if (!is_redefined(cf, a)) {
+											a.a_fields.set(f, cf);
+										}
+									}, a2.a_fields);
+								case _:
+									core.Error.error("Can only extends structures", p);
+							}
+						}
+						var il = tl.map(function (tp) { return load_instance(allow_display, ctx, tp, false, p);});
+						var tr = new Ref(None);
+						var t:core.Type.T = TMono(tr);
+						var r = context.Typecore.exc_protect(ctx, function (r) {
+							r.set(core.Type.lazy_processing(function () { return t;}));
+
+							var some = if (il.length == 1) {
+								mk_extension(il[0]);
+							}
+							else {
+								ocaml.List.iter(loop, il);
+								a.a_status.set(Extend(il));
+								ta;
+							}
+							tr.set(Some(some));
+							return t;
+						}, "constraint");
+						TLazy(r);
+					case _: throw false;
+				}
+			case CTAnonymous(l):
+				function loop(acc:Map<String, core.Type.TClassField>, f:core.Ast.ClassField) : Map<String, core.Type.TClassField> {
+					var n = f.cff_name.pack;
+					var p = f.cff_pos;
+					if (PMap.mem(n, acc)) {
+						core.Error.error("Duplicate field declaration : "+n, p);
+					}
+					function topt (to) {
+						return switch (to) {
+							case None: core.Error.error("Explicit type required for field "+n, p);
+							case Some(t): load_complex_type(ctx, allow_display, p, t);
+						};
+					}
+					if (n == "new") {
+						ctx.com.warning("Structures with new are deprecated, use haxe.Constraints.Constructible instead", p);
+					}
+					function no_expr (ne:Option<core.Ast.Expr>) {
+						switch (ne) {
+							case None:
+							case Some({pos:p}): core.Error.error("Expression not allowed here", p);
+						}
+					}
+					var pub = new Ref(true);
+					var dyn = new Ref(false);
+					var params = new Ref([]);
+					var final_ = new Ref(false);
+					ocaml.List.iter(function (a:core.Ast.Access) {
+						switch (a) {
+							case APublic:
+							case APrivate: pub.set(false);
+							case ADynamic if (switch (f.cff_kind) { case FFun(_) : true; case _: false;}):
+								dyn.set(true);
+							case AFinal: final_.set(true);
+							case AStatic, AOverride, AInline, ADynamic, AMacro:
+								core.Error.error("Invalid access"+core.Ast.s_access(a), p);
+						}
+					}, f.cff_access);
+					var t_access:{fst:core.Type.T, snd:core.Type.FieldKind} = switch (f.cff_kind) {
+						case FVar(t, e) if (final_.get()):
+							no_expr(e);
+							var t = switch (t) {
+								case None:
+									core.Error.error("Type required for structure property", p);
+								case Some(_t):
+									_t;
+							}
+							{fst:load_complex_type(ctx, allow_display, p, t), snd:Var({v_read:AccNormal, v_write:AccNever})};
+						case FVar(Some({ct:CTPath({tpackage:l, tname:"Void"})}), _) if (l.length == 0):
+							core.Error.error("Fields of type Void are not allowed in structures", p);
+						case FProp (_,_,Some({ct:CTPath({tpackage:l, tname:"Void"})}),_) if (l.length == 0):
+							core.Error.error("Fields of type Void are not allowed in structures", p);
+						case FVar(t, e):
+							no_expr(e);
+							{fst: topt(t), snd:Var({v_read:AccNormal, v_write:AccNormal})};
+						case FFun(fd):
+							params.set(type_function_params_rec.get()(ctx, fd, f.cff_name.pack, p));
+							no_expr(fd.f_expr);
+							var old = ctx.type_params;
+							ctx.type_params = params.get().concat(old);
+							var args = fd.f_args.map(function (farg) {
+								no_expr(farg.value);
+								return {name:farg.name.pack, opt:farg.opt, t:topt(farg.type)};
+							});
+							var t:{fst:core.Type.T, snd:core.Type.FieldKind} = {fst:TFun({args:args, ret:topt(fd.f_type)}), snd:Method((dyn.get() ? MethDynamic : MethDynamic))};
+							ctx.type_params = old;
+							t;
+						case FProp(i1, i2, t, e):
+							no_expr(e);
+							function access (pn:core.Ast.PlacedName, get:Bool) : core.Type.VarAccess {
+								return switch (pn.pack) {
+									case "null": AccNo;
+									case "never": AccNever;
+									case "default": AccNormal;
+									case "dynamic": AccCall;
+									case "get" if (get): AccCall;
+									case "set" if (!get): AccCall;
+									case x if (get && x == ("get_"+n)) : AccCall;
+									case x if (!get && x == ("set_"+n)) : AccCall;
+									case _:
+										core.Error.error("Custom property access is no longer supported in Haxe 3", f.cff_pos);
+								}
+							}
+							var t = switch (t) {
+								case None:
+									core.Error.error("Type required for structure property", p);
+								case Some(_t):
+									_t;
+							};
+							{fst:load_complex_type(ctx, allow_display, p, t), snd:Var({v_read:access(i1, true), v_write:access(i2, false)})};
+					}
+					var t = if (core.Meta.has(Optional, f.cff_meta)) {
+						ctx.t.tnull(t_access.fst);
+					}
+					else {
+						t_access.fst;
+					}
+					var cf = core.Type.mk_field(n, t, p, f.cff_name.pos);
+					cf.cf_public = pub.get();
+					cf.cf_kind = t_access.snd;
+					cf.cf_params = params.get();
+					cf.cf_doc = f.cff_doc;
+					cf.cf_meta = f.cff_meta;
+					init_meta_overloads(ctx, None, cf);
+					if (ctx.is_display_file) {
+						context.display.DisplayEmitter.check_display_metadata(ctx, cf.cf_meta);
+						context.display.DisplayEmitter.maybe_display_field(ctx, cf.cf_name_pos, cf);
+					}
+					return PMap.add(n, cf, acc);
+				}
+				core.Type.mk_anon(ocaml.List.fold_left(loop, new Map<String, core.Type.TClassField>(), l));
+			case CTFunction(args, r):
+				if (args.length == 1) {
+					switch (args[0].ct) {
+						case CTPath({tpackage:l1, tparams:l2, tname:"Void"}) if (l1.length == 0 && l2.length ==0 ):
+							return TFun({args:[], ret:load_complex_type(ctx, allow_display, p, r)});
+						case _:
+					}
+				}
+				TFun({args:args.map(function (t:core.Ast.TypeHint) {
+					var t_opt = switch (t.ct) {
+						case CTOptional(t): {fst:t, snd:true};
+						case _: {fst:t, snd:false};
+					}
+					var n_t = switch (t_opt.fst.ct) {
+						case CTNamed(n, t): {fst:n.pack, snd:t};
+						case _: {fst:"", snd:t};
+					}
+					return {name:n_t.fst, opt:t_opt.snd, t:load_complex_type(ctx, allow_display, p, t)};
+				}), ret:load_complex_type(ctx, allow_display, p, r)});
+		}
+	}
+
+	public static function init_meta_overloads (ctx:context.Typecore.Typer, co:Option<core.Type.TClass>, cf:core.Type.TClassField) {
+		var overloads = new Ref([]);
+		function filter_meta(m:core.Ast.MetadataEntry) : Bool {
+			return switch (m) {
+				case {name:Overload}, {name:Value}: false;
+				case _: true;
+			}
+		}
+		var cf_meta = cf.cf_meta.filter(filter_meta);
+		cf.cf_meta = cf.cf_meta.filter(function (m:core.Ast.MetadataEntry) : Bool {
+			if (m.name != Overload) {
+				return true;
+			}
+			if (m.params.length == 1) {
+				var p = m.params[0].pos;
+				switch (m.params[0].expr) {
+					case EFunction(fname, f):
+						if (fname != None) {
+							core.Error.error("Function name must not be part of @:overload", p);
+						}
+						switch (f.f_expr) {
+							case Some({expr:EBlock(l)}) if (l.length == 0):
+							case _: core.Error.error("Overload must only declare an empty method body {}", p);
+						}
+						var old = ctx.type_params;
+						if (cf.cf_params.length == 0) {
+						}
+						else {
+							ctx.type_params = ctx.type_params.filter( function(t) { return !ocaml.List.mem(t, cf.cf_params); });
+						}
+						var params = type_function_params_rec.get()(ctx, f, cf.cf_name, p);
+						ctx.type_params = params.concat(ctx.type_params);
+						function topt (t) {
+							return switch (t) {
+								case None: core.Error.error("Explicit type required", p);
+								case Some(_t): load_complex_type(ctx, true, p, _t);
+							}
+						}
+						var args = f.f_args.map(function (farg) {
+							return {name:farg.name.pack, opt:farg.opt, t:topt(farg.type)};
+						});
+						var cf = cf.clone();
+						cf.cf_type = TFun({args:args, ret:topt(f.f_type)});
+						cf.cf_params = params;
+						cf.cf_meta = cf_meta;
+						generate_value_meta(ctx.com, co, cf, f.f_args);
+						overloads.get().unshift(cf);
+						ctx.type_params = old;
+						return false;
+					case _:
+				}
+			}
+
+			if (m.params.length == 0 && ctx.com.config.pf_overload) {
+				function topt (arg:core.Type.TSignatureArg) {
+					switch (arg.t) {
+						case TMono(t) if (t.get() == None):
+							core.Error.error("Explicit type required for overload functions\nFor function argument '" + arg.name + "'", cf.cf_pos);
+						case _:
+					}
+				}
+				switch (core.Type.follow(cf.cf_type)) {
+					case TFun({args:args}):
+						ocaml.List.iter(topt, args);
+					case _: // could be a variable
+				}
+				return true;
+			}
+			
+			if (m.params.length == 0 && ctx.com.config.pf_overload) {
+				core.Error.error("This platform does not support this kind of overload declaration. Try @:overload(function()... {}) instead", m.pos);
+			}
+			
+			return core.Error.error("Invalid @:overload metadata format", m.pos);
+		});
+		cf.cf_overloads = ocaml.List.rev(overloads.get());
+	}
+
+	public static function hide_params (ctx:context.Typecore.Typer) : Void -> Void {
+		var old_m = ctx.m;
+		var old_type_params = ctx.type_params;
+		var old_deps = ctx.g.std.m_extra.m_deps;
+		ctx.m = {
+			curmod: ctx.g.std.clone(),
+			module_types: [],
+			module_using: [],
+			module_globals: new Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>(),
+			wildcard_packages: [],
+			module_imports: []
+		};
+		ctx.type_params = [];
+		return function () {
+			ctx.m = old_m;
+			ctx.type_params = old_type_params;
+			// restore dependencies that might be have been wronly inserted
+			ctx.g.std.m_extra.m_deps = old_deps;
+		}
+	}
+
+	/*
+	 * load a type while ignoring the current imports or local types
+	 */
+	public static function load_core_type (ctx:context.Typecore.Typer, name:String) : core.Type.T {
+		var show = hide_params(ctx);
+		var t = load_instance(false, ctx, {tp:{tpackage:[], tname:name, tparams:[], tsub:None}, pos:core.Globals.null_pos}, false, core.Globals.null_pos);
+		show();
+		core.Type.add_dependency(ctx.m.curmod, switch (t) {
+			case TInst(c, _): c.cl_module;
+			case TType(t, _): t.t_module;
+			case TAbstract(a, _): a.a_module;
+			case TEnum(e, _): e.e_module;
+			case _: throw false;
+		});
+		return t;
+		
+	}
+
+	public static function check_module_types(ctx:context.Typecore.Typer, m:core.Type.ModuleDef, p:core.Globals.Pos, t:core.Type.ModuleType) : Void {
+		var t = core.Type.t_infos(t);
+		try {
+			var m2 = ocaml.Hashtbl.find(ctx.g.types_module, t.mt_path);
+			if (!m.m_path.equals(m2) && core.Globals.s_type_path(m2).toLowerCase() == core.Globals.s_type_path(m.m_path).toLowerCase()) {
+				core.Error.error("Module " + core.Globals.s_type_path(m2) + " is loaded with a different case than " + core.Globals.s_type_path(m.m_path), p);
+			}
+		}
+		catch (_:ocaml.Not_found) {
+			ctx.g.types_module.set(t.mt_path, m.m_path);
+		}
+	}
+
+	/*
+	 * load either a tye t or Null<Unknown> if not defined
+	 */
+	public static function load_type_hint(?opt:Bool=false, ctx:context.Typecore.Typer, pcur:core.Globals.Pos, t:Option<core.Ast.TypeHint>) : core.Type.T {
+		var t = switch (t) {
+			case None: core.Type.mk_mono();
+			case Some({ct:t, pos:p}):
+				try {
+					load_complex_type(ctx, true, pcur, {ct:t, pos:p});
+				}
+				catch (exc:core.Error) {
+					switch (exc.msg) {
+						case Module_not_found(path) if (path.a.length == 0):
+							if (context.display.Diagnostics.is_diagnostics_run(ctx)) {
+								context.DisplayToplevel.handle_unresolved_identifier(ctx, path.b, p, true);
+							}
+							// Default to Dynamic in display mode
+							if (ctx.com.display.dms_display) {
+								core.Type.t_dynamic;
+							}
+							else {
+								throw exc;
+							}
+						case _: throw exc;
+					}
+				}
+		}
+		return (opt) ? ctx.t.tnull(t) : t;
+	}
+	// ----------------------------------------------------------------------
+	// Structure check
+
+	public static function check_overriding (ctx:context.Typecore.Typer, c:core.Type.TClass, f:core.Type.TClassField) : Void {
+		trace("Typeload.check_overriding");
+		throw false;
+	}
+
+	public static function return_flow (ctx:context.Typecore.Typer, e:core.Type.TExpr) {
+		function error() {
+			context.Typecore.display_error(ctx, 'Missing return: ${core.Type.s_type(core.Type.print_context(), ctx.ret)}', e.epos);
+			throw ocaml.Exit.instance;
+		}
+		var return_flow = return_flow.bind(ctx);
+		function uncond(e:core.Type.TExpr) {
+			return switch (e.eexpr) {
+				case TIf(_), TWhile(_), TSwitch(_), TTry(_), TFunction(_):
+				case TReturn(_), TThrow(_): throw ocaml.Exit.instance;
+				case _: core.Type.iter(uncond, e);
+			}
+		}
+		function has_unconditional_flow (e:core.Type.TExpr) : Bool {
+			try {
+				uncond(e);
+				return false;
+			}
+			catch (_:ocaml.Exit) {
+				return true;
+			}
+		}
+		switch (e.eexpr) {
+			case TReturn(_), TThrow(_):
+			case TParenthesis(e), TMeta(_,e):
+				return_flow(e);
+			case TBlock(el):
+				function loop(arr:Array<core.Type.TExpr>) {
+					if (arr.length == 0) { error(); }
+					else if (arr.length == 1) { return_flow(arr[0]); }
+					else {
+						if (!has_unconditional_flow(arr[0])) {
+							loop(arr.slice(1));
+						}
+					}
+				}
+				loop(el);
+			case TIf(_, e1, Some(e2)):
+				return_flow(e1); return_flow(e2);
+			case TSwitch(v, cases, Some(e)):
+				ocaml.List.iter(function (c) {
+					return_flow(c.e);
+				}, cases);
+				return_flow(e);
+			case TSwitch({eexpr:TMeta({name:Exhaustive}, _)}, cases, None):
+				ocaml.List.iter(function (c) {
+					return_flow(c.e);
+				}, cases);
+			case TTry(e, cases):
+				return_flow(e);
+				ocaml.List.iter(function (c) {
+					return_flow(c.e);
+				}, cases);
+			case TWhile({eexpr:TConst(TBool(true))}, e, _):
+				// a special case for "inifite" while loops that have no break
+				function loop(e:core.Type.TExpr) {
+					switch (e.eexpr) {
+						// ignore nested loops to not accidentally get one of its breaks
+						case TWhile(_), TFor(_):
+						case TBreak: error();
+						case _: core.Type.iter(loop, e);
+					}
+				}
+				loop(e);
+			case _: error();
+
+		}
+	}
+
+	// ----------------------------------------------------------------------
+	// PASS 1 & 2 : Module and Class Structure
+
+	public static function is_generic_parameter (ctx:context.Typecore.Typer, c:core.Type.TClass) : Bool {
+		// first check field parameters, then class parameters
+		return try {
+			ocaml.List.assoc_typeparams(c.cl_path.b, ctx.curfield.cf_params);
+			core.Meta.has(Generic, ctx.curfield.cf_meta);
+		}
+		catch (_:ocaml.Not_found) {
+			try {
+				ocaml.List.assoc_typeparams(c.cl_path.b, ctx.type_params);
+				switch (ctx.curclass.cl_kind) {
+					case KGeneric: true;
+					case _: false;
+				}
+			}
+			catch (_:ocaml.Not_found) {
+				false;
+			}
+		}
+	}
+
+	public static function type_function_arg_value (ctx:context.Typecore.Typer, t:core.Type.T, c:Option<core.Ast.Expr>, do_display:Bool) : Option<core.Type.TConstant> {
+		return switch (c) {
+			case None: None;
+			case Some(e):
+				var p = e.pos;
+				var _e = (do_display) ? context.display.ExprPreprocessing.process_expr(ctx.com, e) : e;
+				var e = ctx.g.do_optimize(ctx, context.Typecore.type_expr(ctx, _e, WithType(t)));
+				context.Typecore.unify(ctx, e.etype, t, p);
+				function loop (e:core.Type.TExpr) : Option<core.Type.TConstant> {
+					return switch (e.eexpr) {
+						case TConst(c): Some(c);
+						case TCast(e, None): loop(e);
+						case _:
+							if (!ctx.com.display.dms_display || ctx.com.display.dms_error_policy == EPCollect) {
+								context.Typecore.display_error(ctx, "Parameter default value should be constant", p);
+							}
+							None;
+					}
+				}
+				loop(e);
+		}
+	}
+
+	// strict meta
+	public static function get_strict_meta (ctx:context.Typecore.Typer, params:Array<core.Ast.Expr>, pos:core.Globals.Pos) : core.Ast.MetadataEntry {
+		trace("TODO: typing.Typeload.get_strict_meta");
+		return null;
+	}
+
+	public static function check_strict_meta (ctx:context.Typecore.Typer, metas:core.Ast.Metadata) : core.Ast.Metadata {
+		var pf = ctx.com.platform;
+		return switch (pf) {
+			case Cs, Java:
+				var ret = [];
+				for (m in metas) {
+					switch (m.name) {
+						case Strict:
+							try {
+								ret.unshift(get_strict_meta(ctx, m.params, m.pos));
+							}
+							catch (_:ocaml.Exit){}
+						case _:
+					}
+				}
+				return ret;
+			case _: [];
+		}
+	}
+	// end of strict meta handling
+
+	public static function add_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, force_constructor:Bool, p:core.Globals.Pos) : Void {
+		trace("TODO: typing.Typeload.add_constructor");
+	}
+
+	public static function check_struct_init_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos) : Void {
+		switch (c.cl_constructor) {
+			case Some(_):
+			case None:
+				var params = c.cl_params.map(function (f) { return f.t; });
+				var ethis = core.Type.mk(TConst(TThis), TInst(c, params), p);
+				var _tmp = ocaml.List.fold_left(function (arrs:{args:Array<{v:core.Type.TVar, c:Option<core.Type.TConstant>}>, el:Array<core.Type.TExpr>, tl:Array<core.Type.TSignatureArg>}, cf:core.Type.TClassField) {
+					var args = arrs.args; var el = arrs.el; var tl = arrs.tl;
+					switch (cf.cf_kind) {
+						case Var(_):
+							var opt = core.Meta.has(Optional, cf.cf_meta);
+							var t = (opt) ? ctx.t.tnull(cf.cf_type) : cf.cf_type;
+							var v = core.Type.alloc_var(cf.cf_name, t, p);
+							var ef = core.Type.mk(TField(ethis, FInstance(c, params, cf)), t, p);
+							var ev = core.Type.mk(TLocal(v), v.v_type, p);
+							var e = core.Type.mk(TBinop(OpAssign, ef, ev), ev.etype, p);
+							args.unshift({v:v, c:None});
+							el.unshift(e);
+							tl.unshift({name:cf.cf_name, opt:opt, t:t});
+							return arrs;
+						case Method(_): return arrs;
+					}
+				}, {args:[], el:[], tl:[]}, ocaml.List.rev(c.cl_ordered_fields));
+				var args = _tmp.args; var el = _tmp.el; var tl = _tmp.tl;
+				var tf:core.Type.TFunc = {
+					tf_args: args,
+					tf_type: ctx.t.tvoid,
+					tf_expr: core.Type.mk(TBlock(el), ctx.t.tvoid, p)
+				}
+				var e = core.Type.mk(TFunction(tf), TFun({args:tl, ret:ctx.t.tvoid}), p);
+				var cf = core.Type.mk_field("new", e.etype, p, core.Globals.null_pos);
+				cf.cf_expr = Some(e);
+				cf.cf_type = e.etype;
+				cf.cf_meta = [{name:CompilerGenerated, params:[], pos:core.Globals.null_pos}];
+				cf.cf_kind = Method(MethNormal);
+				c.cl_constructor = Some(cf);
+		}
+	}
+
+	// module Inheritance = struct ...
+
+	public static function type_type_param (?enum_constructor:Bool=false, ctx:context.Typecore.Typer, path:core.Path, get_params:Void->core.Type.TypeParams, p:core.Globals.Pos, tp:core.Ast.TypeParam) : {name:String, t:core.Type.T} {
+		var n = tp.tp_name.pack;
+		var c = core.Type.mk_class(ctx.m.curmod, new core.Path(path.a.concat([path.b]), n), tp.tp_name.pos, tp.tp_name.pos); 
+		c.cl_params = type_type_params(ctx, c.cl_path, get_params, p, tp.tp_params);
+		c.cl_kind = KTypeParameter([]);
+		c.cl_meta = tp.tp_meta.clone();
+		if (enum_constructor) {
+			c.cl_meta.unshift({name:EnumConstructorParam, params:[], pos:core.Globals.null_pos});
+		}
+		var t:core.Type.T = TInst(c, c.cl_params.map(function (p) { return p.t; }));
+		if (ctx.is_display_file && context.Display.is_display_position(tp.tp_name.pos)) {
+			context.display.DisplayEmitter.display_type(ctx.com.display, t, tp.tp_name.pos);
+		}
+		if (tp.tp_constraints.length == 0) {
+			return {name:n, t:t};
+		}
+		else {
+			function f (r:Ref<core.Type.TLazy>) : core.Type.T {
+				r.set(core.Type.lazy_processing(function() { return t;}));
+				var _ctx = ctx.clone();
+				_ctx.g = ctx.g;
+				_ctx.type_params = ctx.type_params.concat(get_params());
+				var constr = tp.tp_constraints.map( function (e) { return load_complex_type(_ctx, true, p, e);});
+				// check against direct recursion
+				function loop (t) {
+					switch (core.Type.follow(t)) {
+						case TInst(c2,_):
+							if (c.equals(c2)) {
+								core.Error.error("Recursive constraint parameter is not allowed", p);
+							}
+							switch (c2.cl_kind) {
+								case KTypeParameter(cl):
+									ocaml.List.iter(loop, cl);
+								default:
+							}
+						default:
+					}
+				}
+				ocaml.List.iter(loop, constr);
+				c.cl_kind = KTypeParameter(constr);
+				return t;
+			}
+			var r = context.Typecore.exc_protect(ctx, f, "constraint");
+			return {name:n, t:TLazy(r)};
+		}
+	}
+
+	public static function type_type_params (?enum_constructor:Bool=false, ctx:context.Typecore.Typer, path:core.Path, get_params:Void->core.Type.TypeParams, p:core.Globals.Pos, tpl:Array<core.Ast.TypeParam>) : core.Type.TypeParams {
+		var names = [];
+		function f (tp:core.Ast.TypeParam) {
+			if (ocaml.List.exists(function (name) { return name == tp.tp_name.pack; }, names)) {
+				context.Typecore.display_error(ctx, "Duplicate type parameter name: " + tp.tp_name.pack, tp.tp_name.pos);
+			}
+			names.unshift(tp.tp_name.pack);
+			return type_type_param(enum_constructor, ctx, path, get_params, p, tp);
+		}
+		return ocaml.List.map(f, tpl);
+	}
+
+	public static function type_function_params (ctx:context.Typecore.Typer, fd:core.Ast.Func, fname:String, p:core.Globals.Pos) : core.Type.TypeParams {
+		var params = new Ref([]);
+		params.set(type_type_params(ctx, new core.Path([], fname), function () { return params.get(); }, p, fd.f_params));
+		return params.get();
+	}
+
+	public static function save_function_state(ctx:context.Typecore.Typer) : Void->Void {
+		var old_ret = ctx.ret.clone();
+		var old_fun = ctx.curfun.clone();
+		var old_opened = ctx.opened.clone();
+		var locals = ctx.locals.clone();
+		return function () {
+			ctx.locals = locals;
+			ctx.ret = old_ret;
+			ctx.curfun = old_fun;
+			ctx.opened = old_opened;
+		}
+	}
+
+	public static function type_function_ (ctx:context.Typecore.Typer, args:Array<{name:String, opt:Option<core.Ast.Expr>, t:core.Type.T}>, ret:core.Type.T, fmode:context.Typecore.CurrentFun, f:core.Ast.Func, do_display:Bool, p:core.Globals.Pos) : {fst:core.Type.TExpr, snd:Array<{v:core.Type.TVar, c:Option<core.Type.TConstant>}>} {
+		var fargs = ocaml.List.map2(function (a, b) {
+			var n:String = a.name; var c = a.opt; var t = a.t;
+			var pn = b.name.pos; var m = b.meta;
+			if (n.charAt(0) == "$") {
+				core.Error.error("Function argument names starting with a dollar are not allowed", p);
+			}
+			var c = type_function_arg_value(ctx, t, c, do_display);
+			var v = context.Typecore.add_local(ctx, n, t, p);
+			v.v_meta = m;
+			if (do_display && context.Display.is_display_position(pn)) {
+				context.display.DisplayEmitter.display_variable(ctx.com.display, v, pn);
+				if (n == "this") {
+					v.v_meta.unshift({name:This, params:[], pos:core.Globals.null_pos});
+				}
+			}
+			return {v:v, c:c};
+		}, args, f.f_args);
+		ctx.curfun = fmode;
+		ctx.ret = ret;
+		ctx.opened = [];
+		var _e:core.Ast.Expr = switch (f.f_expr) {
+			case None:
+				if (ctx.com.display.dms_error_policy == EPIgnore) {
+					/* when we don't care because we're in display mode, just act like
+					the function has an empty block body. this is fine even if function
+					defines a return type, because returns aren't checked in this mode
+					*/
+					{expr:EBlock([]),pos:p};
+				}
+				else {
+					core.Error.error("Function body required", p);
+				}
+			case Some(e): e;
+		}
+		var e = if (!do_display) {
+			context.Typecore.type_expr(ctx, _e, NoValue);
+		}
+		else {
+			var e = context.display.ExprPreprocessing.process_expr(ctx.com, _e);
+			try {
+				if (context.Common.defined(ctx.com, NoCOpt)) {
+					throw ocaml.Exit.instance;
+				}
+				context.Typecore.type_expr(ctx, optimization.Optimizer.optimize_completion_expr(e), NoValue);
+			}
+			catch (_:ocaml.Exit) { context.Typecore.type_expr(ctx, e, NoValue); }
+			catch (err:syntax.parser.TypePath) {
+				if (err.c == None) {
+					context.Typecore.type_expr(ctx, e, NoValue);
+				}
+				else {
+					throw err;
+				}
+			}
+			catch (err:context.Display.DisplayException) {
+				switch (err) {
+					case DisplayType(t,_,_) if (switch (core.Type.follow(t)) { case TMono(_): true; case _: false;}):
+						var _tmp = (ctx.com.display.dms_kind == DMToplevel) ? context.display.ExprPreprocessing.find_enclosing(ctx.com, e) : e;
+						context.Typecore.type_expr(ctx, _tmp, NoValue);
+					case _:
+						throw err;
+				}
+			}
+		}
+
+		e = switch (e.eexpr) {
+			case TMeta({name:MergeBlock}, e1={eexpr:TBlock(el)}) : e1;
+			case _: e;
+		}
+		function has_return(e:core.Type.TExpr) : Bool {
+			function loop (e:core.Type.TExpr) {
+				return switch (e.eexpr) {
+					case TReturn(Some(_)): throw ocaml.Exit.instance;
+					case TFunction(_):
+					case _: core.Type.iter(loop, e);
+				}
+			}
+			try {
+				loop(e);
+				return false;
+			}
+			catch (_:ocaml.Exit) {
+				return true;
+			}
+		}
+		switch (core.Type.follow(ret)) {
+			case TAbstract({a_path:path}, _) if (path.a.length == 0 && path.b == "Void"):
+			/* We have to check for the presence of return expressions here because
+				in the case of Dynamic ctx.ret is still a monomorph. If we indeed
+				don't have a return expression we can link the monomorph to Void. We
+				can _not_ use type_iseq to avoid the Void check above because that
+				would turn Dynamic returns to Void returns. */
+			case TMono(t) if (!has_return(e)):
+				core.Type.link(t, ret, ctx.t.tvoid);
+			case _ if (ctx.com.display.dms_error_policy == EPIgnore):
+			case _:
+				try {
+					return_flow(ctx, e);
+				}
+				catch (_:ocaml.Exit) {}
+		}
+		function loop (e:core.Type.TExpr) {
+			switch (e.eexpr) {
+				case TCall({eexpr:TConst(TSuper)}, _): throw ocaml.Exit.instance;
+				case TFunction(_):
+				case _: core.Type.iter(loop, e);
+			}
+		}
+		function has_super_constr() : Option<{fst:Bool, snd:core.Type.T}> {
+			return switch (ctx.curclass.cl_super) {
+				case None: None;
+				case Some({c:csup, params:tl}):
+					try {
+						var cf = core.Type.get_constructor(function (f) { return f.cf_type; }, csup).snd;
+						Some({fst:core.Meta.has(CompilerGenerated, cf.cf_meta), snd:TInst(csup,tl)});
+					}
+					catch (_:ocaml.Not_found) {
+						None;
+					}
+			}
+		}
+		e = if (fmode != FunConstructor) { e; }
+		else {
+			var final_vars = new Map<String, core.Type.TClassField>();
+			var length = 0;
+			for (cf in ctx.curclass.cl_ordered_fields) {
+				switch (cf.cf_kind) {
+					case Var(_) if (core.Meta.has(Final, cf.cf_meta) && cf.cf_expr==None):
+						final_vars.set(cf.cf_name, cf);
+						length++;
+					case _:
+				}
+			}
+			if (length > 0) {
+				function find_inits(e:core.Type.TExpr) {
+					switch (e.eexpr) {
+						case TBinop(OpAssign, {eexpr:TField({eexpr:TConst(TThis)}, fa)}, e2):
+							final_vars.remove(core.Type.field_name(fa));
+							find_inits(e2);
+						case _:
+							core.Type.iter(find_inits, e);
+					}
+				}
+				find_inits(e);
+				ocaml.Hashtbl.iter(function (_, cf) {
+					context.Typecore.display_error(ctx, "final field "+cf.cf_name+" must be initialized immediately or in the constructor", cf.cf_pos);
+				}, final_vars);
+			}
+			switch (has_super_constr()) {
+				case Some({fst:was_forced, snd:t_super}):
+					try {
+						loop(e);
+						if (was_forced) {
+							var e_super = core.Type.mk(TConst(TSuper), t_super, e.epos);
+							var e_super_call = core.Type.mk(TCall(e_super, []), ctx.t.tvoid, e.epos);
+							core.Type.concat(e_super_call, e);
+						}
+						else {
+							context.Typecore.display_error(ctx, "Missing super constructor call", p);
+							e;
+						}
+					}
+					catch (_:ocaml.Exit) {
+						e;
+					}
+				case None: e;
+			}
+		}
+		e = switch({f:ctx.curfun, s:ctx.vthis}) {
+			case {f:(FunMember|FunConstructor), s:Some(v)}:
+				var ev = core.Type.mk(TVar(v, Some(core.Type.mk(TConst(TThis), ctx.tthis, p))), ctx.t.tvoid, p);
+				switch (e.eexpr) {
+					case TBlock(l):
+						var _e = e.clone();
+						_e.eexpr = TBlock([ev].concat(l));
+						_e;
+					case _: core.Type.mk(TBlock([ev, e]), e.etype, p);
+				}
+			case _: e;
+		}
+		for (r in ctx.opened) {
+			r.set(Closed);
+		}
+		return {fst:e, snd:fargs};
+	}
+	public static function type_function (ctx:context.Typecore.Typer, args:Array<{name:String, opt:Option<core.Ast.Expr>, t:core.Type.T}>, ret:core.Type.T, fmode:context.Typecore.CurrentFun, f:core.Ast.Func, do_display:Bool, p:core.Globals.Pos) : {fst:core.Type.TExpr, snd:Array<{v:core.Type.TVar, c:Option<core.Type.TConstant>}>} {
+		var save = save_function_state(ctx);
+		try {
+			var _tmp = type_function_(ctx, args, ret, fmode, f, do_display, p);
+			save();
+			return _tmp;
+		}
+		catch (err:Any) {
+			save();
+			throw err;
+		}
+	}
+
+	public static function load_core_class (ctx:context.Typecore.Typer, c:core.Type.TClass) {
+		var ctx2 = switch (ctx.g.core_api) {
+			case None:
+				var com2 = context.Common.clone(ctx.com);
+				com2.defines.values = new Map<String, String>();
+				context.Common.define(com2, CoreApi);
+				context.Common.define(com2, Sys);
+				if (ctx.in_macro) {
+					context.Common.define(com2, Macro);
+				}
+				com2.class_path = ctx.com.std_path.clone();
+				var ctx2 = ctx.g.do_create(com2);
+				ctx.g.core_api = Some(ctx2);
+				ctx2;
+			case Some(c):
+				c;
+		}
+		var tpath = switch (c.cl_kind) {
+			case KAbstractImpl(a):
+				{tpackage:a.a_path.a, tname:a.a_path.b, tparams:[], tsub:None};
+			case _:
+				{tpackage:c.cl_path.a, tname:c.cl_path.b, tparams:[], tsub:None};
+		}
+		var t = load_instance(ctx, {tp:tpath, pos:c.cl_pos}, true, c.cl_pos);
+		context.Typecore.flush_pass(ctx2, PFinal, "core_final");
+		return switch (t) {
+			case TInst(ccore, _), TAbstract({a_impl:Some(ccore)}, _): ccore;
+			case _: throw false;
+		};
+	}
+
+	public static function init_core_api (ctx:context.Typecore.Typer, c:core.Type.TClass) : Void {
+		var ccore = load_core_class(ctx, c);
+		try {
+			ocaml.List.iter2(function (tp1, tp2) {
+				var n1 = tp1.name; var t1 = tp1.t;
+				var n2 = tp2.name; var t2 = tp2.t;
+				switch ({fst:core.Type.follow(t1), snd:core.Type.follow(t2)}) {
+					case {fst:TInst({cl_kind:KTypeParameter(l1)}, _), snd:TInst({cl_kind:KTypeParameter(l2)}, _)}:
+						try {
+							ocaml.List.iter2(function (t1, t2) { return core.Type.type_eq(EqCoreType, t2, t1); }, l1, l2);
+						}
+						catch (_:ocaml.Invalid_argument) {
+							core.Error.error("Type parameters must have the same number of constraints as core type", c.cl_pos);
+						}
+						catch (u:core.Type.Unify_error) {
+							var l = u.l;
+							context.Typecore.display_error(ctx, "Type parameter "+n2+ " has different constraint than in core type", c.cl_pos);
+							context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), c.cl_pos);
+						}
+					case {fst:t1, snd:t2}:
+						Sys.print(core.Type.s_type(core.Type.print_context(), t1) + " " + core.Type.s_type(core.Type.print_context(), t2));
+						throw false;
+				}
+			}, ccore.cl_params, c.cl_params);
+		}
+		catch (_:ocaml.Invalid_argument) {
+			core.Error.error("Class must have the same number of type parameters as core type", c.cl_pos);
+		}
+		switch (c.cl_doc) {
+			case None: c.cl_doc = ccore.cl_doc;
+			case Some(_):
+		}
+		function compare_fields(f:core.Type.TClassField, f2:core.Type.TClassField) {
+			var p = switch (f2.cf_expr) {
+				case None: c.cl_pos;
+				case Some(e): e.epos;
+			}
+			try {
+				core.Type.type_eq(EqCoreType, core.Type.apply_params(ccore.cl_params, c.cl_params.map(function (a) {return a.t;}), f.cf_type), f2.cf_type);
+			}
+			catch (u:core.Type.Unify_error) {
+				var l = u.l;
+				context.Typecore.display_error(ctx, "Field "+f.cf_name+ " has different type than in core type", p);
+				context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+			}
+			if (f2.cf_public != f.cf_public) {
+				switch ({fst:f2.cf_kind, snd:f.cf_kind}) {
+					case {fst:Method(MethInline), snd:Method(MethNormal)}: // allow to add 'inline'
+					case {fst:Method(MethNormal), snd:Method(MethInline)}: // allow to disable 'inline'
+					case _:
+						core.Error.error("Field "+f.cf_name+ " has different visibility than core type", p);
+				}
+			}
+			switch ({fst:core.Type.follow(f.cf_type), snd:core.Type.follow(f2.cf_type)}) {
+				case {fst:TFun({args:pl1}), snd:TFun({args:pl2})}:
+					if (pl1.length != pl2.length) {
+						core.Error.error("Argument count mismatch", p);
+					}
+					ocaml.List.iter2(function (arg1, arg2) {
+						if (arg1.name != arg2.name) {
+							core.Error.error("Method parameter name '"+arg2.name+"' should be '"+arg1.name+"'", p);
+						}
+					}, pl1, pl2);
+				case _:
+			}
+		}
+		function check_fields (fcore:Map<String,core.Type.TClassField>, fl:Map<String,core.Type.TClassField>) {
+			PMap.iter(function (i, f) {
+				if (f.cf_public) {
+					var f2 = try {
+						PMap.find(f.cf_name, fl);
+					}
+					catch (_:ocaml.Not_found) {
+						core.Error.error("Missing field " + i + " required by core type", c.cl_pos);
+					}
+					compare_fields(f, f2);
+				}
+			}, fcore);
+			PMap.iter(function (i, f) {
+				var p = switch (f.cf_expr) { case None: c.cl_pos; case Some(e): e.epos;}
+				if (f.cf_public && !core.Meta.has(Hack, f.cf_meta) && !PMap.mem(f.cf_name, fcore) && !ocaml.List.memq(f, c.cl_overrides)) {
+					core.Error.error("Public field " + i + " is not part of core type", p);
+				}
+			}, fl);
+
+		}
+		check_fields(ccore.cl_fields, c.cl_fields);
+		check_fields(ccore.cl_statics, c.cl_statics);
+		switch ({fst:ccore.cl_constructor, snd:c.cl_constructor}) {
+			case {fst:None, snd:None}:
+			case {fst:Some({cf_public:false})}:
+			case {fst:Some(f), snd:Some(f2)}: compare_fields(f, f2);
+			case {fst:None, snd:Some({cf_public:false})}:
+			case _: core.Error.error("Constructor differs from core type", c.cl_pos);
+		}
+	}
+
+	public static function check_global_metadata (ctx:context.Typecore.Typer, meta:core.Ast.Metadata, f_add:core.Ast.MetadataEntry->Void, mpath:core.Path, tpath:core.Path, so:Option<String>) {
+		var sl1 = core.Ast.full_dot_path(mpath, tpath);
+		var field_mode = switch (so) {
+			case None:
+				false;
+			case Some(s):
+				sl1.push(s);
+				true;
+		}
+		for (gm in ctx.g.global_metadata) {
+			var sl2 = gm.l;
+			var m = gm.me;
+			var recursive = gm.bs.a;
+			var to_types = gm.bs.b;
+			var to_fields = gm.bs.c;
+			var add = ((field_mode && to_fields) || (!field_mode && to_types)) && (core.Ast.match_path(recursive, sl1, sl2));
+			if (add) { f_add(m); }
+		}
+		if (ctx.is_display_file) {
+			context.Typecore.delay(ctx, PCheckConstraint, function() {
+				context.display.DisplayEmitter.check_display_metadata(ctx, meta);
+			});
+		}
+	}
+
+	public static function patch_class (ctx:context.Typecore.Typer, c:core.Type.TClass, fields:Array<core.Ast.ClassField>) : Array<core.Ast.ClassField>{
+		var path = switch (c.cl_kind) {
+			case KAbstractImpl(a): a.a_path;
+			case _: c.cl_path;
+		}
+		var h = try {
+			Some(ocaml.Hashtbl.find(ctx.g.type_patches, path));
+		}
+		catch (_:ocaml.Not_found) {
+			None;
+		};
+		return switch (h) {
+			case None: fields;
+			case Some(v):
+				var h = v.map; var hcl = v.tp;
+				c.cl_meta = c.cl_meta.concat(hcl.tp_meta);
+				function loop (acc:Array<core.Ast.ClassField>, t:Array<core.Ast.ClassField>) {
+					if (t.length == 0) {
+						return acc;
+					}
+					var f = t[0]; var l = t.slice(1);
+					// patch arguments types
+					switch (f.cff_kind) {
+						case FFun(ff):
+							function param (p:core.Ast.FunArg) : core.Ast.FunArg {
+								try {
+									var t2 = try {
+										ocaml.Hashtbl.find(h, {s:"$"+f.cff_name.pack+ "__"+p.name.pack, b:false});
+									}
+									catch (_:ocaml.Not_found) {
+										ocaml.Hashtbl.find(h, {s:"$"+p.name.pack, b:false});
+									}
+									return {name:p.name.clone(), opt:p.opt, meta:p.meta, type:switch (t2.tp_type) { case None: None; case Some(t): Some({ct:t, pos:core.Globals.null_pos});}, value:p.value};
+								}
+								catch (_:ocaml.Not_found) {
+									return p;
+								}
+							}
+							var _ff = ff.clone();
+							_ff.f_args = ff.f_args.map(param);
+							f.cff_kind = FFun(_ff);
+						case _:
+					}
+					// other patches
+					var match = try {
+						var _tmp:core.Ast.Access = AStatic;
+						Some(ocaml.Hashtbl.find(h, {s:f.cff_name.pack, b:ocaml.List.mem(_tmp, f.cff_access)}));
+					}
+					catch (_:ocaml.Not_found) { None; }
+					return switch (match) {
+						case None: loop([f].concat(acc), l);
+						case Some({tp_remove:true}): loop(acc, l);
+						case Some(p):
+							f.cff_meta = f.cff_meta.concat(p.tp_meta);
+							switch (p.tp_type) {
+								case None:
+								case Some(t):
+									f.cff_kind = switch (f.cff_kind) {
+										case FVar(_, e): FVar(Some({ct:t, pos:core.Globals.null_pos}), e);
+										case FProp(get, set, _, eo): FProp(get, set, Some({ct:t, pos:core.Globals.null_pos}), eo);
+										case FFun(f):
+											var _f = f.clone();
+											_f.f_type = Some({ct:t, pos:core.Globals.null_pos});
+											FFun(_f);
+									}
+							}
+							loop([f].concat(acc), l);
+					}
+				}
+				ocaml.List.rev(loop([], fields));
+		};
+	}
+	
+	public static function string_list_of_expr_path (expr:core.Ast.Expr) : Array<String> {
+		return try {
+			core.Ast.string_list_of_expr_path_raise(expr);
+		}
+		catch (_:ocaml.Exit) {
+			core.Error.error("Invalid path", expr.pos);
+		}
+	}
+
+	public static function build_enum_abstract (ctx:context.Typecore.Typer, c:core.Type.TClass, a:core.Type.TAbstract, fields:Array<core.Ast.ClassField>, p:core.Globals.Pos) : core.Ast.Expr {
+		for (field in fields) {
+			switch (field.cff_kind) {
+				case FVar(ct, eo) if (!ocaml.List.mem(core.Ast.Access.AStatic, field.cff_access)):
+					field.cff_access = [AStatic, (ocaml.List.mem(core.Ast.Access.APrivate, field.cff_access)) ? APrivate : APublic];
+					field.cff_meta.unshift({name:Impl, params:[], pos:core.Globals.null_pos});
+					field.cff_meta.unshift({name:Enum, params:[], pos:core.Globals.null_pos});
+					var ct = switch (ct) {
+						case Some(_): ct;
+						case None: Some(core.type.TExprToExpr.convert_type_(TAbstract(a, a.a_params.map(function (o) {return o.t; }))));
+					}
+					switch (eo) {
+						case None:
+							if (!c.cl_extern) {
+								core.Error.error("Value required", field.cff_pos);
+							}
+							else {
+								field.cff_kind = FProp({pack:"default", pos:core.Globals.null_pos}, {pack:"never", pos:core.Globals.null_pos}, ct, None);
+							}
+						case Some(e):
+							field.cff_access.unshift(AInline);
+							var e:core.Ast.Expr = {expr:ECast(e, None), pos:e.pos};
+							field.cff_kind = FVar(ct, Some(e));
+					}
+				case _:
+			}
+		}
+		return {expr:EVars([{name:{pack:"", pos:core.Globals.null_pos}, type:Some({ct:CTAnonymous(fields), pos:p}), expr:None}]), pos:p};
+	}
+
+	public static function is_java_native_function (meta:core.Ast.Metadata) : Bool {
+		try {
+			return switch (core.Meta.get(Native, meta)) {
+				case {name:Native, params:pl} if (pl.length == 0): true;
+				case _: false;
+			}
+		}
+		catch (_:ocaml.Not_found) {
+			return false;
+		}
+	}
+
+	public static function build_module_def (ctx:context.Typecore.Typer, mt:core.Type.ModuleType, meta:core.Ast.Metadata, fvars:Void->Array<core.Ast.ClassField>, context_init:Void->Void, fbuild:core.Ast.Expr->Void) {
+		function loop (fs:{fst:Array<Void->Void>, snd:Option<Void->Void>}, meta:core.Ast.MetadataEntry) : {fst:Array<Void->Void>, snd:Option<Void->Void>} {
+			var f_build = fs.fst; var f_enum = fs.snd;
+			var args = meta.params; var p = meta.pos;
+			return switch (meta.name) {
+				case Build:
+					var f = function () {
+						if (args.length == 1) {
+							core.Error.error("Invalid build parameters", p);
+						}
+						var _tmp = switch (args[0].expr) {
+							case ECall(epath, el): {fst:epath, snd:el};
+							case _: core.Error.error("Invalid build parameters", p);
+						}
+						var epath = _tmp.fst; var el = _tmp.snd;
+						var s = try {
+							ocaml.List.rev(string_list_of_expr_path(epath)).join(".");
+						}
+						catch (err:core.Error) {
+							core.Error.error("Build call parameter must be a class path", err.pos);
+						}
+						if (ctx.in_macro) {
+							core.Error.error("You cannot use @:build inside a macro : make sure that your type is not used in macro", p);
+						}
+						var old = ctx.g.get_build_infos;
+						ctx.g.get_build_infos = function () { return Some({mt:mt, l:core.Type.t_infos(mt).mt_params.map(function (a) { return a.t; }), cfs:fvars()}); };
+						context_init();
+						var r = try {
+							apply_macro(ctx, MBuild, s, el, p);
+						}
+						catch (e:Any) {
+							ctx.g.get_build_infos = old;
+							throw e;
+						}
+						ctx.g.get_build_infos = old;
+						switch (r) {
+							case None: core.Error.error("Build failure", p);
+							case Some(e): fbuild(e);
+						}
+					}
+					{fst:[f].concat(f_build), snd:f_enum};
+				case Enum:
+					var f_e = function () {
+						switch (mt) {
+							case TClassDecl(c={cl_kind:KAbstractImpl(a)}):
+								context_init();
+								var e = build_enum_abstract(ctx, c, a, fvars(), p);
+								fbuild(e);
+							case _:
+						}
+					}
+					{fst:f_build, snd:Some(f_e)};
+				case _:
+					{fst:f_build, snd:f_enum};
+			}
+		}
+		// let errors go through to prevent resume if build fails
+		var _tmp = ocaml.List.fold_left(loop, {fst:[], snd:None}, meta);
+		var f_build = _tmp.fst; var f_enum = _tmp.snd;
+		for (f in ocaml.List.rev(f_build)) {
+			f();
+		}
+		switch (f_enum) {
+			case None:
+			case Some(f): f();
+		}
+	}
+
+	// module ClassInitializer
+	// end module
+
+	public static function add_module (ctx:context.Typecore.Typer, m:core.Type.ModuleDef, p:core.Globals.Pos) : Void {
+		function f(t:core.Type.ModuleType) {
+			return check_module_types(ctx, m, p, t);
+		}
+		ocaml.List.iter(f, m.m_types);
+		ctx.g.modules.set(m.m_path, m);
+	}
+
+	public static function handle_path_display (ctx:context.Typecore.Typer, path:Array<core.Ast.PlacedName>, p:core.Globals.Pos) {
+		trace("TODO: typing.Typeload.handle_path_display");
+	}
+
+	/*
+	 * In this pass, we can access load and access other modules types, but we cannot follow them or access their structure
+	 * since they have not been setup. We also build a context_init list that will be evaluated the first time we evaluate
+	 * an expression into the context
+	 */
+	public static function init_module_type (ctx:context.Typecore.Typer, context_init:Ref<Array<Void->Void>>, do_init:Void->Void, last:core.Ast.TypeDecl) {
+		var decl = last.decl;
+		var p = last.pos;
+		function get_type(name:String) : core.Type.ModuleType {
+			try {
+				return ocaml.List.find(function(t) {
+					return core.Type.t_infos(t).mt_path.b == name;
+				}, ctx.m.curmod.m_types);
+			}
+			catch (_:ocaml.Not_found) {
+				throw false;
+			}
+		}
+		function check_path_display (path:Array<core.Ast.PlacedName>, p:core.Globals.Pos) {
+			// We cannot use ctx.is_display_file because the import could come from an import.hx file.
+			switch (ctx.com.display.dms_kind) {
+				case DMDiagnostics(b):
+					if (b || context.Display.is_display_file(p.pfile) && !p.pfile.endsWith("import.hx")) {
+						context.display.ImportHandling.add_import_position(ctx.com, p, path);
+						return;
+					}
+				case DMStatistics, DMUsage(_):
+					context.display.ImportHandling.add_import_position(ctx.com, p, path);
+					return;
+				case _:
+			}
+			if (context.Display.is_display_file(p.pfile)) {
+				 handle_path_display(ctx, path, p);
+			}
+		}
+		switch (decl) {
+			case EImport(i):
+				var path = i.pns;
+				var mode = i.mode;
+				ctx.m.module_imports.unshift({pns:path, mode:mode});
+				check_path_display(path, p);
+				function loop (acc:Array<core.Ast.PlacedName>, path:Array<core.Ast.PlacedName>) {
+					if (path.length > 0) {
+						var x = path[0];
+						if (haxeparser.HaxeParser.isLowerIdent(x.pack)) {
+							acc.unshift(x);
+							return loop(acc, path.slice(1));
+						}
+					}
+					return {fst:ocaml.List.rev(acc), snd:path};
+				}
+				var tmp = loop([], path);
+				var pack = tmp.fst;
+				var rest = tmp.snd;
+				if (rest.length == 0) {
+					switch (mode) {
+						case IAll:
+							ctx.m.wildcard_packages.unshift({l:pack.map(function (e) {return e.pack;}),pos:p});
+						case _:
+							if (path.length == 0) {
+								throw context.Display.DisplayException.DisplayToplevel(context.DisplayToplevel.collect(ctx, true));
+							}
+							else {
+								var p = path[path.length -1].pos;
+								core.Error.error("Module name must start with an uppercase letter", p);
+							}
+					}
+				}
+				else {
+					var tname = rest[0].pack;
+					var p2 = rest[0].pos;
+					var rest = rest.slice(1);
+					var p1 = (pack.length == 0) ? p2 : pack[0].pos;
+					var p_type = core.Ast.punion(p1, p2);
+					var md = ctx.g.do_load_module(ctx, new core.Path(pack.map(function (p) {return p.pack;}), tname) , p_type);
+					var types = md.m_types;
+					function no_private (t:{mt:core.Type.ModuleType, pos:core.Globals.Pos}) : Bool {
+						return !(core.Type.t_infos(t.mt).mt_private);
+					}
+					function chk_private (t:core.Type.ModuleType, p:core.Globals.Pos) {
+						if (core.Type.t_infos(t).mt_private) {
+							core.Error.error("You can't import a private type", p);
+						}
+					}
+					function has_name (name:String, t:core.Type.ModuleType) : Bool {
+						return core.Type.t_infos(t).mt_path.b == name;
+					}
+					function get_type (tname:String) : core.Type.ModuleType {
+						var t = try {
+							ocaml.List.find(has_name.bind(tname), types);
+						}
+						catch (_:ocaml.Not_found) {
+							var s = core.type.StringError.string_error(tname, types.map(function(mt:core.Type.ModuleType) {return core.Type.t_infos(mt).mt_path.b;}), "Module " + core.Globals.s_type_path(md.m_path) + " does not define type " + tname);
+							core.Error.error(s, p_type);
+						}
+						chk_private(t, p_type);
+						return t;
+					}
+					function rebind (t:core.Type.ModuleType, name:String) : core.Type.ModuleType {
+						if (!(name.charCodeAt(0) >= "A".code && name.charCodeAt(0) <= "Z".code)) {
+							core.Error.error("Type aliases must start with an uppercase letter", p);
+						}
+						var f = ctx.g.do_build_instance(ctx, t, p_type).f;
+						// create a temp private typedef, does not register it in module
+						return TTypeDecl({
+							t_path: new core.Path(md.m_path.a.concat(["_"+md.m_path.b]), name),
+							t_module: md,
+							t_pos: p,
+							t_name_pos: core.Globals.null_pos,
+							t_private: true,
+							t_doc: None,
+							t_meta: [],
+							t_params: core.Type.t_infos(t).mt_params,
+							t_type: f(core.Type.t_infos(t).mt_params.map(function (p) {return p.t;}))
+						});
+					}
+					function add_static_init (t:core.Type.ModuleType, name:Option<String>, s:String) {
+						var name = switch (name) {
+							case None: s;
+							case Some(n): n;
+						}
+						switch (core.Type.resolve_typedef(t)) {
+							case TClassDecl(c):
+								c.cl_build();
+								ocaml.PMap.find(s, c.cl_statics);
+								ctx.m.module_globals.set(name, {a:TClassDecl(c), b:s, pos:p});
+							case TEnumDecl(e):
+								ocaml.PMap.find(s, e.e_constrs);
+								ctx.m.module_globals.set(name, {a:TEnumDecl(e), b:s, pos:p});
+							case _: throw ocaml.Not_found.instance;
+						}
+					}
+					switch (mode) {
+						case INormal, IAsName(_):
+							var name = switch (mode) { case IAsName(n): Some(n); case _: None; };
+							if (rest.length == 0) {
+								switch (name) {
+									case None:
+										ctx.m.module_types = types.map(function (t) { return {mt:t, pos:p}; }).concat(ctx.m.module_types).filter(no_private);
+									case Some(newname):
+										ctx.m.module_types.unshift({mt:rebind(get_type(tname), newname), pos:p});
+								}
+							}
+							else if (rest.length == 1) {
+								var tsub = rest[0].pack;
+								var p2 = rest[0].pos;
+								var pu = core.Ast.punion(p1, p2);
+								try {
+									var tsub = ocaml.List.find(has_name.bind(tsub), types);
+									chk_private(tsub, pu);
+									ctx.m.module_types.unshift({mt:switch(name){
+										case None: tsub;
+										case Some(n): rebind(tsub, n);
+									}, pos:p});
+								}
+								catch (_:ocaml.Not_found) {
+									// this might be a static property, wait later to check
+									var tmain = get_type(tname);
+									context_init.get().unshift(function() {
+										try {
+											add_static_init(tmain, name, tsub);
+										}
+										catch (_:ocaml.Not_found) {
+											core.Error.error(core.Globals.s_type_path(core.Type.t_infos(tmain).mt_path) + "has no field or subtype "+tsub, p);
+										}
+									});
+								}
+							}
+							else {
+								var tsub = rest[0].pack;
+								var p2 = rest[0].pos;
+								var fname = rest[1].pack;
+								var p3 = rest[1].pos;
+								if (rest.length > 2) {
+									core.Error.error("Unexpected "+rest[2].pack, rest[2].pos);
+								}
+								var tsub = get_type(tsub);
+								context_init.get().unshift(function () {
+									try {
+										add_static_init(tsub, name, fname);
+									}
+									catch (_:ocaml.Not_found) {
+										core.Error.error(core.Globals.s_type_path(core.Type.t_infos(tsub).mt_path)+" has no field "+fname, core.Ast.punion(p, p3));
+									}
+								});
+							}
+						case IAll:
+							var t = if (rest.length == 0) {
+								get_type(tname);
+							}
+							else if (rest.length == 1) {
+								get_type(rest[1].pack);
+							}
+							else {
+								core.Error.error("Unexpected "+rest[2].pack, rest[2].pos);
+							}
+							context_init.get().unshift(function() {
+								switch (core.Type.resolve_typedef(t)) {
+									case TClassDecl(c):
+										c.cl_build;
+										ocaml.PMap.iter( function (_, cf){
+											if (!core.Type.has_meta(NoImportGlobal, cf.cf_meta)) {
+												ctx.m.module_globals.set(cf.cf_name, {a:TClassDecl(c), b:cf.cf_name, pos:p});
+											}
+										}, c.cl_statics);
+									case TAbstractDecl(a):
+										switch (a.a_impl) {
+											case Some(c):
+												c.cl_build;
+												ocaml.PMap.iter( function (_, cf){
+													if (!core.Type.has_meta(NoImportGlobal, cf.cf_meta)) {
+														ctx.m.module_globals.set(cf.cf_name, {a:TClassDecl(c), b:cf.cf_name, pos:p});
+													}
+												}, c.cl_statics);
+											case None:
+												core.Error.error("No statics to import from this type", p);
+										}
+									case TEnumDecl(e):
+										ocaml.PMap.iter( function (_, cf){
+											if (!core.Type.has_meta(NoImportGlobal, cf.ef_meta)) {
+												ctx.m.module_globals.set(cf.ef_name, {a:TEnumDecl(e), b:cf.ef_name, pos:p});
+											}
+										}, e.e_constrs);
+									case _: core.Error.error("No statics to import from this type", p);
+								}
+							});
+					}
+				}
+			case EUsing(path):
+				check_path_display(path, p);
+				var rev = ocaml.List.rev(path);
+				var t = if (rev.length > 1) {
+					var s1 = rev[0].pack;
+					var s2 = rev[1].pack;
+					var sl = rev.slice(2);
+					var mapped = sl.map(function (pn) { return pn.pack; });
+					if (haxeparser.HaxeParser.isLowerIdent(s2)) {
+						mapped.unshift(s2);
+						{
+						 tpackage: ocaml.List.rev(mapped),
+						 tname: s1,
+						 tsub: None,
+						 tparams: []
+						};
+					}
+					else {
+						{
+						 tpackage: ocaml.List.rev(mapped),
+						 tname: s2,
+						 tsub: Some(s1),
+						 tparams: []
+						};
+					}
+				}
+				else if (rev.length > 0) {
+					var s1 = rev[0].pack;
+					var sl = rev.slice(1);
+					var mapped = sl.map(function (pn) { return pn.pack; });
+					{
+					 tpackage: ocaml.List.rev(mapped),
+					 tname: s1,
+					 tsub: None,
+					 tparams: []
+					};
+				}
+				else {
+					throw context.Display.DisplayException.DisplayToplevel(context.DisplayToplevel.collect(ctx, true));
+				}
+				// do the import first
+				var types = switch (t.tsub) {
+					case None:
+						var md = ctx.g.do_load_module(ctx, new core.Path(t.tpackage, t.tname), p);
+						var types = md.m_types.filter(function (t) { return !core.Type.t_infos(t).mt_private; });
+						ctx.m.module_types = types.map(function (t) { return {mt:t, pos:p}; }).concat(ctx.m.module_types);
+						types;
+					case Some(_):
+						var t = load_type_def(ctx, p, t);
+						ctx.m.module_types.unshift({mt:t, pos:p});
+						[t];
+				}
+				// delay the using since we need to resolve typedefs
+				function filter_classes (types:Array<core.Type.ModuleType>) : Array<{tc:core.Type.TClass, pos:core.Globals.Pos}> {
+					function loop(acc, types:Array<core.Type.ModuleType>) : Array<{tc:core.Type.TClass, pos:core.Globals.Pos}> {
+						if (types.length == 0) {
+							return acc;
+						}
+						else {
+							var td = types[0];
+							var l = types.slice(1);
+							return switch (core.Type.resolve_typedef(td)) {
+								case TClassDecl(c):
+									acc.unshift({tc:c, pos:p});
+									loop(acc, l);
+								case TAbstractDecl(a):
+									switch (a.a_impl) {
+										case Some(c):
+											acc.unshift({tc:c, pos:p});
+										case None:
+									}
+									loop(acc, l);
+								case _:
+									loop(acc, l);
+							}
+						}
+					}
+					return loop([], types);
+				}
+				context_init.get().unshift(function () {
+					ctx.m.module_using = filter_classes(types).concat(ctx.m.module_using);
+				});
+			case EClass(d):
+				var c = switch (get_type(d.d_name.pack)) { case TClassDecl(c): c; case _: throw false;};
+				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
+					context.display.DisplayEmitter.display_module_type(ctx.com.display, switch (c.cl_kind) { case KAbstractImpl(a): TAbstractDecl(a); case _: TClassDecl(c); } ,d.d_name.pos);
+				}
+				check_global_metadata(ctx, c.cl_meta, function (m) {
+					c.cl_meta.unshift(m);
+				}, c.cl_module.m_path, c.cl_path, None);
+				var herits = d.d_flags;
+				c.cl_extern = ocaml.List.mem(core.Ast.ClassFlag.HExtern, herits);
+				c.cl_interface = ocaml.List.mem(core.Ast.ClassFlag.HInterface, herits);
+				var prev_build_count = new Ref(build_count.get() -1);
+				function build () {
+					var fl = typing.typeload.Inheritance.set_heritance(ctx, c, herits, p);
+					function _build () : core.Type.BuildState {
+						c.cl_build = function () { return Building([c]); };
+						try {
+							for (f in fl) { f(); }
+							typing.typeload.ClassInitializer.init_class(ctx, c, p, do_init, d.d_flags, d.d_data);
+							c.cl_build = function () { return Built; };
+							build_count.set(build_count.get()+1);
+							for (tp in c.cl_params) {
+								core.Type.follow(tp.t);
+							}
+							return Built;
+						}
+						catch (err:Build_canceled) {
+							var state = err.bs;
+							c.cl_build = context.Typecore.make_pass(ctx, _build);
+							function rebuild () {
+								context.Typecore.delay_late(ctx, PBuildClass, function () { c.cl_build(); });
+							}
+							switch (state) {
+								case Built: throw false;
+								case Building(cl):
+									if (build_count.get() == prev_build_count.get()) {
+										var arr = ocaml.List.map(function (c) { return core.Globals.s_type_path(c.cl_path); }, cl);
+										core.Error.error("Loop in class building prevent compiler termination ("+ arr.join(",") +")", c.cl_pos);
+									}
+									prev_build_count.set(build_count.get());
+									rebuild();
+									return Building([c].concat(cl));
+								case BuildMacro(f):
+									f.get().unshift(rebuild);
+									return state;
+							}
+
+						}
+						catch (_:Bool) { throw false; }
+						catch (exn:Any) {
+							c.cl_build = function () { return Built; };
+							throw exn;
+						}
+					}
+					return _build();
+				}
+				ctx.pass = PBuildClass;
+				ctx.curclass = c;
+				c.cl_build = context.Typecore.make_pass(ctx, build);
+				ctx.pass = PBuildModule;
+				ctx.curclass = core.Type.null_class();
+				context.Typecore.delay(ctx, PBuildClass, function() { c.cl_build(); });
+				if ((ctx.com.platform.equals(Java) || ctx.com.platform.equals(Cs)) && !c.cl_extern) {
+					context.Typecore.delay(ctx, PTypeField, function () {
+						var metas = check_strict_meta(ctx, c.cl_meta);
+						if (metas.length > 0) {
+							c.cl_meta = metas.concat(c.cl_meta);
+						}
+						function run_field(cf:core.Type.TClassField) {
+							var metas = check_strict_meta(ctx, cf.cf_meta);
+							if (metas.length > 0) { cf.cf_meta = metas.concat(cf.cf_meta); }
+							ocaml.List.iter(run_field, cf.cf_overloads);
+						}
+						ocaml.List.iter(run_field, c.cl_ordered_statics);
+						ocaml.List.iter(run_field, c.cl_ordered_fields);
+						switch (c.cl_constructor) {
+							case Some(f): run_field(f);
+							case _:
+						}
+
+					});
+				}
+			case EEnum(d):
+				var e = switch (get_type(d.d_name.pack)) { case TEnumDecl(e): e; case _: throw false; }
+				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
+					context.display.DisplayEmitter.display_module_type(ctx.com.display, TEnumDecl(e), d.d_name.pos);
+				}
+				var _ctx = ctx.clone();
+				_ctx.g = ctx.g;
+				var ctx = _ctx;
+				ctx.type_params = e.e_params;
+				var h = try {
+					Some(ocaml.Hashtbl.find(ctx.g.type_patches, e.e_path));
+				}
+				catch (_:ocaml.Not_found) {
+					None;
+				}
+				check_global_metadata(ctx, e.e_meta, function (m) { e.e_meta.unshift(m); }, e.e_module.m_path, e.e_path, None);
+				switch (h) {
+					case None:
+					case Some(s):
+						var _h = s.map;
+						var hcl = s.tp;
+						ocaml.Hashtbl.iter(function(_,_) { core.Error.error("Field type patch not supported for enums", e.e_pos);}, _h);
+						e.e_meta = e.e_meta.concat(hcl.tp_meta);
+				}
+				var constructs = new Ref(d.d_data);
+				function get_constructs() {
+					return constructs.get().map( function (c) : core.Ast.ClassField {
+						var kind:core.Ast.ClassFieldKind = if (c.ec_args.length == 0 && c.ec_params.length == 0) {
+							FVar(c.ec_type, None);
+						}
+						else {
+							FFun({
+								f_params:c.ec_params,
+								f_type:c.ec_type,
+								f_expr: None,
+								f_args: c.ec_args.map(function (a) : core.Ast.FunArg {
+									return {
+										name:{pack:a.name, pos:core.Globals.null_pos},
+										opt: a.opt,
+										meta: [],
+										type: Some(a.type),
+										value: None
+									};
+								})
+							});
+						}
+						return {
+							cff_name: c.ec_name,
+							cff_doc: c.ec_doc,
+							cff_meta: c.ec_meta,
+							cff_pos: c.ec_pos,
+							cff_access: [],
+							cff_kind: kind
+						};
+					});
+				}
+				function init() {
+					for (f in context_init.get()) {
+						f();
+					}
+				}
+				build_module_def(ctx, TEnumDecl(e), e.e_meta, get_constructs, init, function (expr:core.Ast.Expr) : Void {
+					var e = expr.expr;
+					var p = expr.pos;
+					switch (e) {
+						case EVars(vars) if (vars.length == 0 && vars[0].expr.equals(None)) :
+							switch (vars[0].type) {
+								case Some({ct:CTAnonymous(fields), pos:p}):
+									constructs.set(fields.map(function (f) {
+										var args = [];
+										var params = [];
+										var t = null;
+										switch (f.cff_kind) {
+											case FVar(_t, None): t = _t;
+											case FFun({f_params:pl, f_type:_t, f_expr:expr, f_args:al}):
+												switch (expr) {
+													case None:
+													case Some({expr:EBlock(l)}):
+														if (l.length != 0) {
+															core.Error.error("Invalid enum constructor in @:build result", p);
+														}
+														args = al.map(function (fa:core.Ast.FunArg) {
+															return switch (fa.type) {
+																case None: core.Error.error("Missing function parameter type", f.cff_pos);
+																case Some(t): {name:fa.name.pack, opt:fa.opt, type:t};
+															}
+														});
+														params = pl;
+														t = _t;
+													case _:
+														core.Error.error("Invalid enum constructor in @:build result", p);
+												}
+											case _:
+												core.Error.error("Invalid enum constructor in @:build result", p);
+										}
+										return {
+											ec_name: f.cff_name,
+											ec_doc: f.cff_doc,
+											ec_meta: f.cff_meta,
+											ec_pos: f.cff_pos,
+											ec_args: args,
+											ec_params: params,
+											ec_type: t
+										}
+									}));
+									return;
+								case _:
+							}
+						case _:
+					}
+					core.Error.error("Invalid enum constructor in @:build result", p);
+				});
+				var et:core.Type.T = TEnum(e, e.e_params.map(function (p) { return p.t; }));
+				var names = new Ref([]);
+				var index = new Ref(0);
+				var is_flat = new Ref(false);
+				var fields = new Ref(new Map<String, core.Type.TClassField>());
+				for (c in constructs.get()) {
+					var p = c.ec_pos;
+					var params = new Ref([]);
+					params.set(type_type_params(true, ctx, new core.Path([], c.ec_name.pack) ,function () { return params.get(); }, c.ec_pos, c.ec_params));
+					var _ctx = ctx.clone();
+					_ctx.g = ctx.g;
+					var ctx = _ctx;
+					ctx.type_params = params.get().concat(ctx.type_params);
+					var rt = switch (c.ec_type) {
+						case None: et;
+						case Some(_t):
+							var t = load_complex_type(ctx, true, p, _t);
+							switch (core.Type.follow(t)) {
+								case TEnum(te,_) if (!te.equals(e)):
+								case _: core.Error.error("Explicit enum type must be of the same enum type",p);
+							}
+							t;
+					}
+					var t:core.Type.T = if (c.ec_args.length == 0) {
+						rt;
+					}
+					else {
+						is_flat.set(false);
+						var pnames = new Ref(new Map<String, Bool>());
+						TFun({args:c.ec_args.map(function (funarg) {
+							switch (funarg.type.ct) {
+								case CTPath(_t):
+									if (_t.tpackage.length == 0 && _t.tname == "Void") {
+										core.Error.error("Arguments of type Void are not allowed in enum constructors", c.ec_pos);
+									}
+								case _:
+							}
+							if  (ocaml.PMap.mem(funarg.name, pnames.get())) {
+								core.Error.error("Duplicate parameter '"+ funarg.name + "' in enum constructor "+c.ec_name, p);
+							}
+							pnames.get().set(funarg.name, true);
+							return {name:funarg.name, opt:funarg.opt, t:load_type_hint(funarg.opt, ctx, p, Some(funarg.type))};
+						}), ret:rt});
+					}
+					if (ocaml.PMap.mem(c.ec_name.pack, e.e_constrs)) {
+						core.Error.error("Duplicate constructor " + c.ec_name.pack, p);
+					}
+					var f = {
+						ef_name: c.ec_name.pack,
+						ef_type: t,
+						ef_pos: p,
+						ef_name_pos: c.ec_name.pos,
+						ef_doc: c.ec_doc,
+						ef_index: index.get(),
+						ef_params: params.get(),
+						ef_meta: c.ec_meta
+					};
+					var cf = core.Type.mk_field(f.ef_name, f.ef_type, p, f.ef_name_pos);
+					cf.cf_kind = switch (core.Type.follow(f.ef_type)) {
+						case TFun(_): Method(MethNormal);
+						case _: Var({v_read:AccNormal, v_write:AccNo});
+					}
+					cf.cf_doc = f.ef_doc;
+					cf.cf_params = f.ef_params;
+					if (ctx.is_display_file && context.Display.is_display_position(p)) {
+						context.display.DisplayEmitter.display_enum_field(ctx.com.display, f, p);
+					}
+					e.e_constrs.set(f.ef_name, f);
+					fields.get().set(cf.cf_name, cf);
+					index.set(index.get() + 1);
+					names.get().unshift(c.ec_name.pack);
+				}
+				e.e_names = ocaml.List.rev(names.get());
+				// e.e_extern = e.e_extern; // in the compiler code
+				e.e_type.t_params = e.e_params;
+				e.e_type.t_type = TAnon({a_fields:fields.get(), a_status:new Ref<core.Type.AnonStatus>(EnumStatics(e))});
+				if (is_flat.get()) {
+					e.e_meta.unshift({name:FlatEnum, params:[], pos:core.Globals.null_pos});
+				}
+				if ((ctx.com.platform == Java || ctx.com.platform == Cs) && !e.e_extern) {
+					context.Typecore.delay(ctx, PTypeField, function () {
+						var metas = check_strict_meta(ctx, e.e_meta);
+						e.e_meta = metas.concat(e.e_meta);
+						ocaml.PMap.iter(function (_, ef) {
+							var metas = check_strict_meta(ctx, ef.ef_meta);
+							if (metas.length > 0) {
+								ef.ef_meta = metas.concat(ef.ef_meta);
+							}
+						}, e.e_constrs);
+					});
+				}
+			case ETypedef(d):
+				var t = switch (get_type(d.d_name.pack)) { 
+					case TTypeDecl(t): t;
+					case _: throw false;
+				}
+				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
+					context.display.DisplayEmitter.display_module_type(ctx.com.display, TTypeDecl(t), d.d_name.pos);
+				}
+				check_global_metadata(ctx, t.t_meta, function (m) {
+					t.t_meta.unshift(m);
+				}, t.t_module.m_path, t.t_path, None);
+				var _ctx = ctx.clone();
+				_ctx.g = ctx.g;
+				var ctx = _ctx;
+				ctx.type_params = t.t_params;
+				var tt = load_complex_type(ctx, true, p, d.d_data);
+				tt = switch (d.d_data.ct) {
+					case CTExtend(_): tt;
+					case CTPath(tp) if (tp.tname == "MacroType" && tp.tpackage.equals(["haxe", "macro"])):
+						// we need to follow MacrotYpe immediately since it might define other module types that we will load afterwards
+						if (t.t_type.equals(core.Type.follow(tt))) {
+							core.Error.error("Recursive typedef is not allowed", p);
+						}
+						tt;
+					case _:
+						if (core.Meta.has(Eager, d.d_meta)) {
+							core.Type.follow(tt);
+						}
+						else {
+							function check_rec(tt:core.Type.T) {
+								if (tt.equals(t.t_type)) {
+									core.Error.error("Recursive typedef is not allowed", p);
+								}
+								switch (tt) {
+									case TMono(r):
+										switch (r.get()) {
+											case None:
+											case Some(t): check_rec(t);
+										}
+									case TLazy(f):
+										check_rec(core.Type.lazy_type(f));
+									case TType(td, tl):
+										if (td.equals(t)) {
+											core.Error.error("Recursive typedef is not allowed", p);
+											check_rec(core.Type.apply_params(td.t_params, tl, td.t_type));
+										}
+									case _:
+								}
+							}
+							var r = context.Typecore.exc_protect(ctx, function (r) {
+								r.set(core.Type.lazy_processing(function () { return tt; }));
+								check_rec(tt);
+								return tt;
+							}, "typedef_rec_check");
+							TLazy(r);
+						}
+
+				}
+				switch (t.t_type) {
+					case TMono(r):
+						switch (r.get()) {
+							case None: r.set(Some(tt));
+							case Some(_): throw false;
+						}
+					case _: throw false;
+				}
+				if (ctx.com.platform.equals(Cs) && t.t_meta.length > 0) {
+					context.Typecore.delay(ctx, PTypeField, function () {
+						var metas = check_strict_meta(ctx, t.t_meta);
+						if (metas.length > 0) {
+							t.t_meta = metas.concat(t.t_meta);
+						}
+					});
+				}
+			case EAbstract(d):
+				var a = switch (get_type(d.d_name.pack)) {
+					case TAbstractDecl(a): a;
+					case _: throw false;
+				}
+				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
+					context.display.DisplayEmitter.display_module_type(ctx.com.display, TAbstractDecl(a), d.d_name.pos);
+				}
+				check_global_metadata(ctx, a.a_meta, function (m) { a.a_meta.unshift(m); }, a.a_module.m_path, a.a_path, None);
+				var _ctx = ctx.clone();
+				_ctx.g = ctx.g;
+				var ctx = _ctx;
+				ctx.type_params = a.a_params;
+				var is_type = new Ref(false);
+				function load_type(t:core.Ast.TypeHint, from:Bool) {
+					var _t = load_complex_type(ctx, true, p, t);
+					_t = if (!core.Meta.has(CoreType, a.a_meta)) {
+						if (is_type.get()) {
+							var r = context.Typecore.exc_protect(ctx, function (r) {
+								r.set(core.Type.lazy_processing( function() { return _t; }));
+								var at = core.Type.monomorphs(a.a_params, a.a_this);
+								try {
+									if (from){
+										core.Type.unify(_t, at);
+									}
+									else {
+										core.Type.unify(at, _t);
+									}
+								}
+								catch (_:core.Type.Unify_error) {
+									core.Error.error("You can only declare from/to with compatible types", p);
+								}
+								return _t;
+							}, "constraint");
+							TLazy(r);
+						}
+						else {
+							core.Error.error("Missing underlying type declaration or @:coreType declaration", p);
+						}
+					}
+					else {
+						if (core.Meta.has(Callable, a.a_meta)) {
+							core.Error.error("@:coreType abstracts cannot be @:callable", p);
+						}
+						_t;
+					}
+					return _t;
+				}
+				for (flag in d.d_flags) {
+					switch (flag) {
+						case AFromType(t): a.a_from.unshift(load_type(t, true));
+						case AToType(t): a.a_to.unshift(load_type(t, true));
+						case AIsType(t): 
+							if (a.a_impl == None) {
+								core.Error.error("Abstracts with underlying type must have an implementation",a.a_pos);
+							}
+							if (core.Meta.has(CoreType, a.a_meta)) {
+								core.Error.error("@:coreType abstracts cannot have an underlying type", p);
+							}
+							var at = load_complex_type(ctx, true, p, t);
+							context.Typecore.delay(ctx, PForce, function() {
+								switch (core.Type.follow(at)) {
+									case TAbstract(a2, _) if ( a.equals(a2) ):
+										core.Error.error("Abstract underlying type cannot be recursive", a.a_pos);
+									case _:
+								}
+							});
+							a.a_this = at;
+							is_type.set(true);
+						case AExtern:
+							switch (a.a_impl) {
+								case Some(c):
+									c.cl_extern = true;
+								case None: // Hmmmm....
+							}
+						case APrivAbstract:
+					}
+				}
+				if (!is_type.get()) {
+					if (core.Meta.has(CoreType, a.a_meta)) {
+						a.a_this = TAbstract(a, a.a_params.map(function (p) { return p.t; }));
+					}
+					else {
+						core.Error.error("Abstract is missing underlying type declaration", a.a_pos);
+					}
+				}
+		}
+	}
+
+	public static function module_pass_2 (ctx:context.Typecore.Typer, m:core.Type.ModuleDef, decls:Array<{fst:core.Type.ModuleType, snd:core.Ast.TypeDecl}>, tdecls:Array<core.Ast.TypeDecl>, p:core.Globals.Pos) : Void {
+		/*
+		 * here is an additional PASS 1 phase, which define the type parameters for all module types.
+		 * Constraints are handled lazily (no other type is loaded) because they might be recursive anyway
+		 */
+		for (dec in decls) {
+			switch (dec.fst) {
+				case TClassDecl(c):
+					switch (dec.snd.decl) {
+						case EClass(d):
+							c.cl_params = type_type_params(ctx, c.cl_path, function () { return c.cl_params.clone();}, dec.snd.pos, d.d_params);
+							if (core.Meta.has(Generic, c.cl_meta) && c.cl_params.length > 0) {
+								c.cl_kind = KGeneric;
+							}
+							if (core.Meta.has(GenericBuild, c.cl_meta)) {
+								if (ctx.in_macro) {
+									core.Error.error("@:genericBuild cannot be used in macros", c.cl_pos);
+								}
+								c.cl_kind = KGenericBuild(d.d_data);
+							}
+							if (c.cl_path == new core.Path(["haxe", "macro"], "MacroType")) {
+								c.cl_kind = KMacroType;
+							}
+
+						default: throw false;
+					}
+				case TEnumDecl(e):
+					switch (dec.snd.decl) {
+						case EEnum(d): e.e_params = type_type_params(ctx, e.e_path, function () { return e.e_params.clone();}, dec.snd.pos, d.d_params);
+						case _: throw false;
+					}
+				case TTypeDecl(t):
+					switch (dec.snd.decl) {
+						case ETypedef(d): t.t_params = type_type_params(ctx, t.t_path, function () { return t.t_params.clone();}, dec.snd.pos, d.d_params);
+						case _: throw false;
+					}
+				case TAbstractDecl(a):
+					switch (dec.snd.decl) {
+						case EAbstract(d): a.a_params = type_type_params(ctx, a.a_path, function () { return a.a_params.clone();}, dec.snd.pos, d.d_params);
+						case _: throw false;
+					}
+				default: throw false;
+			}
+		}
+		// setup module types
+		var context_init = new ocaml.Ref([]);
+		function do_init() {
+			var ci = context_init.get().copy();
+			if (ci.length == 0) {}
+			else {
+				for (f in ocaml.List.rev(ci)) {
+					f();
+				}
+				context_init.set([]);
+			}
+		}
+		for (tdecl in tdecls) {
+			init_module_type(ctx, context_init, do_init, tdecl);
+		}
+	}
+
+	public static function type_types_into_module (ctx:context.Typecore.Typer, m:core.Type.ModuleDef, tdecls:Array<core.Ast.TypeDecl>, p:core.Globals.Pos) {
+		var tmp = module_pass_1(ctx, m, tdecls, p);
+		var decls = tmp.fst;
+		var tdecls = tmp.snd;
+		var types = ocaml.List.map(function (e) { return e.fst; }, decls);
+		for (t in types) {
+			check_module_types(ctx, m, p, t);
+		}
+		m.m_types = m.m_types.concat(types);
+		// define the per-module context for the next pass
+		var ctx:context.Typecore.Typer = {
+			com: ctx.com,
+			g: ctx.g,
+			t: ctx.t,
+			// t: ctx.t.clone(),
+			m: {
+				curmod:m,
+				module_types: ocaml.List.map(function (t) { return {mt:t, pos:core.Globals.null_pos}; }, ctx.g.std.m_types),
+				module_using: [],
+				module_globals: new Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>(),
+				wildcard_packages: [],
+				module_imports: []
+			},
+			is_display_file: ctx.com.display.dms_display && context.Display.is_display_file(m.m_extra.m_file),
+			meta:[],
+			this_stack: [],
+			with_type_stack: [],
+			call_argument_stack: [],
+			pass: PBuildModule,
+			on_error: function (ctx, msg, p) { ctx.com.error(msg, p); },
+			macro_depth: ctx.macro_depth,
+			curclass: core.Type.null_class(),
+			curfield: core.Type.null_field(),
+			tthis: ctx.tthis,
+			ret: ctx.ret,
+			locals: new Map<String, core.Type.TVar>(),
+			type_params: [],
+			curfun: FunStatic,
+			untyped_: false,
+			in_macro: ctx.in_macro,
+			in_display: false,
+			in_loop: false,
+			opened: [],
+			in_call_args: false,
+			vthis: None
+		};
+		if (!ctx.g.std.equals(core.Type.null_module)) {
+			core.Type.add_dependency(m, ctx.g.std);
+			load_core_type(ctx, "String");
+		}
+		module_pass_2(ctx, m, decls, tdecls, p);
+		return ctx;
+	}
+
+	/*
+	 * Creates a module context for [m] and types [tdecls] using it.
+	 */
+	public static function handle_import_hx (ctx:context.Typecore.Typer, m:core.Type.ModuleDef, decls:Array<core.Ast.TypeDecl>, p:core.Globals.Pos) {
+		var path_split = ocaml.List.rev(core.Path.get_path_parts(m.m_extra.m_file));
+		if (path_split.length > 0) {
+			path_split.shift();
+		}
+		function join (l:Array<String>) : String {
+			var arr = l.copy();
+			arr.unshift("import.hx");
+			return ocaml.List.rev(arr).join(core.Path.path_sep);
+		}
+		function loop (path:Array<String>, pack:Array<String>) : Array<String> {
+			if (pack.length == 0) {
+				return [join(path)];
+			}
+			else if (pack.length > 0 && path.length > 0) {
+				var end = loop(path.slice(1), pack.slice(1));
+				var temp = path.slice(1);
+				temp.unshift(path[0]);
+				end.unshift(join(temp));
+				return end;
+			}
+			else {
+				return [];
+			}
+		}
+		var candidates = loop(path_split, m.m_path.a);
+		function make_import_module(path:String, r:Array<core.Ast.TypeDecl>) {
+			ctx.com.parser_cache.set(path, r);
+			// We use the file path as module name to make it unique. This may or may not be a good idea...
+			var m_import = make_module(ctx, new core.Path([], path), path, p);
+			m_import.m_extra.m_kind = MImport;
+			add_module(ctx, m_import, p);
+			return m_import;
+		}
+
+		function f(acc:Array<core.Ast.TypeDecl>,path:String) {
+			var decls = try {
+				var r = ocaml.Hashtbl.find(ctx.com.parser_cache, path);
+				var mimport = ocaml.Hashtbl.find(ctx.g.modules, new core.Path([], path));
+				if (!mimport.m_extra.m_kind.equals(MFake)) {
+					core.Type.add_dependency(m, mimport);
+				}
+				r;
+			}
+			catch (_:ocaml.Not_found) {
+				if (sys.FileSystem.exists(path)) {
+					var tmp = parse_file(ctx.com, path, p);
+					var r = tmp.decls;
+					function  f (p:core.Ast.TypeDecl) {
+						switch (p.decl) {
+							case EImport(_), EUsing(_):
+							default:
+								core.Error.error("Only import and using is allowed in import.hx files", p.pos);
+						}
+					}
+					ocaml.List.iter(f, r);
+					core.Type.add_dependency(m, make_import_module(path, r));
+					r;
+				}
+				else {
+					var r = [];
+					// Add empty decls so we don't check the file system all the time.
+					make_import_module(path, r).m_extra.m_kind = MFake;
+					r;
+				}
+			}
+			return decls.concat(acc);
+		}
+		return ocaml.List.fold_left(f, decls, candidates);
+	}
+
+	/*
+	 * Creates a new module and types [tdecls] into it.
+	 */
+	public static function type_module (ctx:context.Typecore.Typer, mpath:core.Path, file:String, ?is_extern:Bool=false, tdecls:Array<core.Ast.TypeDecl>, p:core.Globals.Pos) : core.Type.ModuleDef{
+		var m = make_module(ctx, mpath, file, p);
+		ctx.g.modules.set(m.m_path, m);
+		var tdecls = handle_import_hx(ctx, m, tdecls, p);
+		var ctx = type_types_into_module(ctx, m, tdecls, p);
+		if (is_extern) {
+			m.m_extra.m_kind = MExtern;
+		}
+		if (ctx.is_display_file) {
+			switch (ctx.com.display.dms_kind) {
+				case DMResolve(s):
+					resolve_position_by_path(ctx, {tname:s, tpackage:[], tsub:None, tparams:[]}, p);
+				case _:
+			}
+		}
+		return m;
+	}
+
+	public static function resolve_module_file (com:context.Common.Context, m:core.Path, remap:Array<String>, p:core.Globals.Pos) : String {
+		var forbid = false;
+		function compose_path (no_rename:Bool) : String {
+			var res:String;
+			if (m.a.length == 0) {
+				res = m.b;
+			}
+			else {
+				var x = m.a[0];
+				var l = m.a.slice(1);
+				var xx = com.package_rules.get(x);
+				var e = x;
+				if (xx != null) {
+					e = switch (xx) {
+						case Forbidden:
+							forbid = true;
+							x;
+						case Directory(d):
+							(no_rename) ? x : d;
+						case Remap(d):
+							while (remap.length > 0) { remap.pop(); }
+							for (el in l) { remap.push(el); }
+							remap.unshift(d);
+							d;
+					}
+				}
+				l.unshift(e);
+				res = l.join("/") + "/" + m.b;
+			}
+			return res + ".hx";
+		}
+		
+		var file = try {
+			context.Common.find_file(com, compose_path(false));
+		}
+		catch (e:ocaml.Not_found) {
+			context.Common.find_file(com, compose_path(true));
+		}
+
+		file = switch (m.b.toLowerCase()) {
+			case "con", "aux", "prn", "nul", "com1", "com2", "com3", "lpt1", "lpt2", "lpt3":
+				// these names are reserved by the OS - old DOS legacy, such files cannot be easily created but are reported as visible
+				if (Sys.systemName() == "Windows") {
+					if (sys.FileSystem.exists(file)) {
+						(sys.FileSystem.stat(file).size > 0) ? file : throw ocaml.Not_found.instance;
+					}
+					else {
+						throw ocaml.Not_found;
+					}
+				}
+				else {
+					file;
+				}
+			default: file;
+		};
+		// if we try to load a std.xxxx class and resolve a real std file, the package name is not valid, ignore
+		if (m.a.length > 0 && m.a[0] == "std") {
+			var ffile = core.Path.unique_full_path(file);
+			var flag = false;
+			for (path in com.std_path) {
+				var ppath = try {
+					core.Path.unique_full_path(path);
+				}
+				catch (e:Any) { path; }
+				if (StringTools.startsWith(ffile, ppath)) {
+					flag = true;
+					break;
+				}
+			}
+			if (!flag) {
+				throw ocaml.Not_found.instance;
+			}
+		}
+		if (forbid) {
+			var decls = parse_hook.get()(com, file, p).decls;
+			function loop(decls:Array<core.Ast.TypeDecl>) : core.Ast.Metadata {
+				if (decls.length == 0) { return []; }
+				var first = decls[0];
+				return switch (first.decl) {
+					case EImport(_), EUsing(_): loop(decls.slice(1));
+					case EClass(d): d.d_meta;
+					case EEnum(d): d.d_meta;
+					case EAbstract(d): d.d_meta;
+					case ETypedef(d): d.d_meta;
+				}
+			}
+			var meta = loop(decls);
+			if (!core.Meta.has(NoPackageRestrict, meta)) {
+				if (m.a.length == 0) {
+					throw false;
+				}
+				var x = m.a[0];
+				throw new context.Typecore.Forbid_package(
+					{pack:x, m:m, p:p},
+					[],
+					(context.Common.defined(com, Macro)) ? "macro" : core.Globals.platform_name(com.platform)
+				);
+			}
+		}
+		return file;
+	}
+
+	public static function parse_module (ctx:context.Typecore.Typer, m:core.Path, p:core.Globals.Pos) : {file:String, decls:Array<core.Ast.TypeDecl>} {
+		var remap = m.a;
+		var file = resolve_module_file(ctx.com, m, remap, p);
+		var ph = parse_hook.get()(ctx.com, file, p);
+		var pack = ph.pack;
+		var decls = ph.decls;
+		
+		if (!ocaml.List.equals(pack, remap)) {
+			function spack(m:Array<String>) : String {
+				return (m.length == 0) ? "<empty>" : m.join(".");
+			}
+			if (p == core.Globals.null_pos) {
+				context.Typecore.display_error(ctx, "Invalid commandline class : "+core.Globals.s_type_path(m) + " should be " + core.Globals.s_type_path(new core.Path(pack, m.b)), p);
+			}
+			else {
+				context.Typecore.display_error(ctx, "Invalid package : "+spack(m.a) + " should be " + spack(pack), p);
+			}
+		}
+
+		if (!ocaml.List.equals(remap, m.a)) {
+			// build typedefs to redirect to real package
+			var init:Array<core.Ast.TypeDecl> = [{decl:core.Ast.TypeDef.EImport(
+				{pns:ocaml.List.map(function (s:String) {return {pack:s, pos:core.Globals.null_pos}; }, remap.concat([m.b])) ,
+				 mode:INormal}
+				), pos:core.Globals.null_pos}];
+			
+				function f (acc:Array<core.Ast.TypeDecl>, t:core.Ast.TypeDecl) {
+					function build (f:Dynamic, d:core.Ast.Definition<Dynamic, Dynamic>){
+						var priv = ocaml.List.mem(f, d.d_flags);
+						var data:core.Ast.TypePath = if (priv) {
+							{tpackage:[], tname:"Dynamic", tparams:[], tsub:None};
+						}
+						else {
+							{
+							tpackage:remap,
+							tname:d.d_name.pack,
+							tparams:ocaml.List.map(
+								function (tp) : core.Ast.TypeParamOrConst {
+									return TPType({
+										ct:CTPath({
+											tpackage: [],
+											tname: tp.tp_name.pack,
+											tparams: [],
+											tsub: None
+										}),
+										pos:core.Globals.null_pos
+									});
+								}, d.d_params),
+							tsub:None
+							}
+						}
+						acc.unshift({
+							decl:ETypedef({
+								d_name: d.d_name,
+								d_doc: None,
+								d_meta: [],
+								d_params: d.d_params,
+								d_flags: (priv) ? [EPrivate] : [],
+								d_data: {ct:CTPath(data), pos:core.Globals.null_pos}
+							}),
+							pos:t.pos});
+						return acc;
+					}
+					return switch (t.decl) {
+						case EClass(d) : build(core.Ast.ClassFlag.HPrivate,d);
+						case EEnum(d) : build(core.Ast.EnumFlag.EPrivate,d);
+						case ETypedef(d) : build(core.Ast.EnumFlag.EPrivate,d);
+						case EAbstract(d) : build(core.Ast.AbstractFlag.APrivAbstract,d);
+						case EImport(_), EUsing(_): acc;
+					}
+				}
+
+			var d = ocaml.List.rev(ocaml.List.fold_left(f, init, decls));
+			return {file:file, decls:d};
+		}
+		else {
+			return {file:file, decls:decls};
+		}
+	}
+
+	public static function load_module (ctx:context.Typecore.Typer, m:core.Path, p:core.Globals.Pos) : core.Type.ModuleDef {
+		var m2 = try {
+			ocaml.Hashtbl.find(ctx.g.modules,m, true);
+		}
+		catch (_:ocaml.Not_found) {
+			switch (type_module_hook.get()(ctx, m, p)) {
+				case Some(mm): mm;
+				case None:
+					var is_extern = false;
+					var pm = try {
+						parse_module(ctx, m, p);
+					}
+					catch (_:ocaml.Not_found) {
+						function loop(e:Array<core.Path->core.Globals.Pos->Option<{s:String, pack:core.Ast.Package}>>) : {file:String,  decls:Array<core.Ast.TypeDecl>} {
+							if (e.length == 0) {
+								throw new core.Error(Module_not_found(m), p);
+							}
+							else {
+								var load = e[0];
+								var l = e.slice(1);
+								return switch (load(m, p)) {
+									case None: loop(l);
+									case Some(s):
+										{file:s.s, decls:s.pack.decls};
+								}
+							}
+						}
+						is_extern = true;
+						loop(ctx.com.load_extern_type);
+					}
+					var file = pm.file;
+					var decls = pm.decls;
+					try {
+						type_module(ctx, m, file, decls, p);
+					}
+					catch (err:context.Typecore.Forbid_package) {
+						if (p == core.Globals.null_pos) { throw err; }
+						else {
+							err.pl.unshift(p);
+							throw err;
+						}
+					}
+			};
+		}
+		core.Type.add_dependency(ctx.m.curmod, m2);
+		if (ctx.pass == PTypeField) {
+			context.Typecore.flush_pass(ctx, PBuildClass, "load_module");
+		}
+		return m2;
+	}
+
+	// type generic_context = { ...
+
+	public static function make_generic (ctx:context.Typecore.Typer, ps:core.Type.TypeParams, pt:Array<core.Type.T>, p:core.Globals.Pos) : Generic_context {
+		function loop (l1:core.Type.TypeParams, l2:Array<core.Type.T>) {
+			var length1 = l1.length;
+			var length2 = l2.length;
+			if (length1 == 0 && length2 == 0) { return []; }
+			if (length1 > 0) {
+				var x = l1[0].name;
+				var t1 = l1[0].t;
+				switch (t1) {
+					case TLazy(f):
+						return loop([{name:x, t:core.Type.lazy_type(f)}].concat(l1.slice(1)), l2);
+					case _:
+				}
+				if (length2 > 0) {
+					var t2 = l2[0];
+					var res = loop(l1.slice(1), l2.slice(1));
+					res.unshift({fst:t1, snd:t2});
+					return res;
+				}
+			}
+			throw false;
+		}
+		var name = ocaml.List.map2(function (tp, t) {
+			function s_type_path_underscore(path:core.Path) : String {
+				return (path.a.length == 0) ? path.b : path.a.join("_") + "_" + path.b;
+			}
+			var loop_tl : Array<core.Type.T>->String = null;
+			function loop (top, t) {
+				return switch (core.Type.follow(t)) {
+					case TInst(c, tl): s_type_path_underscore(c.cl_path) + loop_tl(tl);
+					case TEnum(en, tl): s_type_path_underscore(en.e_path) + loop_tl(tl);
+					case TAbstract(a, tl): s_type_path_underscore(a.a_path) + loop_tl(tl);
+					case _ if (!top): "_"; // allow unknown/incompatible types as type parameters to retain old behavior
+					case TMono(_): throw new GenericException("Could not determine type for parameter "+tp.name, p);
+					case TDynamic(_): "Dynamic";
+					case t: throw new GenericException("Type parameter must be a class or enum instance (found "+core.Type.s_type(core.Type.print_context(), t) + ")", p);
+				}
+			}
+			loop_tl = function (tl) {
+				return (tl.length == 0) ? "" : "_" + tl.map(loop.bind(false)).join("_");
+			}
+			loop(true, t);
+		}, ps, pt).join("_");
+		var _ctx = ctx.clone();
+		_ctx.g = ctx.g;
+		return {
+			// ctx:ctx, 
+			ctx:_ctx, 
+			subst: loop(ps, pt),
+			name: name,
+			p: p.clone(),
+			mg: None
+		};
+	}
+
+	public static function generic_substitute_type (gctx:Generic_context, t:core.Type.T) : core.Type.T {
+		return switch (t) {
+			case TInst(c2={cl_kind:KGeneric}, tl2):
+				// maybe loop, or generate cascading generics
+				var f = gctx.ctx.g.do_build_instance(gctx.ctx, TClassDecl(c2), gctx.p).f;
+				var t = f(tl2.map(generic_substitute_type.bind(gctx)));
+				switch ({fst:core.Type.follow(t), snd:gctx.mg}) {
+					case {fst:TInst(c, _), snd:Some(m)}:
+						core.Type.add_dependency(m, c.cl_module);
+					case _:
+				}
+				return t;
+			case _:
+				try {
+					generic_substitute_type(gctx, ocaml.List.assq(t, gctx.subst));
+				}
+				catch (_:ocaml.Not_found) {
+					core.Type.map(generic_substitute_type.bind(gctx), t);
+				}
+		}
+	}
+
+	public static function generic_substitute_expr (gctx:Generic_context, e:core.Type.TExpr) : core.Type.TExpr {
+		var vars = new Map<Int, core.Type.TVar>();
+		function build_var (v:core.Type.TVar) : core.Type.TVar {
+			return try {
+				ocaml.Hashtbl.find(vars, v.v_id);
+			}
+			catch (_:ocaml.Not_found) {
+				var v2 = core.Type.alloc_var(v.v_name, generic_substitute_type(gctx, v.v_type), v.v_pos);
+				v2.v_meta = v.v_meta.copy();
+				vars.set(v.v_id, v2);
+				v2;
+			}
+		}
+		function build_expr(e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TField(e1, FInstance(c={cl_kind:KGeneric}, tl, cf)):
+					var f = gctx.ctx.g.do_build_instance(gctx.ctx, TClassDecl(c), gctx.p).f;
+					var t = f(tl.map(generic_substitute_type.bind(gctx)));
+					var fa = try {
+						core.Type.quick_field(t, cf.cf_name);
+					}
+					catch (_:ocaml.Not_found) {
+						core.Error.error("Type "+core.Type.s_type(core.Type.print_context(), t)+" has no field "+cf.cf_name+" (possible typing order issue)", e.epos);
+					}
+					var _e = e.clone();
+					_e.eexpr = TField(e1, fa);
+					build_expr(_e);
+				case TTypeExpr(TClassDecl(c={cl_kind:KTypeParameter(_)})):
+					function loop (subst:Array<{fst:core.Type.T, snd:core.Type.T}>) : core.Type.T {
+						if (subst.length > 0) {
+							var _tmp = subst[0];
+							return switch (core.Type.follow(_tmp.fst)) {
+								case TInst(c2, _) if (c.equals(c2)): _tmp.snd;
+								case _: loop(subst.slice(1));
+							}
+						}
+						else {
+							throw ocaml.Not_found.instance;
+						}
+					}
+					return try {
+						var t = loop(gctx.subst);
+						switch (core.Type.follow(t)) {
+							case TInst({cl_kind:KExpr(e)}, _): context.Typecore.type_expr(gctx.ctx, e, Value);
+							case _: core.Error.error("Only Const type parameters can be used as value", e.epos);
+						}
+					}
+					catch (_:ocaml.Not_found) {
+						e;
+					}
+				case _:
+					core.Type.map_expr_type(build_expr, generic_substitute_type.bind(gctx), build_var, e);
+			};
+		}
+		return build_expr(e);
+	}
+
+	public static function get_short_name () : Void->String {
+		var i = new Ref(-1);
+		return function () {
+			i.set(i.get()+1);
+			return "Hx___short___hx_type_"+i.get();
+		}
+	}
+
+	public static function build_generic (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, tl:Array<core.Type.T>) : core.Type.T {
+		var pack = c.cl_path.a;
+		var recurse = new Ref(false);
+		function check_recursive(t) {
+			switch (core.Type.follow(t)) {
+				case TInst(c2, tl):
+					switch (c2.cl_kind) {
+						case KTypeParameter(tl):
+							if (!is_generic_parameter(ctx, c2) && core.Type.has_ctor_constraint(c2)) {
+								core.Error.error("Type parameters with a constructor cannot be used non-genercially",p);
+							}
+							recurse.set(true);
+						case _:
+					}
+					ocaml.List.iter(check_recursive, tl);
+				case _:
+			}
+		}
+		ocaml.List.iter(check_recursive, tl);
+		return if (recurse.get() || !(ctx.com.display.dms_full_typing)) {
+			TInst(c, tl); // build a normal instance
+		}
+		else {
+			var gctx = make_generic(ctx, c.cl_params, tl, p);
+			var name = c.cl_path.b + "_" + gctx.name;
+			return try {
+				load_instance(ctx, {tp:{tpackage:pack, tname:name, tparams:[], tsub:None}, pos:p}, false, p);
+			}
+			catch (err:core.Error) {
+				switch (err.msg) {
+					case Module_not_found(path) if (path.equals(new core.Path(pack, name))):
+						var m = try {
+							ocaml.Hashtbl.find(ctx.g.modules, ocaml.Hashtbl.find(ctx.g.types_module, c.cl_path));
+						}
+						catch (_:ocaml.Not_found) {
+							throw false;
+						}
+						c.cl_build(); // make sure the super class is alread setup
+						var mg = {
+							m_id: core.Type.alloc_mid(),
+							m_path: path, //new core.Path(pack, name),
+							m_types: [],
+							m_extra: core.Type.module_extra(core.Globals.s_type_path(path), m.m_extra.m_sign, 0.0, MFake, m.m_extra.m_check_policy)
+						}
+						gctx.mg = Some(mg);
+						var cg = core.Type.mk_class(mg, path, c.cl_pos, core.Globals.null_pos);
+						mg.m_types = [TClassDecl(cg)];
+						ctx.g.modules.set(mg.m_path, mg);
+						core.Type.add_dependency(mg, m);
+						core.Type.add_dependency(ctx.m.curmod, mg);
+						// ensure that type parameters are set in dependencies
+						var dep_stack = new Ref([]);
+						var add_dep : core.Type.ModuleDef->Array<core.Type.T>->Void = null;
+						function loop (t:core.Type.T) {
+							if (!ocaml.List.memq(t, dep_stack.get())) {
+								dep_stack.get().unshift(t);
+								switch (t) {
+									case TInst(c, tl): add_dep(c.cl_module, tl);
+									case TEnum(e, tl): add_dep(e.e_module, tl);
+									case TType(t, tl): add_dep(t.t_module, tl);
+									case TAbstract(a, tl): add_dep(a.a_module, tl);
+									case TMono(r):
+										switch (r.get()) {
+											case None:
+											case Some(t): loop(t);
+										}
+									case TLazy(f):
+										loop(core.Type.lazy_type(f));
+									case TDynamic(t2):
+										if (t == t2.get()) {}
+										else {
+											loop(t2.get());
+										}
+									case TAnon(a):
+										PMap.iter(function (_, f) {return loop(f.cf_type);}, a.a_fields);
+									case TFun({args:args, ret:ret}):
+										ocaml.List.iter(function (arg) { return loop(arg.t); }, args);
+										loop(ret);
+								}
+							}
+						}
+						add_dep = function (m, tl) {
+							core.Type.add_dependency(mg, m);
+							ocaml.List.iter(loop, tl);
+						};
+						ocaml.List.iter(loop, tl);
+						function build_field(cf_old:core.Type.TClassField) {
+							// We have to clone the type parameters (issue #4672). We cannot substitute the constraints immediately because
+			   				// we need the full substitution list first.
+							var temp = ocaml.List.fold_left(function(a, b) {
+								var subst = a.fst; var params = a.snd; var s = b.name; var t = b.t;
+								var _t = core.Type.follow(t);
+								return switch (_t) {
+									case TInst(c, tl):
+										var _c = c.clone(); 
+										_c.cl_module = mg;
+										var t2:core.Type.T = TInst(_c, tl.clone());
+										return {fst:[{fst:t, snd:t2}].concat(subst), snd:[{name:s, t:t2}].concat(params)};
+									case _: throw false;
+								};
+							}, {fst:[], snd:[]}, cf_old.cf_params);
+							var param_subst = temp.fst;
+							var params = temp.snd;
+							gctx.subst = param_subst.concat(gctx.subst);
+							var cf_new = cf_old.clone();
+							cf_new.cf_pos = cf_old.cf_pos.clone(); // copy; // wtf ?
+							// Type parameter constraints are substituted here.
+							cf_new.cf_params = ocaml.List.rev_map(function(tp) {
+								var s = tp.name; var t = tp.t;
+								return switch (core.Type.follow(t)) {
+									case TInst(c={cl_kind:KTypeParameter(tl1)}, _):
+										var tl1 = tl1.map(generic_substitute_type.bind(gctx));
+										c.cl_kind = KTypeParameter(tl1);
+										{name:s, t:t};
+									case _: throw false;
+								}
+							}, params);
+							function f() {
+								var t = generic_substitute_type(gctx, cf_old.cf_type);
+								core.Type.follow(t);
+								try {
+									switch (cf_old.cf_expr) {
+										case None:
+											switch (cf_old.cf_kind) {
+												case Method(_) if (!c.cl_interface && !c.cl_extern):
+													context.Typecore.display_error(ctx, "Field "+cf_new.cf_name+" has no expression (possible typing order issue", cf_new.cf_pos);
+													context.Typecore.display_error(ctx, "While building "+core.Globals.s_type_path(cg.cl_path), p);
+												case _:
+											}
+										case Some(e):
+											cf_new.cf_expr = Some(generic_substitute_expr(gctx, e));
+									}
+								}
+								catch(err:core.Type.Unify_error) {
+									core.Error.error(core.Error.error_msg(Unify(err.l)), cf_new.cf_pos);
+								}
+								return t;
+							}
+							var r = context.Typecore.exc_protect(ctx, function (r) {
+								var t = core.Type.mk_mono();
+								r.set(core.Type.lazy_processing(function() { return t;}));
+								return context.Typecore.unify_raise(ctx, f(), t, p);
+							}, "build_generic");
+							cf_new.cf_type = TLazy(r);
+							return cf_new;
+						}
+						if (c.cl_init != None || c.cl_dynamic != None) {
+							core.Error.error("This class can't be generic", p);
+						}
+						ocaml.List.iter(function (cf:core.Type.TClassField) {
+							switch (cf.cf_kind) {
+								case Method(MethMacro) if (!ctx.in_macro):
+								case _: core.Error.error("A generic class can't have static fields", cf.cf_pos);
+							}
+						}, c.cl_ordered_statics);
+						cg.cl_super = switch (c.cl_super) {
+							case None: None;
+							case Some({c:cs, params:pl}):
+								var ts = core.Type.follow(core.Type.apply_params(c.cl_params, tl, TInst(cs, pl)));
+								var _tmp = typing.typeload.Inheritance.check_extends(ctx, c, ts, p);
+								var cs = _tmp.c; var pl = _tmp.params;
+								switch (cs.cl_kind) {
+									case KGeneric:
+										switch (build_generic(ctx, cs, p, pl)) {
+											case TInst(_cs, _pl): Some({c:_cs, params:_pl});
+											case _: throw false;
+										}
+									case _: Some({c:cs, params:pl});
+								}
+						};
+						add_constructor(ctx, cg, false, p);
+						cg.cl_kind = KGenericInstance(c, tl);
+						cg.cl_meta.unshift({name:NoDoc, params:[], pos:core.Globals.null_pos});
+						if (core.Type.has_meta(Keep, c.cl_meta)) {
+							cg.cl_meta.unshift({name:Keep, params:[], pos:core.Globals.null_pos});
+						}
+						cg.cl_interface = c.cl_interface.clone();
+						cg.cl_constructor = switch ({fst:cg.cl_constructor, snd:c.cl_constructor, trd:c.cl_super}) {
+							case {snd:Some(cf)}: Some(build_field(cf));
+							case {fst:Some(ctor)}: Some(ctor);
+							case {fst:None, snd:None, trd:None}: None;
+							case _: core.Error.error("Please define a constructor for this class in order to use it as generic", c.cl_pos);
+						}
+						cg.cl_implements = c.cl_implements.map(function (imp:{c:core.Type.TClass, params:core.Type.TParams} ) {
+							return switch core.Type.follow(generic_substitute_type(gctx, TInst(imp.c, imp.params.map(generic_substitute_type.bind(gctx))))) {
+								case TInst(i, tl): {c:i, params:tl};
+								case _: throw false;
+							}
+						});
+						cg.cl_ordered_fields = c.cl_ordered_fields.map(function (f) {
+							var _f = build_field(f);
+							cg.cl_fields.set(_f.cf_name, _f);
+							return _f;
+						});
+						cg.cl_overrides = c.cl_overrides.map(function (f) {
+							return try {
+								PMap.find(f.cf_name, cg.cl_fields);
+							}
+							catch (_:ocaml.Not_found) {
+								throw false;
+							}
+						});
+						// In rare cases the class name can become too long, so let's shorten it (issue #3090).
+						if (cg.cl_path.b.length >  254) {
+							var n = get_short_name()();
+							cg.cl_meta.unshift({name:Native, params:[{expr:EConst(CString(n)), pos:p}], pos:core.Globals.null_pos});
+						}
+						TInst(cg, []);
+					case _:
+						throw err;
+				}
+			}
+		}
+	}
+
+	// --------------------------------------------------------------------------
+	// MACRO TYPE
+	public static function get_macro_path (ctx:context.Typecore.Typer, e:core.Ast.Expr, args:Array<core.Ast.Expr>, p:core.Globals.Pos) {
+		function loop (e:core.Ast.Expr) : Array<String> {
+			return switch (e.expr) {
+				case EField(e, f): [f].concat(loop(e));
+				case EConst(CIdent(i)): [i];
+				case _: core.Error.error("Invalid macro call", p);
+			}
+		}
+		var path = switch (e.expr) {
+			case EConst(CIdent(i)):
+				var path = try {
+					if (!PMap.mem(i, ctx.curclass.cl_statics)) {
+						throw ocaml.Not_found.instance;
+					}
+					ctx.curclass.cl_path;
+				}
+				catch(_:ocaml.Not_found) {
+					try {
+						core.Type.t_infos(PMap.find(i, ctx.m.module_globals).a).mt_path;
+					}
+					catch(_:ocaml.Not_found) {
+						core.Error.error("Invalid macro call", p);
+					}
+				}
+				[i, path.b].concat(path.a);
+			case _: loop(e);
+		};
+		if (path.length >= 3) {
+			return {fst:new core.Path(path.slice(2), path[1]), snd:path[0], trd:args};
+		}
+		else {
+			return core.Error.error("Invalid macro call", p);
+		}
+	}
+
+	public static function build_macro_type (ctx:context.Typecore.Typer, pl:Array<core.Type.T>, p:core.Globals.Pos) : core.Type.T {
+		var pfa = null;
+		if (pl.length == 1) {
+			switch (pl[0]) {
+				case TInst(c, _):
+					switch (c.cl_kind) {
+						case KExpr({expr:ECall(e, args)}):
+							pfa = get_macro_path(ctx, e, args, p);
+						case KExpr({expr:EArrayDecl(l)}):
+							if (l.length == 1) {
+								switch (l[0].expr) {
+									case ECall(e, args):
+										pfa = get_macro_path(ctx, e, args, p);
+									case _:
+								}
+							}
+						case _:
+					}
+				case _:
+			}
+		}
+		if (pfa == null) {
+			core.Error.error("MacroType requires a single expression call parameter", p);
+		}
+		var old = ctx.ret;
+		var t = switch (ctx.g.do_macro(ctx, MMacroType, pfa.fst, pfa.snd, pfa.trd, p)) {
+			case None: core.Type.mk_mono();
+			case _: ctx.ret;
+		}
+		ctx.ret = old;
+		return t;
+	}
+
+	public static function build_macro_build (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:Array<core.Type.T>, cfl:Array<core.Ast.ClassField>, p:core.Globals.Pos) : core.Type.T {
+		var meta_info = core.Meta.get(GenericBuild, c.cl_meta);
+		var pfa = null;
+		if (meta_info.params.length == 1) {
+			switch (meta_info.params[0].expr) {
+				case ECall(e, args):
+					pfa = get_macro_path(ctx, e, args, p);
+				case _:
+			}
+		}
+		if (pfa == null) {
+			core.Error.error("genericBuild requires a single expression call parameter", p);
+		}
+		var path = pfa.fst;
+		var field = pfa.snd;
+		var args = pfa.trd;
+
+		var old = {fst:ctx.ret, snd:ctx.g.get_build_infos};
+		ctx.g.get_build_infos = function () {
+			return Some({mt:TClassDecl(c), l:pl, cfs:cfl});
+		}
+		var t = switch (ctx.g.do_macro(ctx, MMacroType, path, field, args, p)) {
+			case None: core.Type.mk_mono();
+			case Some(_): ctx.ret;
+		}
+		ctx.ret = old.fst;
+		ctx.g.get_build_infos = old.snd;
+		return t;
+	}
+
+	// --------------------------------------------------------------------------
+	// API EVENTS
+
+	public static function build_instance (ctx:context.Typecore.Typer, mtype:core.Type.ModuleType, p:core.Globals.Pos) : {types:core.Type.TypeParams, path:core.Path, f:Array<core.Type.T>->core.Type.T} {
+		return switch (mtype) {
+			case TClassDecl(c):
+				if (EnumValueTools.getIndex(ctx.pass) > EnumValueTools.getIndex(context.Typecore.TyperPass.PBuildClass)) {
+					c.cl_build();
+				}
+				function build (f:Void->core.Type.T, s:String) : core.Type.T {
+					var r = context.Typecore.exc_protect(ctx, function (r) {
+						var t = core.Type.mk_mono();
+						r.set(core.Type.lazy_processing(function () {return t;}));
+						var tf = f();
+						context.Typecore.unify_raise(ctx, tf, t, p);
+						core.Type.link_dynamic(t, tf);
+						if (EnumValueTools.getIndex(ctx.pass) > EnumValueTools.getIndex(context.Typecore.TyperPass.PBuildClass)) {
+							context.Typecore.flush_pass(ctx, PBuildClass, "after_build_instance");
+						}
+						return t;
+					}, s);
+					return TLazy(r);
+				}
+				var ft = function (pl:Array<core.Type.T>) : core.Type.T {
+					return switch (c.cl_kind) {
+						case KGeneric: build(function() { return build_generic(ctx, c, p, pl); }, "build_generic");
+						case KMacroType: build(function() { return build_macro_type(ctx, pl, p); }, "macro_type");
+						case KGenericBuild(cfl): build(function() { return build_macro_build(ctx, c, pl, cfl, p); }, "generic_build");
+						case _: TInst(c, pl);
+					}
+				}
+				{types:c.cl_params, path:c.cl_path, f:ft};
+			case TEnumDecl(e):
+				{types:e.e_params, path:e.e_path, f:function (t) { return TEnum(e, t); }};
+			case TTypeDecl(t):
+				{types:t.t_params, path:t.t_path, f:function (tl) { return TType(t, tl); }};
+			case TAbstractDecl(a):
+				{types:a.a_params, path:a.a_path, f:function (t) { return TAbstract(a, t); }};
+		};
+	}
+
+}

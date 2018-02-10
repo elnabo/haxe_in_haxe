@@ -1,0 +1,5 @@
+package ocaml;
+
+class Exception {
+	
+}

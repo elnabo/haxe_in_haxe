@@ -1,0 +1,5 @@
+package macros;
+
+class HlMacro {
+
+}
