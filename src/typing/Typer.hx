@@ -1,6 +1,12 @@
 package typing;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.Hashtbl;
+import ocaml.List;
+import ocaml.PMap;
+import ocaml.Ref;
+
 using equals.Equal;
 using ocaml.Cloner;
 
@@ -23,7 +29,7 @@ class Typer {
 		return null;
 	}
 
-	public static function get_main(ctx:context.Typecore.Typer, types:Array<core.Type.ModuleType>) : Option<core.Type.TExpr> {
+	public static function get_main(ctx:context.Typecore.Typer, types:ImmutableList<core.Type.ModuleType>) : Option<core.Type.TExpr> {
 		switch (ctx.com.main_class) {
 			case None: return None;
 			case Some(cl):
@@ -35,78 +41,70 @@ class Typer {
 					case TEnumDecl(_), TTypeDecl(_), TAbstractDecl(_):
 						core.Error.error("Invalid -main : "+core.Globals.s_type_path(cl)+ " is not a class", core.Globals.null_pos);
 					case TClassDecl(c):
-						var f = c.cl_statics.get("main");
-						if (f == null) {
-							trace("Fix", c);
-							core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
+						try  {
+							var f = PMap.find("main",c.cl_statics);
+							var t = core.Type.field_type(f);
+							switch (t) {
+								case TFun({args:[], ret:_r}):
+									fmode = core.Type.TFieldAccess.FStatic(c,f);
+									ft = t;
+									r = _r;
+								default:
+									core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
+							}
 						}
-						var tt = core.Type.field_type(f);
-						switch (tt) {
-							case TFun({args:[], ret:rr}):
-								fmode = core.Type.TFieldAccess.FStatic(c,f);
-								ft = tt;
-								r = rr;
-							default:
-								core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
+						catch (_:ocaml.Not_found) {
+							core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
 						}
 				}
 				var emain = type_type(ctx, cl, core.Globals.null_pos);
 				var main = core.Type.mk(core.Type.TExprExpr.TCall(core.Type.mk(core.Type.TExprExpr.TField(emain, fmode), ft, core.Globals.null_pos), []), r, core.Globals.null_pos);
-				var et:core.Type.ModuleType = null;
-				for (element in types) {
-					if (core.Type.t_path(element) == new core.Path(["haxe"], "EntryPoint")) {
-						et = element;
-						break;
+				main = try {
+					var et = List.find(function (t) {
+						return core.Type.t_path(t).equals(new core.Path(["haxe"], "EntryPoint"));
+					}, types);
+					var ec = switch (et) {
+						case TClassDecl(c): c;
+						default: throw false;
 					}
+					var ef = PMap.find("run", ec.cl_statics);
+					var p = core.Globals.null_pos;
+					var _et = core.Type.mk(
+						core.Type.TExprExpr.TTypeExpr(et),
+						core.Type.T.TAnon({a_fields: new Map<String, core.Type.TClassField>(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
+						p
+					);
+					var call = core.Type.mk(
+						core.Type.TExprExpr.TCall(
+							core.Type.mk(
+								core.Type.TExprExpr.TField(_et, core.Type.TFieldAccess.FStatic(ec, ef)),
+								ef.cf_type, p), []),
+						ctx.t.tvoid,
+						p
+					);
+					core.Type.mk(core.Type.TExprExpr.TBlock([main, call]),ctx.t.tvoid,p);
 				}
-				if (et == null) { return Some(main); }
-				var ec = switch (et) {
-					case TClassDecl(c): c;
-					default: throw false;
+				catch (_:ocaml.Not_found) {
+					main;
 				}
-				var ef = ec.cl_statics.get("run");
-				if (ef == null) { return Some(main); }
-
-				var p = core.Globals.null_pos;
-				var eet = core.Type.mk(
-					core.Type.TExprExpr.TTypeExpr(et),
-					core.Type.T.TAnon({a_fields: new Map<String, core.Type.TClassField>(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
-					p
-				);
-				var call = core.Type.mk(
-					core.Type.TExprExpr.TCall(
-						core.Type.mk(
-							core.Type.TExprExpr.TField(eet, core.Type.TFieldAccess.FStatic(ec, ef)),
-							ef.cf_type, p), []),
-					ctx.t.tvoid,
-					p
-				);
-				return Some(core.Type.mk(
-					core.Type.TExprExpr.TBlock([main, call]),
-					ctx.t.tvoid,
-					p
-				));
+				return Some(main);
 		}
 	}
 
 	public static function finalize (ctx:context.Typecore.Typer) : Void {
 		context.Typecore.flush_pass(ctx, PFinal, "final");
 		var fl = ctx.com.callbacks.after_typing;
-		if (fl.length > 0) {
-			function loop(handled_types:Array<core.Type.ModuleType>) {
-				var all_types = [];
-				for (v in ctx.g.modules) {
-					all_types = all_types.concat(v.m_types);
-				}
-				var new_types = all_types.filter( function (mt:core.Type.ModuleType){
-					return handled_types.indexOf(mt) == -1;
-				});
-				if (new_types.length > 0) {
-					for (f in fl) {
-						f(new_types);
-					}
-					context.Typecore.flush_pass(ctx, PFinal, "final");
-					loop(all_types);
+		if (List.length(fl) > 0) {
+			function loop(handled_types:ImmutableList<core.Type.ModuleType>) {
+				var all_types = Hashtbl.fold(function (_, m, acc:ImmutableList<core.Type.ModuleType>) {
+					return List.concat(m.m_types, acc);
+				}, ctx.g.modules, []);
+				switch (List.filter(function (mt:core.Type.ModuleType){ return !List.memq(mt, handled_types);}, all_types)) {
+					case []:
+					case new_types:
+						List.iter(function (f) { f(new_types);}, fl);
+						context.Typecore.flush_pass(ctx, PFinal, "final");
+						loop(all_types);
 				}
 			}
 			loop([]);
@@ -118,8 +116,9 @@ class Typer {
 		return null;
 	}
 
-	public static function sort_types(com:context.Common.Context, modules:Map<core.Path, core.Type.ModuleDef>) : {types:Array<core.Type.ModuleType>, modules:Array<core.Type.ModuleDef>} {
-		var types:Array<core.Type.ModuleType> = [];
+	public static function sort_types(com:context.Common.Context, modules:Map<core.Path, core.Type.ModuleDef>) : {types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>} {
+		// var types = new Ref<ImmutableList<core.Type.ModuleType>>([]);
+		var types:ImmutableList<core.Type.ModuleType> = [];
 		var states = new Map<core.Path, typing.Typer.State>();
 		
 		function state (p:core.Path) {
@@ -128,8 +127,7 @@ class Typer {
 			}
 			return NotYet;
 		}
-		// var statics = new Map<Dynamic, Any>();
-		var statics:Array<{path:core.Path, s:String}> = [];
+		var statics = new Map<{path:core.Path, s:String}, Bool>();
 
 		var walk_static_field:core.Path->core.Type.TClass->core.Type.TClassField->Void;
 		var walk_expr:core.Path->core.Type.TExpr->Void;
@@ -142,14 +140,16 @@ class Typer {
 				case Generating:
 					com.warning("Warning : maybe loop in static generation of " + core.Globals.s_type_path(p), core.Type.t_infos(t).mt_pos);
 				case NotYet:
-					states.set(p, Generating);
-					switch(t) {
+					Hashtbl.add(states,p, Generating);
+					var t = switch(t) {
 						case TClassDecl(c):
 							walk_class(p, c);
-						default:
+							t;
+						case TEnumDecl(_), TTypeDecl(_), TAbstractDecl(_):
+							t;
 					}
-					states.set(p, Done);
-					types.unshift(t);
+					Hashtbl.replace(states, p, Done);
+					types = t::types;
 			}
 		}
 		function loop_class (p:core.Path, c:core.Type.TClass) {
@@ -171,15 +171,9 @@ class Typer {
 			switch (cf.cf_expr) {
 				case None:
 				case Some(e):
-					var flag = false;
-					for (s in statics) {
-						if (cf.cf_name == s.s && c.cl_path == s.path) {
-							flag = true;
-							break;
-						}
-					}
-					if (!flag) {
-						statics.push({s:cf.cf_name, path:c.cl_path});
+					if (PMap.mem({path:c.cl_path, s:cf.cf_name}, statics)) {}
+					else {
+						statics = PMap.add({s:cf.cf_name, path:c.cl_path}, true, statics);
 						walk_expr(p, e);
 					}
 			}
@@ -198,15 +192,9 @@ class Typer {
 					core.Type.iter(walk_expr.bind(p), e);
 					loop_class(p, c);
 					function inner_loop (c:core.Type.TClass) {
-						var flag = false;
-						for (s in statics) {
-							if (s.s == "new" && c.cl_path == s.path) {
-								flag = true;
-								break;
-							}
-						}
-						if (!flag) {
-							statics.push({s:"new", path:c.cl_path});
+						if (PMap.mem({path:c.cl_path, s:"new"}, statics)) {}
+						else {
+							statics = PMap.add({s:"new", path:c.cl_path}, true, statics);
 							switch (c.cl_constructor) {
 								case Some(v):
 									switch (v.cf_expr) {
@@ -235,15 +223,15 @@ class Typer {
 				case None:
 				case Some(v): loop_class(p, v.c);
 			}
-			for (implement in c.cl_implements) {
+			List.iter(function(implement) {
 				loop_class(p, implement.c);
-			}
+			}, c.cl_implements);
 			switch (c.cl_init) {
 				case None:
 				case Some(e): walk_expr(p, e);
 			}
-			for (value in c.cl_statics) {
-				switch (value.cf_expr) {
+			PMap.iter(function (_, f:core.Type.TClassField) {
+				switch (f.cf_expr) {
 					case None:
 					case Some(e):
 						switch (e.eexpr) {
@@ -251,23 +239,17 @@ class Typer {
 							default: walk_expr(p, e);
 						}
 				}
-			}
+			}, c.cl_statics);
 		}
-		var sorted_modules  = [for (v in modules) v];
-		sorted_modules.sort(function (a:core.Type.ModuleDef, b:core.Type.ModuleDef) {
-			return core.Path.gt(a.m_path, b.m_path);
-		});
-		for (m in sorted_modules) {
-			for (mt in m.m_types) {
-				loop(mt);
-			}
-		}
-
-		types.reverse();
-		return {types:types, modules:sorted_modules};
+		var sorted_modules = List.sort(function (m1:core.Type.ModuleDef, m2:core.Type.ModuleDef) {
+			return core.Path.compare(m1.m_path, m2.m_path);
+		}, Hashtbl.fold(function (_, m, acc:ImmutableList<core.Type.ModuleDef>) { return m::acc; }, modules, []));
+		List.iter(function (m) { List.iter(loop, m.m_types); }, sorted_modules);
+		
+		return {types:List.rev(types), modules:sorted_modules};
 	}
 
-	public static function generate(ctx:context.Typecore.Typer) : {main:Option<core.Type.TExpr>, types:Array<core.Type.ModuleType>, modules:Array<core.Type.ModuleDef>} {
+	public static function generate(ctx:context.Typecore.Typer) : {main:Option<core.Type.TExpr>, types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>} {
 		var sorted = sort_types(ctx.com, ctx.g.modules);
 		var types = sorted.types;
 		var modules = sorted.modules;
@@ -295,7 +277,7 @@ class Typer {
 				doinline : (com.display.dms_inline && !context.Common.defined(com, NoInline)),
 				hook_generate : [],
 				get_build_infos : function () {return None;},
-				std : core.Type.null_module.clone(),
+				std : core.Type.null_module,
 				global_using : [],
 				do_inherit : typing.MagicTypes.on_inherit,
 				do_create : typing.Typer.create,
@@ -308,7 +290,7 @@ class Typer {
 				do_generate : generate,
 			},
 			m : {
-				curmod : core.Type.null_module.clone(),
+				curmod : core.Type.null_module,
 				module_types : [],
 				module_using : [],
 				module_globals : new Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>(),
@@ -352,8 +334,8 @@ class Typer {
 			}
 		}
 		// We always want core types to be available so we add them as default imports (issue #1904 and #3131).
-		ctx.m.module_types = [ for (t in ctx.g.std.m_types) {mt:t, pos:core.Globals.null_pos}];
-		for (t in ctx.g.std.m_types) {
+		ctx.m.module_types = List.map (function (t:core.Type.ModuleType) { return {mt:t, pos:core.Globals.null_pos};}, ctx.g.std.m_types);
+		List.iter(function (t:core.Type.ModuleType) {
 			switch(t) {
 				case TAbstractDecl(a):
 					switch (a.a_path.b) {
@@ -361,7 +343,7 @@ class Typer {
 						case "Float": ctx.t.tfloat = TAbstract(a, []);
 						case "Int": ctx.t.tint = TAbstract(a, []);
 						case "Bool": ctx.t.tbool = TAbstract(a, []);
-						case "Dynamic": core.Type.t_dynamic_def.set(TAbstract(a, [for (ap in a.a_params) ap.t]));
+						case "Dynamic": core.Type.t_dynamic_def.set(TAbstract(a, List.map(function (ap) {return ap.t; }, a.a_params)));
 						case "Null":
 							function mk_null (t) : core.Type.T {
 								return try {
@@ -390,63 +372,40 @@ class Typer {
 					}
 				case TEnumDecl(_), TClassDecl(_), TTypeDecl(_):
 			}
-		}
+		}, ctx.g.std.m_types);
 
 		var m = typing.Typeload.load_module(ctx, new core.Path([], "String"), core.Globals.null_pos);
-		if (m.m_types.length == 1) {
-			switch (m.m_types[0]) {
-				case TClassDecl(c):
-					ctx.t.tstring = TInst(c, []);
-				default: throw false;
-			}
-		}
-		else {
-			throw false;
+		switch (m.m_types) {
+			case [TClassDecl(c)]: ctx.t.tstring = TInst(c, []);
+			case _: throw false;
 		}
 		
 		m = typing.Typeload.load_module(ctx, new core.Path([], "Array"), core.Globals.null_pos);
 		try {
-			ocaml.List.iter(function (t:core.Type.ModuleType) {
+			List.iter(function (t:core.Type.ModuleType) {
 				switch (t) {
 					case TClassDecl(c={cl_path:path}) if (path.equals(new core.Path([], "Array"))):
 						ctx.t.tarray = function (t) { return TInst(c, [t]); }
-						throw new ocaml.Exit();
+						throw ocaml.Exit.instance;
 					case _:
 				}
 			}, m.m_types);
-			trace(":/");
 			throw false;
 		}
 		catch (_:ocaml.Exit) {}
 
 		m = typing.Typeload.load_module(ctx, new core.Path(["haxe"], "EnumTools"), core.Globals.null_pos);
-		if (m.m_types.length == 2) {
-			switch (m.m_types[0]) {
-				case TClassDecl(c1):
-					switch (m.m_types[1]) {
-						case TClassDecl(c2):
-							ctx.g.global_using.unshift({a:c2, pos:c2.cl_pos});
-							ctx.g.global_using.unshift({a:c1, pos:c1.cl_pos});
-						case _: throw false;
-					}
-				case _: throw false;
-			}
-		}
-		else if (m.m_types.length == 1) {
-			switch (m.m_types[0]) {
-				case TClassDecl(c1):
-					var mm = typing.Typeload.load_module(ctx, new core.Path(["haxe"], "EnumValueTools"), core.Globals.null_pos);
-					if (mm.m_types.length == 1) {
-						switch (mm.m_types[0]) {
-							case TClassDecl(c2):
-								ctx.g.global_using.unshift({a:c2, pos:c2.cl_pos});
-								ctx.g.global_using.unshift({a:c1, pos:c1.cl_pos});
-							case _: throw false;
-						}
-					}
-				case _:
-					throw false;
-			}
+		switch (m.m_types) {
+			case [TClassDecl(c1), TClassDecl(c2)]: 
+				ctx.g.global_using = {a:c1, pos:c1.cl_pos} :: ({a:c2, pos:c2.cl_pos} :: ctx.g.global_using);
+			case [TClassDecl(c1)]:
+				var m = typing.Typeload.load_module(ctx, new core.Path(["haxe"], "EnumValueTools"), core.Globals.null_pos);
+				switch (m.m_types) {
+					case [TClassDecl(c2)]:
+						ctx.g.global_using = {a:c1, pos:c1.cl_pos} :: ({a:c2, pos:c2.cl_pos} :: ctx.g.global_using);
+					case _: throw false;
+				}
+			case _: throw false;
 		}
 		return ctx;
 	}

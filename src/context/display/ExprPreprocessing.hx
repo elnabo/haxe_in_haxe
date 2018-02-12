@@ -1,6 +1,8 @@
 package context.display;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 import ocaml.Ref;
 
 class ExprPreprocessing {
@@ -24,34 +26,29 @@ class ExprPreprocessing {
 				case EBlock(el):
 					var p = e.pos;
 					// We want to find the innermost block which contains the display position.
-					var el = el.map(loop);
+					var el = List.map(loop, el);
 					var el = switch (encloses_display_pos(p)) {
 						case None: el;
 						case Some(p2):
-							var tmp = ocaml.List.fold_left( function (bel:{fst:Bool, snd:Array<core.Ast.Expr>}, e:core.Ast.Expr) : {fst:Bool, snd:Array<core.Ast.Expr>} {
-								var b = bel.fst;
-								var el = bel.snd;
+							var tmp = ocaml.List.fold_left( function (bel:{fst:Bool, snd:ImmutableList<core.Ast.Expr>}, e:core.Ast.Expr) : {fst:Bool, snd:ImmutableList<core.Ast.Expr>} {
+								var b = bel.fst; var el = bel.snd;
 								var p = e.pos;
 								if (b || p.pmax <= p2.pmin) {
-									el.unshift(e);
-									return {fst:b, snd:el};
+									return {fst:b, snd:e::el};
 								}
 								else {
 									var e_d:core.Ast.Expr = {expr:EDisplay(mk_null(p), false), pos:p};
-									el.unshift(e_d);
-									el.unshift(e);
-									return {fst:true, snd:el};
+									return {fst:true, snd:e::(e_d::el)};
 								}
 							}, {fst:false, snd:[]}, el);
-							var b = tmp.fst;
-							var el = if (b) {
-								tmp.snd;
+							var b = tmp.fst; var el = tmp.snd;
+							el = if (b) {
+								el;
 							}
 							else {
-								tmp.snd.unshift(mk_null(p));
-								tmp.snd;
+								mk_null(p) :: el;
 							}; 
-							ocaml.List.rev(el);
+							List.rev(el);
 					}
 					return {expr:EBlock(el), pos:e.pos};
 				case _:

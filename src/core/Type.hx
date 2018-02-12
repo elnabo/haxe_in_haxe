@@ -1,6 +1,8 @@
 package core;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 import ocaml.PMap;
 
 using equals.Equal;
@@ -8,8 +10,8 @@ using ocaml.Cloner;
 using ocaml.Ref;
 
 class Unify_error {
-	public var l:Array<UnifyError>;
-	public function new (l:Array<UnifyError>) {
+	public var l:ImmutableList<UnifyError>;
+	public function new (l:ImmutableList<UnifyError>) {
 		this.l = l;
 	}
 }
@@ -51,15 +53,15 @@ enum ModuleCheckPolicy {
 
 enum T {
 	TMono (t:ocaml.Ref<Option<T>>);
-	TEnum (t:TEnum, params:Array<T>);
-	TInst (t:TClass, params:Array<T>);
-	TType (t:TDef, params:Array<T>);
+	TEnum (t:TEnum, params:TParams);
+	TInst (t:TClass, params:TParams);
+	TType (t:TDef, params:TParams);
 	TFun (t:TSignature);
 	TAnon (t:TAnon);
 	// ocaml TDynamic(t:T);
 	TDynamic(t:Ref<T>);
 	TLazy (t:ocaml.Ref<TLazy>);
-	TAbstract (t:TAbstract, params:Array<T>);
+	TAbstract (t:TAbstract, params:TParams);
 }
 
 enum TLazy {
@@ -75,13 +77,13 @@ typedef TSignatureArg = {
 	t:T
 }
 typedef TSignature = {
-	args : Array<TSignatureArg>,
+	args : ImmutableList<TSignatureArg>,
 	ret:T
 }
 
-typedef TParams = Array<T>;
+typedef TParams = ImmutableList<T>;
 
-typedef TypeParams = Array<{
+typedef TypeParams = ImmutableList<{
 	name : String, 
 	t : T
 }>;
@@ -113,7 +115,7 @@ typedef TVar = {
 }
 
 typedef TFunc = {
-	tf_args : Array<{v:TVar, c:Option<TConstant>}>,
+	tf_args : ImmutableList<{v:TVar, c:Option<TConstant>}>,
 	tf_type : T,
 	tf_expr : TExpr,
 }
@@ -122,7 +124,7 @@ enum AnonStatus {
 	Closed;
 	Opened;
 	Const;
-	Extend (l:Array<T>);
+	Extend (l:ImmutableList<T>);
 	Statics (t:TClass);
 	EnumStatics (t:TEnum);
 	AbstractStatics (t:TAbstract);
@@ -150,19 +152,19 @@ enum TExprExpr {
 	TTypeExpr (m:ModuleType);
 	TParenthesis (e:TExpr);
 	// ocaml type: of ((string * pos * quote_status) * texpr) list
-	TObjectDecl (fields:Array<TObjectField>);
-	TArrayDecl (values:Array<TExpr>);
-	TCall (e:TExpr, params:Array<TExpr>);
-	TNew (c:TClass, params:TParams, exprs:Array<TExpr>);
+	TObjectDecl (fields:ImmutableList<TObjectField>);
+	TArrayDecl (values:ImmutableList<TExpr>);
+	TCall (e:TExpr, params:ImmutableList<TExpr>);
+	TNew (c:TClass, params:TParams, exprs:ImmutableList<TExpr>);
 	TUnop (op:Ast.Unop, flag:Ast.UnopFlag, expr:TExpr);
 	TFunction (f:TFunc);
 	TVar (v:TVar, expr:Option<TExpr>);
-	TBlock (exprs:Array<TExpr>);
+	TBlock (exprs:ImmutableList<TExpr>);
 	TFor (v:TVar, e1:TExpr, e2:TExpr);
 	TIf (cond:TExpr, exprIf:TExpr, exprElse:Option<TExpr>);
 	TWhile (econd:TExpr, e:TExpr, flag:Ast.WhileFlag);
-	TSwitch (e:TExpr, cases:Array<{values:Array<TExpr>, e:TExpr}>, edef:Option<TExpr>);//of texpr * (texpr list * texpr) list * texpr option
-	TTry (e:TExpr, catches:Array<{v:TVar, e:TExpr}>);
+	TSwitch (e:TExpr, cases:ImmutableList<{values:ImmutableList<TExpr>, e:TExpr}>, edef:Option<TExpr>);//of texpr * (texpr list * texpr) list * texpr option
+	TTry (e:TExpr, catches:ImmutableList<{v:TVar, e:TExpr}>);
 	TReturn (e:Option<TExpr>);
 	TBreak;
 	TContinue;
@@ -201,17 +203,17 @@ typedef TClassField = {
 	cf_params : TypeParams,
 	cf_expr : Option<TExpr>,
 	cf_expr_unoptimized : Option<TFunc>,
-	cf_overloads : Array<TClassField>
+	cf_overloads : ImmutableList<TClassField>
 }
 
 enum TClassKind {
 	KNormal;
-	KTypeParameter (constraints:Array<T>);
+	KTypeParameter (constraints:ImmutableList<T>);
 	KExpr (expr:Ast.Expr);
 	KGeneric;
 	KGenericInstance (c:TClass, params:TParams);
 	KMacroType;
-	KGenericBuild (cf:Array<Ast.ClassField>);
+	KGenericBuild (cf:ImmutableList<Ast.ClassField>);
 	KAbstractImpl (ta:TAbstract);
 }
 
@@ -240,16 +242,16 @@ typedef TClass = {
 	cl_extern : Bool,
 	cl_interface : Bool,
 	cl_super : Option<{c:TClass, params:TParams}>,//(tclass * tparams) option;
-	cl_implements : Array<{c:TClass, params:TParams}>,//(tclass * tparams) list;
+	cl_implements : ImmutableList<{c:TClass, params:TParams}>,//(tclass * tparams) list;
 	cl_fields : Map<String, TClassField>,
 	cl_statics : Map<String, TClassField>,
-	cl_ordered_statics : Array<TClassField>,
-	cl_ordered_fields : Array<TClassField>,
+	cl_ordered_statics : ImmutableList<TClassField>,
+	cl_ordered_fields : ImmutableList<TClassField>,
 	cl_dynamic : Option<T>,
 	cl_array_access : Option<T>,
 	cl_constructor : Option<TClassField>,
 	cl_init : Option<TExpr>,
-	cl_overrides : Array<TClassField>,
+	cl_overrides : ImmutableList<TClassField>,
 
 	cl_build : Void -> BuildState,
 	cl_restore : Void -> Void,
@@ -257,7 +259,7 @@ typedef TClass = {
 		These are classes which directly extend or directly implement this class.
 		Populated automatically in post-processing step (Filters.run)
 	*/
-	cl_descendants : Array<TClass>
+	cl_descendants : ImmutableList<TClass>
 }
 
 typedef TEnumField = {
@@ -284,7 +286,7 @@ typedef TEnum = {
 	e_type : TDef,
 	e_extern : Bool,
 	e_constrs : Map<String, TEnumField>,
-	e_names : Array<String>
+	e_names : ImmutableList<String>
 }
 
 typedef TDef = {
@@ -310,15 +312,15 @@ typedef TAbstract = {
 	a_meta : Ast.Metadata,
 	a_params : TypeParams,
 	// do not insert any fields above
-	a_ops : Array<{op:Ast.Binop, cf:TClassField}>,
-	a_unops : Array<{op:Ast.Unop, flag:Ast.UnopFlag, cf:TClassField}>,
+	a_ops : ImmutableList<{op:Ast.Binop, cf:TClassField}>,
+	a_unops : ImmutableList<{op:Ast.Unop, flag:Ast.UnopFlag, cf:TClassField}>,
 	a_impl : Option<TClass>,
 	a_this : T,
-	a_from : Array<T>,
-	a_from_field : Array<{t:T, cf:TClassField}>,
-	a_to : Array<T>,
-	a_to_field : Array<{t:T, cf:TClassField}>,
-	a_array : Array<TClassField>,
+	a_from : ImmutableList<T>,
+	a_from_field : ImmutableList<{t:T, cf:TClassField}>,
+	a_to : ImmutableList<T>,
+	a_to_field : ImmutableList<{t:T, cf:TClassField}>,
+	a_array : ImmutableList<TClassField>,
 	a_resolve : Option<TClassField>
 }
 
@@ -332,14 +334,14 @@ enum ModuleType {
 typedef ModuleDef = {
 	m_id : Int,
 	m_path : Path,
-	m_types : Array<ModuleType>,
+	m_types : ImmutableList<ModuleType>,
 	m_extra : ModuleDefExtra
 }
 
 typedef ModuleDefExtra = {
 	m_file : String,
 	m_sign : String,
-	m_check_policy : Array<ModuleCheckPolicy>,
+	m_check_policy : ImmutableList<ModuleCheckPolicy>,
 	m_time : Float,
 	m_dirty : Option<ModuleDef>,
 	m_added : Int,
@@ -347,9 +349,9 @@ typedef ModuleDefExtra = {
 	m_deps : Map<Int, ModuleDef>,
 	m_processed : Int,
 	m_kind : ModuleKind,
-	m_binded_res : Map<String,  String>,
-	m_reuse_macro_calls : Array<String>,
-	m_if_feature : Array<{
+	m_binded_res : Map<String, String>,
+	m_reuse_macro_calls : ImmutableList<String>,
+	m_if_feature : ImmutableList<{
 		s:String,
 		c:TClass,
 		cf:TClassField,
@@ -368,8 +370,8 @@ enum ModuleKind {
 
 enum BuildState {
 	Built;
-	Building (l:Array<TClass>);
-	BuildMacro (l:Ref<Array<Void->Void>>);
+	Building (l:ImmutableList<TClass>);
+	BuildMacro (l:Ref<ImmutableList<Void->Void>>);
 }
 
 typedef BasicTypes = {
@@ -486,12 +488,12 @@ class Type {
 	 */
 	public static var t_dynamic_def:Ref<T> = new Ref(t_dynamic);
 
-	public static function tfun (pl:Array<T>, r:T) : T {
-		return TFun({args:pl.map(function (t) { return {name:"", opt:false, t:t}; }), ret:r});
+	public static function tfun (pl:ImmutableList<T>, r:T) : T {
+		return TFun({args:List.map(function (t) { return {name:"", opt:false, t:t}; }, pl), ret:r});
 	}
 
-	public static function fun_args (l:Array<{name:String, opt:Option<core.Ast.Expr>, t:T}>) : Array<TSignatureArg> {
-		return l.map(function (sig) { return {name:sig.name, opt:sig.opt!=None, t:sig.t}; });
+	public static function fun_args (l:ImmutableList<{name:String, opt:Option<core.Ast.Expr>, t:T}>) : ImmutableList<TSignatureArg> {
+		return List.map(function (sig) { return {name:sig.name, opt:sig.opt!=None, t:sig.t}; }, l);
 	}
 
 	public static function mk_class (m:core.Type.ModuleDef, path:core.Path, pos:core.Globals.Pos, name_pos:core.Globals.Pos) : core.Type.TClass {
@@ -524,7 +526,7 @@ class Type {
 		};
 	}
 
-	public static function module_extra (file:String,  sign:String, time:Float, kind:core.Type.ModuleKind, policy:Array<core.Type.ModuleCheckPolicy>) : core.Type.ModuleDefExtra {
+	public static function module_extra (file:String,  sign:String, time:Float, kind:core.Type.ModuleKind, policy:ImmutableList<core.Type.ModuleCheckPolicy>) : core.Type.ModuleDefExtra {
 		return {
 			m_file: file,
 			m_sign: sign,
@@ -560,12 +562,15 @@ class Type {
 		};
 	}
 
-	public static var null_module = {
-		m_id: alloc_mid(),
-		m_path: new core.Path([], ""),
-		m_types: [],
-		m_extra: module_extra("", "", 0.0, MFake, [])
-	};
+	public static var null_module(get, never): ModuleDef;
+	static function get_null_module() : ModuleDef {
+		return {
+			m_id: alloc_mid(),
+			m_path: new core.Path([], ""),
+			m_types: [],
+			m_extra: module_extra("", "", 0.0, MFake, [])
+		};
+	}
 
 	public static function null_class () {
 		var c = mk_class(null_module, new core.Path([],""), core.Globals.null_pos, core.Globals.null_pos);
@@ -690,20 +695,20 @@ class Type {
 					case None: t;
 					case Some(t): loop(t); // erase // ?
 				}
-			case TEnum(_,l), TInst(_, l), TType(_, l) if (l.length == 0):
+			case TEnum(_,[]), TInst(_, []), TType(_, []):
 				t;
 			case TEnum(e, tl):
-				TEnum(e, tl.map(loop));
+				TEnum(e, List.map(loop, tl));
 			case TInst(c, tl):
-				TInst(c, tl.map(loop));
+				TInst(c, List.map(loop, tl));
 			case TType(t2, tl):
-				TType(t2, tl.map(loop));
+				TType(t2, List.map(loop, tl));
 			case TAbstract(a, tl):
-				TAbstract(a, tl.map(loop));
+				TAbstract(a, List.map(loop, tl));
 			case TFun({args:tl, ret:r}):
-				TFun({args:tl.map(function (arg) { return {name:arg.name, opt:arg.opt, t:loop(arg.t)}; }), ret:loop(r)});
+				TFun({args:List.map(function (arg) { return {name:arg.name, opt:arg.opt, t:loop(arg.t)}; }, tl), ret:loop(r)});
 			case TAnon(a):
-				var fields = ocaml.PMap.map(function(f:TClassField) {
+				var fields = PMap.map(function(f:TClassField) {
 					var clone = f.clone();
 					clone.cf_type = loop(f.cf_type);
 					return clone;
@@ -725,39 +730,31 @@ class Type {
 	}
 
 	/* substitute parameters with other types */
-	public static function apply_params (cparams:TypeParams, params:Array<T>, t:T) : T {
-		if (cparams.length == 0) { return t; }
+	public static function apply_params (cparams:TypeParams, params:ImmutableList<T>, t:T) : T {
+		switch (cparams) { 
+			case []: return t; 
+			case _:
+		}
 
-		function rloop(l1:TypeParams, l2:Array<T>) : Array<{a:T, b:T}> {
-			if (l1.length == 0 && l2.length == 0) {
-				return [];
-			}
-
-			if (l1.length != l2.length) {
-				throw false;
-			}
-
-			var e1 = l1[0];
-			var e2 = l2[0];
-			return switch (e1.t) {
-				case TLazy(f):
-					var ll1 = l1.slice(1);
-					ll1.unshift({name:e1.name, t:lazy_type(f)});
-					rloop(ll1, l2);
-				default:
-					var ll = rloop(l1.slice(1), l2.slice(2));
-					ll.unshift({a:e1.t, b:e2});
-					ll;
+		function rloop(l1:TypeParams, l2:ImmutableList<T>) : ImmutableList<{fst:T, snd:T}> {
+			return switch {f:l1, s:l2} {
+				case {f:[], s:[]}: [];
+				case {f:({name:x, t:TLazy(f)}::l1), s:_}:
+					var _l1:TypeParams = l1;
+					rloop({name:x, t:lazy_type(f)}::_l1, l2);
+				case {f:{t:t1}::l1, s:t2::l2}:
+					{fst:t1, snd:t2}::rloop(l1, l2);
+				case _: throw false;
 			}
 		}
 		var subst = rloop(cparams, params);
 
 		function loop (t:T) {
-			for (element in subst) {
-				if (element.a == t) {
-					return element.b;
-				}
+			try {
+				List.assq(t, subst);
 			}
+			catch (_:ocaml.Not_found) {}
+			
 			return switch (t) {
 				case TMono(_.get()=>r):
 					switch (r) {
@@ -765,66 +762,54 @@ class Type {
 						case Some(v): loop(v);
 					}
 				case TEnum(e, tl):
-					if (tl.length == 0) {
-						t;
-					}
-					else {
-						TEnum(e, tl.map(loop));
+					switch (tl) {
+						case []: t;
+						case _: TEnum(e, List.map(loop, tl));
 					}
 				case TType(t2, tl):
-					if (tl.length == 0) {
-						t;
-					}
-					else {
-						TType(t2, tl.map(loop));
+					switch (tl) {
+						case []: t;
+						case _: TType(t2, List.map(loop, tl));
 					}
 				case TAbstract(a, tl):
-					if (tl.length == 0) {
-						t;
-					}
-					else {
-						TAbstract(a, tl.map(loop));
+					switch (tl) {
+						case []: t;
+						case _: TAbstract(a, List.map(loop, tl));
 					}
 				case TInst(c, tl):
-					if (tl.length == 0) { return t; }
-					if (tl.length == 1) {
-						switch (tl[0]) {
-							case TMono(r):
-								switch (r.get()) {
-									case Some(tt):
-										if ( t == tt ) {
-											// for dynamic
-											var pt = mk_mono();
-											var params = [pt];
-											var t = TInst(c, params);
-											switch (pt) {
-												case TMono(r) :
-													r.set(Some(t));
-												case _:
-													throw false; // never
-											}
-											return t;
-										}
-									default:
-								}
-							default:
-						}
+					switch (tl) {
+						case []: t;
+						case[TMono(r)]:
+							switch (r.get()) {
+								case Some(tt) if (t == tt):
+									// for dynamic
+									var pt = mk_mono();
+									var params = [pt];
+									var t = TInst(c, params);
+									switch (pt) {
+										case TMono(r) :
+											r.set(Some(t));
+										case _:
+											throw false; // never
+									}
+									t;
+								case _: TInst(c, List.map(loop, tl));
+							}
+						case _: TInst(c, List.map(loop, tl));
 					}
-					return TInst(c, tl.map(loop));
 				case TFun({args:tl, ret:r}):
-					TFun({args: tl.map(function(s:{name:String, opt:Bool, t:T}) {
+					TFun({args: List.map(function(s:{name:String, opt:Bool, t:T}) {
 							return {name:s.name,
 									opt:s.opt,
 									t: loop(s.t)};
-						}),
+						}, tl),
 						ret:loop(r)});
 				case TAnon(a):
-					function pmap_anon (f:TClassField) : TClassField {
+					var fields = PMap.map(function (f:TClassField) : TClassField {
 						var clone = f.clone();
 						clone.cf_type = loop(f.cf_type);
 						return clone;
-					}
-					var fields = ocaml.PMap.map(pmap_anon, a.a_fields);
+					}, a.a_fields);
 					switch (a.a_status.get()) {
 						case Opened:
 							a.a_fields = fields;
@@ -855,7 +840,7 @@ class Type {
 	}
 
 	public static function monomorphs (eparams:TypeParams, t:T) : T {
-		return apply_params(eparams, eparams.map(function (_) { return mk_mono(); }), t);
+		return apply_params(eparams, List.map(function (_) { return mk_mono(); }, eparams), t);
 	}
 
 	public static function follow (t:core.Type.T) : core.Type.T {
@@ -869,34 +854,21 @@ class Type {
 				follow(lazy_type(f));
 			case TType (tt,tl):
 				follow(apply_params(tt.t_params, tl, tt.t_type));
-			case TAbstract(a,[tt]):
-				if (a.a_path == new core.Path([],"Null")) {
-					follow(tt);
-				}
-				else {
-					t;
-				}
-			default: t;
+			case TAbstract({a_path:{a:[], b:"Null"}},[tt]):
+				follow(tt);
+			case _: t;
 		};
 	}
 
 	public static function is_nullable (t:core.Type.T) : Bool {
 		return switch (t) {
-			case TMono(_.get()=>r):
-				switch (r) {
+			case TMono(r):
+				switch (r.get()) {
 					case None: false;
 					case Some(t): is_nullable(t);
 				}
-			case TAbstract (a, tl):
-				if (a.a_path == new core.Path([], "Null") && tl.length == 1) {
-					true;
-				}
-				else if (core.Meta.has(CoreType, a.a_meta)) {
-					!core.Meta.has(NotNull, a.a_meta);
-				}
-				else {
-					!core.Meta.has(NotNull, a.a_meta) && is_nullable(apply_params(a.a_params, tl, a.a_this));
-				}
+			case TAbstract ({a_path:{a:[], b:"Null"}}, [_]):
+				true;
 			case TLazy(f):
 				is_nullable(lazy_type(f));
 			case TType (t,tl):
@@ -912,6 +884,10 @@ class Type {
 
 				| TInst ({ cl_kind = KTypeParameter },_) -> false
 			*/
+			case TAbstract(a,_) if (core.Meta.has(CoreType, a.a_meta)):
+				!core.Meta.has(NotNull, a.a_meta);
+			case TAbstract(a, tl):
+				!core.Meta.has(NotNull, a.a_meta) && is_nullable(apply_params(a.a_params, tl, a.a_this));
 			case _:
 				true;
 		}
@@ -924,13 +900,8 @@ class Type {
 					case None: false;
 					case Some(t): is_null(t);
 				}
-			case TAbstract(a, tl):
-				if (a.a_path == new core.Path([], "Null") && tl.length == 1) {
-					!is_nullable(follow(tl[0]));
-				}
-				else {
-					false;
-				}
+			case TAbstract({a_path:{a:[], b:"Null"}}, [t]):
+				!is_nullable(follow(t));
 			case TLazy(f):
 				if (no_lazy) {
 					throw new ocaml.Exit();
@@ -953,7 +924,7 @@ class Type {
 					case None: false;
 					case Some(_t): is_null(_t);
 				}
-			case TAbstract(a, ts) if (a.a_path.equals(new core.Path([], "Null")) && ts.length == 1):
+			case TAbstract({a_path:{a:[], b:"Null"}}, [t]):
 				true;
 			case TLazy(f):
 				is_null(lazy_type(f));
@@ -971,12 +942,12 @@ class Type {
 					case Some(_t): has_mono(_t);
 				}
 			case TInst(_, pl), TEnum(_, pl), TAbstract(_, pl), TType(_, pl):
-				ocaml.List.exists(has_mono, pl);
+				List.exists(has_mono, pl);
 			case TDynamic(_): false;
 			case TFun(f):
-				has_mono(f.ret) || ocaml.List.exists(function (arg) { return has_mono(arg.t); }, f.args);
+				has_mono(f.ret) || List.exists(function (arg) { return has_mono(arg.t); }, f.args);
 			case TAnon(a):
-				ocaml.PMap.fold(function (cf, b) { return b || has_mono(cf.cf_type); }, a.a_fields, false);
+				PMap.fold(function (cf, b) { return b || has_mono(cf.cf_type); }, a.a_fields, false);
 				// ocaml.PMap.fold(function (cf, b) { return has_mono(cf.cf_type) || b; }, a.a_fields, false);
 			case TLazy(f):
 				has_mono(lazy_type(f));
@@ -985,9 +956,9 @@ class Type {
 
 	public static function concat (e1:TExpr, e2:TExpr) : TExpr {
 		var e = switch ({fst:e1.eexpr, snd:e2.eexpr}) {
-			case {fst:TBlock(el1), snd:TBlock(el2)}: TBlock(el1.concat(el2));
-			case {fst:TBlock(el1)}: TBlock(el1.concat([e2]));
-			case {snd:TBlock(el2)}: TBlock([e1].concat(el2));
+			case {fst:TBlock(el1), snd:TBlock(el2)}: TBlock(List.concat(el1,el2));
+			case {fst:TBlock(el1)}: TBlock(List.concat(el1,[e2]));
+			case {snd:TBlock(el2)}: TBlock(e1::el2);
 			case _: TBlock([e1, e2]);
 		}
 		return mk(e, e2.etype, core.Ast.punion(e1.epos, e2.epos));
@@ -1002,10 +973,10 @@ class Type {
 			return e.t;
 		}
 		return switch (mt) {
-			case TClassDecl(c): TInst(c, c.cl_params.map(snd));
-			case TEnumDecl(e): TEnum(e, e.e_params.map(snd));
-			case TTypeDecl(t): TType(t, t.t_params.map(snd));
-			case TAbstractDecl(a): TAbstract(a,a.a_params.map(snd));
+			case TClassDecl(c): TInst(c, List.map(snd, c.cl_params));
+			case TEnumDecl(e): TEnum(e, List.map(snd, e.e_params));
+			case TTypeDecl(t): TType(t, List.map(snd, t.t_params));
+			case TAbstractDecl(a): TAbstract(a,List.map(snd, a.a_params));
 		}
 	}
 
@@ -1067,7 +1038,10 @@ class Type {
 	}
 
 	public static function field_type (f:TClassField) : T {
-		return (f.cf_params.length == 0) ? f.cf_type : monomorphs(f.cf_params, f.cf_type);
+		return switch (f.cf_params) {
+			case []: f.cf_type;
+			case _: monomorphs(f.cf_params, f.cf_type);
+		}
 	}
 
 	public static function raw_class_field (build_type:TClassField->T, c:TClass, tl:TParams, i:String) : {fst:Option<{c:TClass, params:TParams}>, snd:T, trd:TClassField} {
@@ -1088,7 +1062,7 @@ class Type {
 					switch (c.cl_super) {
 						case None: throw ocaml.Not_found.instance;
 						case Some({c:c, params:tl}):
-							var _tmp = raw_class_field(build_type, c, tl.map(apply), i);
+							var _tmp = raw_class_field(build_type, c, List.map(apply, tl), i);
 							{fst:_tmp.fst, snd:apply_params(c.cl_params, tl, _tmp.snd), trd:_tmp.trd};
 					}
 				}
@@ -1096,29 +1070,29 @@ class Type {
 					switch (c.cl_kind) {
 						case KTypeParameter(tl):
 							function loop(l:TParams) : {fst:Option<{c:TClass, params:TParams}>, snd:T, trd:TClassField} {
-								if (l.length == 0) { throw ocaml.Not_found.instance; }
-								else {
-									var t = l[0];
-									var ctl = l.slice(1);
-									return switch (follow(t)) {
-										case TAnon(a):
-											try {
-												var f = PMap.find(i, a.a_fields);
-												{fst:None, snd:build_type(f), trd:f};
-											}
-											catch (_:ocaml.Not_found) {
-												loop(ctl);
-											}
-										case TInst(c,tl):
-											try {
-												var _tmp = raw_class_field(build_type, c, tl.map(apply), i);
-												{fst:_tmp.fst, snd:apply_params(c.cl_params, tl, _tmp.snd), trd:_tmp.trd};
-											}
-											catch (_:ocaml.Not_found) {
-												loop(ctl);
-											}
-										case _: loop(ctl);
-									}
+								return switch (l) {
+									case []: throw ocaml.Not_found.instance;
+									case t::ctl:
+										var ctl:TParams = ctl;
+										switch (follow(t)) {
+											case TAnon(a):
+												try {
+													var f = PMap.find(i, a.a_fields);
+													{fst:None, snd:build_type(f), trd:f};
+												}
+												catch (_:ocaml.Not_found) {
+													loop(ctl);
+												}
+											case TInst(c,tl):
+												try {
+													var _tmp = raw_class_field(build_type, c, List.map(apply, tl), i);
+													{fst:_tmp.fst, snd:apply_params(c.cl_params, tl, _tmp.snd), trd:_tmp.trd};
+												}
+												catch (_:ocaml.Not_found) {
+													loop(ctl);
+												}
+											case _: loop(ctl);
+										}
 								}
 							}
 							loop(tl);
@@ -1128,18 +1102,18 @@ class Type {
 							 * an interface can implements other interfaces without
 							 * having to redeclare its fields
 							 */
-							function loop (l:Array<{c:TClass, params:TParams}>) : {fst:Option<{c:TClass, params:TParams}>, snd:T, trd:TClassField}{
-								if (l.length == 0) { throw ocaml.Not_found.instance; }
-								else {
-									return try {
-										var c = l[0].c;
-										var tl = l[0].params;
-										var _tmp = raw_class_field(build_type, c, tl.map(apply), i);
-										{fst:_tmp.fst, snd:apply_params(c.cl_params, tl, _tmp.snd), trd:_tmp.trd};
-									}
-									catch (_:ocaml.Not_found) {
-										loop(l.slice(1));
-									}
+							function loop (l:ImmutableList<{c:TClass, params:TParams}>) : {fst:Option<{c:TClass, params:TParams}>, snd:T, trd:TClassField}{
+								return switch (l) {
+									case []: throw ocaml.Not_found.instance;
+									case {c:c, params:tl}::l:
+										var l : ImmutableList<{c:TClass, params:TParams}> = l;
+										try {
+											var _tmp = raw_class_field(build_type, c, List.map(apply, tl), i);
+											{fst:_tmp.fst, snd:apply_params(c.cl_params, tl, _tmp.snd), trd:_tmp.trd};
+										}
+										catch (_:ocaml.Not_found) {
+											loop(l);
+										}
 								}
 							}
 							loop(c.cl_implements);
@@ -1202,13 +1176,13 @@ class Type {
 
 	// ======= Printing =======
 
-	/** not sure if Array<String> */
-	public static function print_context () : Array<String> {
+	/** not sure if ImmutableList<String> */
+	public static function print_context () : ImmutableList<String> {
 		return [];
 	}
 
-	/** not sure if ctx is Array<String> */
-	public static function s_type (ctx:Array<String>, t:T) : String {
+	/** not sure if ctx is ImmutableList<String> */
+	public static function s_type (ctx:ImmutableList<String>, t:T) : String {
 		trace("TODO core.Type.s_type");
 		return null;
 	}
@@ -1256,8 +1230,7 @@ class Type {
 						}
 					case TEnum(_, tl), TInst(_, tl), TType(_, tl), TAbstract(_, tl): ocaml.List.exists(loop, tl);
 					case TFun(fun):
-						// ocaml.List.exists(function (arg) { return loop(arg.t);}, f.args) || loop(f.ret);
-						loop(fun.ret) || ocaml.List.exists(function (arg) { return loop(arg.t);}, fun.args);
+						List.exists(function (arg) { return loop(arg.t);}, fun.args) || loop(fun.ret);
 					case TDynamic(t2):
 						if (t == t2.get()) {
 							false;
@@ -1268,7 +1241,7 @@ class Type {
 					case TLazy(f):
 						loop(lazy_type(f));
 					case TAnon(a):
-						ocaml.PMap.fold(function (value, b) { return b || loop(value.cf_type); } , a.a_fields, false);
+						PMap.fold(function (value, b) { return b || loop(value.cf_type); } , a.a_fields, false);
 				}
 			}
 		}
@@ -1301,7 +1274,7 @@ class Type {
 		}
 		else {
 			return switch ({fst:a, snd:b}) {
-				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (l1.length == l2.length):
+				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (List.length(l1) == List.length(l2)):
 					ocaml.List.for_all2 (function (a1, a2) { return fast_eq(a1.t, a2.t); }, l1, l2) && fast_eq(r1, r2);
 				case {fst:TType(t1, l1), snd:TType(t2, l2)}:
 					t1.equals(t2) && ocaml.List.for_all2(fast_eq, l1, l2);
@@ -1322,7 +1295,7 @@ class Type {
 		}
 		else {
 			return switch ({fst:a, snd:b}) {
-				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (l1.length == l2.length):
+				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (List.length(l1) == List.length(l2)):
 					ocaml.List.for_all2 (function (a1, a2) { return fast_eq_mono(ml, a1.t, a2.t); }, l1, l2) && fast_eq_mono(ml, r1, r2);
 				case {fst:TType(t1, l1), snd:TType(t2, l2)}:
 					t1.equals(t2) && ocaml.List.for_all2(fast_eq_mono.bind(ml), l1, l2);
@@ -1358,15 +1331,15 @@ class Type {
 		return Has_extra_field(t, n);
 	}
 
-	public static function error (l:Array<UnifyError>) : Dynamic {
+	public static function error (l:ImmutableList<UnifyError>) : Dynamic {
 		throw new Unify_error(l);
 	}
 
 	public static function has_meta(m:core.Meta.StrictMeta, ml:core.Ast.Metadata) : Bool {
-		return ocaml.List.exists(function (me:core.Ast.MetadataEntry) { return m.equals(me.name);}, ml);
+		return List.exists(function (me:core.Ast.MetadataEntry) { return m.equals(me.name);}, ml);
 	}
 	public static function get_meta(m:core.Meta.StrictMeta, ml:core.Ast.Metadata) : core.Ast.MetadataEntry {
-		return ocaml.List.find(function (me:core.Ast.MetadataEntry) { return m.equals(me.name);}, ml);
+		return List.find(function (me:core.Ast.MetadataEntry) { return m.equals(me.name);}, ml);
 	}
 
 	public static var no_meta:core.Ast.Metadata = [];
@@ -1419,51 +1392,51 @@ class Type {
 		}
 	}
 
-	public static var eq_stack = new Ref<Array<{fst:T, snd:T}>>([]);
+	public static var eq_stack = new Ref<ImmutableList<{fst:T, snd:T}>>([]);
 
-	public static function rec_stack(stack:Ref<Array<{fst:T, snd:T}>>, value:{fst:T, snd:T}, fcheck:{fst:T, snd:T}->Bool, frun:Void->Void, ferror:Array<UnifyError>->Void) : Void {
-		if (!ocaml.List.exists(fcheck, stack.get())) {
+	public static function rec_stack(stack:Ref<ImmutableList<{fst:T, snd:T}>>, value:{fst:T, snd:T}, fcheck:{fst:T, snd:T}->Bool, frun:Void->Void, ferror:ImmutableList<UnifyError>->Void) : Void {
+		if (!List.exists(fcheck, stack.get())) {
 			try {
-				stack.get().unshift(value);
+				stack.set(value::stack.get());
 				// var v = frun();
 				frun();
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				// v;
 			}
 			catch (err:Unify_error) {
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				ferror(err.l);
 			}
-			catch (_:Bool) {
-				throw false;
+			catch (b:Bool) {
+				throw b;
 			}
 			catch (e:Any) {
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				throw e;
 			}
 		}
 	}
 
-	public static function rec_stack_bool (stack:Ref<Array<{fst:T, snd:T}>>, value:{fst:T, snd:T}, fcheck:{fst:T, snd:T}->Bool, frun:Void->Void) : Bool {
-		if (ocaml.List.exists(fcheck, stack.get())) {
+	public static function rec_stack_bool (stack:Ref<ImmutableList<{fst:T, snd:T}>>, value:{fst:T, snd:T}, fcheck:{fst:T, snd:T}->Bool, frun:Void->Void) : Bool {
+		if (List.exists(fcheck, stack.get())) {
 			return false;
 		} 
 		else {
 			try {
-				stack.get().unshift(value);
+				stack.set(value::stack.get());
 				frun();
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				return true;
 			}
 			catch (err:Unify_error) {
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				return false;
 			}
 			catch (_:Bool) {
 				throw false;
 			}
 			catch (e:Any) {
-				stack.get().shift();
+				stack.set(List.tl(stack.get()));
 				throw e;
 			}
 		}
@@ -1499,8 +1472,8 @@ class Type {
 							}
 						case Some(_t): type_eq(param, a, _t);
 					}
-				case {fst:TType(t1, tl1), snd:TType(t2, tl2)} if (t1.equals(t2) || (param == EqCoreType && t1.t_path.equals(t2.t_path)) && tl1.length == tl2.length):
-					ocaml.List.iter2(type_eq.bind(param), tl1, tl2);
+				case {fst:TType(t1, tl1), snd:TType(t2, tl2)} if (t1.equals(t2) || (param == EqCoreType && t1.t_path.equals(t2.t_path)) && List.length(tl1) == List.length(tl2)):
+					List.iter2(type_eq.bind(param), tl1, tl2);
 				case {fst:TType(t, tl)} if (can_follow(a)):
 					type_eq(param, apply_params(t.t_params, tl, t.t_type), b);
 				case {snd:TType(t, tl)} if (can_follow(b)):
@@ -1508,46 +1481,46 @@ class Type {
 						function (e) { return fast_eq(a, e.fst) && fast_eq(b, e.snd); },
 						function () { type_eq(param, a, apply_params(t.t_params, tl, t.t_type)); },
 						function (l) { 
-							return error([cannot_unify(a,b)].concat(l));
+							return error(cannot_unify(a,b) :: l);
 						}
 					);
 				case {fst:TEnum(e1, tl1), snd:TEnum(e2, tl2)}:
 					if (e1 != e2 && !(param == EqCoreType && e1.e_path.equals(e2.e_path))) {
 						error([cannot_unify(a,b)]);
 					}
-					ocaml.List.iter2(type_eq.bind(param), tl1, tl2);
+					List.iter2(type_eq.bind(param), tl1, tl2);
 				case {fst:TInst(c1, tl1), snd:TInst(c2, tl2)}:
 					if (c1 != c2 && !(param == EqCoreType && c1.cl_path.equals(c2.cl_path)) && switch ({fst:c1.cl_kind, snd:c2.cl_kind}) { case {fst:KExpr(_), snd:KExpr(_)}: false; case  _: true;}) {
 						error([cannot_unify(a,b)]);
 					}
-					ocaml.List.iter2(type_eq.bind(param), tl1, tl2);
-				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (l1.length == l2.length):
+					List.iter2(type_eq.bind(param), tl1, tl2);
+				case {fst:TFun({args:l1, ret:r1}), snd:TFun({args:l2, ret:r2})} if (List.length(l1) == List.length(l2)):
 					try {
 						type_eq(param, r1, r2);
-						ocaml.List.iter2(function (a, b) {
+						List.iter2(function (a, b) {
 							if (a.opt != b.opt) { error([Not_matching_optional(a.name)]); }
 							type_eq(param, a.t, b.t);
 						}, l1, l2);
 					}
 					catch (err:Unify_error) {
-						error([cannot_unify(a, b)].concat(err.l));
+						error(cannot_unify(a, b) ::err.l);
 					}
 				case {fst:TDynamic(a), snd:TDynamic(b)}:
 					type_eq(param, a.get(), b.get());
-				case {fst:TAbstract(a1, tl1), snd:TAbstract(a2, tl2)} if (a1.a_path.equals(new core.Path([], "Null")) && a2.a_path.equals(new core.Path([], "Null")) && tl1.length == 1 && tl2 .length == 2):
-					type_eq(param, tl1[0], tl2[0]);
-				case {fst:TAbstract(a1, tl)} if (a1.a_path.equals(new core.Path([], "Null")) && tl.length == 1 && param != EqDoNotFollowNull):
-					type_eq(param, tl[0], b);
-				case {snd:TAbstract(a2, tl)} if (a2.a_path.equals(new core.Path([], "Null")) && tl.length == 1 && param != EqDoNotFollowNull):
-					type_eq(param, a, tl[0]);
+				case {fst:TAbstract({a_path:{a:[], b:"Null"}}, [t1]), snd:TAbstract({a_path:{a:[], b:"Null"}}, [t2])}:
+					type_eq(param, t1, t2);
+				case {fst:TAbstract({a_path:{a:[], b:"Null"}}, [t])} if (param != EqDoNotFollowNull):
+					type_eq(param, t, b);
+				case {snd:TAbstract({a_path:{a:[], b:"Null"}}, [t])} if (param != EqDoNotFollowNull):
+					type_eq(param, a, t);
 				case {fst:TAbstract(a1, tl1), snd:TAbstract(a2, tl2)}:
 					if (a1 != a2 && !(param == EqCoreType && a1.a_path.equals(a2.a_path))) {
 						error([cannot_unify(a, b)]);
 					}
-					ocaml.List.iter2(type_eq.bind(param), tl1, tl2);
+					List.iter2(type_eq.bind(param), tl1, tl2);
 				case {fst:TAnon(a1), snd:TAnon(a2)}:
 					try {
-						ocaml.PMap.iter(function (n, f1:TClassField) {
+						PMap.iter(function (n, f1:TClassField) {
 							try {
 								var f2 = ocaml.PMap.find(n, a2.a_fields);
 								if (!f1.cf_kind.equals(f2.cf_kind) && (param == EqStrict || param == EqCoreType || !unify_kind(f1.cf_kind, f2.cf_kind))) {
@@ -1558,7 +1531,7 @@ class Type {
 								rec_stack(eq_stack, {fst:a, snd:b}, 
 									function (pair) { return fast_eq(a, pair.fst) && fast_eq(b, pair.snd); },
 									function () { type_eq(param, a, b); },
-									function (l) { error([invalid_field(n)].concat(l));}
+									function (l) { error(invalid_field(n) :: l);}
 								);
 							}
 							catch (_:ocaml.Not_found) {
@@ -1585,7 +1558,7 @@ class Type {
 						}, a2.a_fields);
 					}
 					catch (err:Unify_error) {
-						error([cannot_unify(a, b)].concat(err.l));
+						error(cannot_unify(a, b) :: err.l);
 					}
 				case _:
 					if (b.equals(t_dynamic) && (param == EqRightDynamic || param == EqBothDynamic)) {}
@@ -1632,18 +1605,12 @@ class Type {
 				 TParenthesis(e), TCast(e,_), TUnop(_,_,e), TMeta(_,e):
 				f(e);
 			case TArrayDecl(el), TNew(_,_,el), TBlock(el):
-				for (e in el) {
-					f(e);
-				}
+				List.iter(f, el);
 			case TObjectDecl(fl):
-				for (of in fl) {
-					f(of.expr);
-				}
+				List.iter(function (of) { f(of.expr);}, fl);
 			case TCall(e1, el):
 				f(e1);
-				for (e in el) {
-					f(e);
-				}
+				List.iter(f, el);
 			case TVar(_, eo):
 				switch (eo) {
 					case None:
@@ -1659,21 +1626,14 @@ class Type {
 				}
 			case TSwitch(e, cases, def):
 				f(e);
-				for (c in cases) {
-					f(c.e);
-					for (v in c.values) {
-						f(v);
-					}
-				}
+				List.iter(function (c) { f(c.e); List.iter(f, c.values); }, cases);
 				switch (def) {
 					case Some(v): f(v);
 					case None:
 				}
 			case TTry(e, catches):
 				f(e);
-				for (c in catches) {
-					f(c.e);
-				}
+				List.iter(function(c) { f(c.e); }, catches);
 			case TReturn(eo):
 				switch (eo) {
 					case Some(v): f(v);
@@ -1712,16 +1672,16 @@ class Type {
 			case TUnop(op, pre, e1):
 				_e.eexpr = TUnop(op, pre, f(e1));
 			case TArrayDecl(el):
-				_e.eexpr = TArrayDecl(el.map(f));
+				_e.eexpr = TArrayDecl(List.map(f, el));
 			case TNew(t, pl, el):
-				_e.eexpr = TNew(t, pl, el.map(f));
+				_e.eexpr = TNew(t, pl, List.map(f, el));
 			case TBlock(el):
-				_e.eexpr = TBlock(el.map(f));
+				_e.eexpr = TBlock(List.map(f, el));
 			case TObjectDecl(el):
-				_e.eexpr = TObjectDecl(el.map(function (a) {return {a:a.a, expr:f(a.expr)};}));
+				_e.eexpr = TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el));
 			case TCall(e1, el):
 				var e1 = f(e1);
-				_e.eexpr = TCall(e1, el.map(f));
+				_e.eexpr = TCall(e1, List.map(f, el));
 			case TVar(v, eo):
 				_e.eexpr = TVar(v, switch (eo) {
 					case None:None;
@@ -1740,14 +1700,14 @@ class Type {
 				});
 			case TSwitch (e1, cases, def):
 				var e1 = f(e1);
-				var cases = cases.map(function (c) { return {values:c.values.map(f), e:f(c.e)}});
+				var cases = List.map(function (c) { return {values:List.map(f, c.values), e:f(c.e)}}, cases);
 				_e.eexpr = TSwitch(e1, cases, switch (def) {
 					case None: None;
 					case Some(e): Some(f(e));
 				});
 			case TTry (e1, catches):
 				var e1 = f(e1);
-				_e.eexpr = TTry(e1, catches.map(function (c) { return {v:c.v, e:f(c.e)};}));
+				_e.eexpr = TTry(e1, List.map(function (c) { return {v:c.v, e:f(c.e)};}, catches));
 			case TReturn (eo):
 				_e.eexpr = TReturn (switch (eo) {
 					case None: None;
@@ -1819,7 +1779,7 @@ class Type {
 				_e.eexpr = TUnop(op, pre, f(e1));
 				_e.etype = ft(e.etype);
 			case TArrayDecl(el):
-				_e.eexpr = TArrayDecl(el.map(f));
+				_e.eexpr = TArrayDecl(List.map(f, el));
 				_e.etype = ft(e.etype);
 			case TNew(c, pl, el):
 				var et = ft(e.etype);
@@ -1836,17 +1796,17 @@ class Type {
 						c = _c; pl = _pl;
 					case t: error([has_no_field(t, "new")]);
 				}
-				_e.eexpr = TNew(c, pl, el.map(f));
+				_e.eexpr = TNew(c, pl, List.map(f, el));
 				_e.etype = ft(e.etype);
 			case TBlock(el):
-				_e.eexpr = TBlock(el.map(f));
+				_e.eexpr = TBlock(List.map(f, el));
 				_e.etype = ft(e.etype);
 			case TObjectDecl(el):
-				_e.eexpr = TObjectDecl(el.map(function (a) {return {a:a.a, expr:f(a.expr)};}));
+				_e.eexpr = TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el));
 				_e.etype = ft(e.etype);
 			case TCall(e1, el):
 				var e1 = f(e1);
-				_e.eexpr = TCall(e1, el.map(f));
+				_e.eexpr = TCall(e1, List.map(f, el));
 				_e.etype = ft(e.etype);
 			case TVar(v, eo):
 				_e.eexpr = TVar(fv(v), switch (eo) {
@@ -1857,7 +1817,7 @@ class Type {
 			case TFunction (fu):
 				var _fu = {
 					tf_expr: f(fu.tf_expr),
-					tf_args: fu.tf_args.map(function (a) { return {v:fv(a.v), c:a.c};}),
+					tf_args: List.map(function (a) { return {v:fv(a.v), c:a.c};}, fu.tf_args),
 					tf_type: ft(fu.tf_type)
 				}
 				_e.eexpr = TFunction(_fu);
@@ -1872,7 +1832,7 @@ class Type {
 				_e.etype = ft(e.etype);
 			case TSwitch (e1, cases, def):
 				var e1 = f(e1);
-				var cases = cases.map(function (c) { return {values:c.values.map(f), e:f(c.e)}});
+				var cases = List.map(function (c) { return {values:List.map(f, c.values), e:f(c.e)}}, cases);
 				_e.eexpr = TSwitch(e1, cases, switch (def) {
 					case None: None;
 					case Some(e): Some(f(e));
@@ -1880,7 +1840,7 @@ class Type {
 				_e.etype = ft(e.etype);
 			case TTry (e1, catches):
 				var e1 = f(e1);
-				_e.eexpr = TTry(e1, catches.map(function (c) { return {v:fv(c.v), e:f(c.e)};}));
+				_e.eexpr = TTry(e1, List.map(function (c) { return {v:fv(c.v), e:f(c.e)};}, catches));
 				_e.etype = ft(e.etype);
 			case TReturn (eo):
 				_e.eexpr = TReturn (switch (eo) {

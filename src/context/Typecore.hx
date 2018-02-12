@@ -1,6 +1,8 @@
 package context;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 import ocaml.Ref;
 using ocaml.Cloner;
 
@@ -67,41 +69,41 @@ enum TyperPass {
 
 typedef TyperModule = {
 	curmod : core.Type.ModuleDef,
-	module_types : Array<{mt:core.Type.ModuleType, pos:core.Globals.Pos}>,
-	module_using : Array<{tc:core.Type.TClass, pos:core.Globals.Pos}>,
+	module_types : ImmutableList<{mt:core.Type.ModuleType, pos:core.Globals.Pos}>,
+	module_using : ImmutableList<{tc:core.Type.TClass, pos:core.Globals.Pos}>,
 	module_globals : Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>,
-	wildcard_packages : Array<{l:Array<String>, pos:core.Globals.Pos}>,
-	module_imports : Array<core.Ast.Import>
+	wildcard_packages : ImmutableList<{l:ImmutableList<String>, pos:core.Globals.Pos}>,
+	module_imports : ImmutableList<core.Ast.Import>
 }
 
 @:structInit
 class TyperGlobals {
 	public var types_module : Map<core.Path, core.Path>;
 	public var modules : Map<core.Path, core.Type.ModuleDef>;
-	public var delayed : Array<{fst:TyperPass, snd:Array<Void->Void>}>;
-	public var debug_delayed : Array<{fst:TyperPass, snd:Array<{f:Void->Void, s:String, t:context.Typecore.Typer}>}>;
+	public var delayed : ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>;
+	public var debug_delayed : ImmutableList<{fst:TyperPass, snd:ImmutableList<{f:Void->Void, s:String, t:context.Typecore.Typer}>}>;
 	public var doinline : Bool;
 	public var core_api : Option<Typer>;
 	public var macros : Option<{f:Void->Void, t:Typer}>;
 	public var std : core.Type.ModuleDef;
-	public var hook_generate : Array<Void->Void>;
+	public var hook_generate : ImmutableList<Void->Void>;
 	public var type_patches : Map<core.Path, {map:Map<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>;
-	public var global_metadata : Array<{l:Array<String>, me:core.Ast.MetadataEntry, bs:{a:Bool, b:Bool, c:Bool}}>;
-	public var module_check_policies : Array<{l:Array<String>, mcps:Array<core.Type.ModuleCheckPolicy>, b:Bool}>;
-	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:Array<core.Type.T>, cfs: Array<core.Ast.ClassField>}>;
-	public var delayed_macros : Array<Void->Void>;
-	public var global_using : Array<{a:core.Type.TClass, pos:core.Globals.Pos}>;
+	public var global_metadata : ImmutableList<{l:ImmutableList<String>, me:core.Ast.MetadataEntry, bs:{a:Bool, b:Bool, c:Bool}}>;
+	public var module_check_policies : ImmutableList<{l:ImmutableList<String>, mcps:ImmutableList<core.Type.ModuleCheckPolicy>, b:Bool}>;
+	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:ImmutableList<core.Type.T>, cfs: Array<core.Ast.ClassField>}>;
+	public var delayed_macros : Array<Void->Void>; // is real array: DynArray
+	public var global_using : ImmutableList<{a:core.Type.TClass, pos:core.Globals.Pos}>;
 	// api
 	public var do_inherit : Typer->core.Type.TClass->core.Globals.Pos->{is_extends:Bool, tp:core.Ast.PlacedTypePath}->Bool;
 	public var do_create : context.Common.Context->Typer;
-	public var do_macro : Typer->MacroMode->core.Path->String->Array<core.Ast.Expr>->core.Globals.Pos->Option<core.Ast.Expr>;
+	public var do_macro : Typer->MacroMode->core.Path->String->ImmutableList<core.Ast.Expr>->core.Globals.Pos->Option<core.Ast.Expr>;
 	public var do_load_module : Typer->core.Path->core.Globals.Pos->core.Type.ModuleDef;
 	public var do_optimize : Typer->core.Type.TExpr->core.Type.TExpr;
-	// do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:Array<{s:String, t:core.Type.T}>, path:core.Path, f:Array<core.Type.T>->core.Type.T};
-	public var do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:core.Type.TypeParams, path:core.Path, f:Array<core.Type.T>->core.Type.T};
+	// do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:ImmutableList<{s:String, t:core.Type.T}>, path:core.Path, f:ImmutableList<core.Type.T>->core.Type.T};
+	public var do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:core.Type.TypeParams, path:core.Path, f:ImmutableList<core.Type.T>->core.Type.T};
 	public var do_format_string : Typer->String->core.Globals.Pos->core.Ast.Expr;
 	public var do_finalize : Typer->Void;
-	public var do_generate : Typer->{main:Option<core.Type.TExpr>, types:Array<core.Type.ModuleType>, modules:Array<core.Type.ModuleDef>};
+	public var do_generate : Typer->{main:Option<core.Type.TExpr>, types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>};
 }
 
 
@@ -111,9 +113,9 @@ typedef Typer = {
 	t : core.Type.BasicTypes,
 	g : TyperGlobals,
 	meta : core.Ast.Metadata,
-	this_stack : Array<core.Type.TExpr>,
-	with_type_stack : Array<WithType>,
-	call_argument_stack : Array<Array<core.Ast.Expr>>,
+	this_stack : ImmutableList<core.Type.TExpr>,
+	with_type_stack : ImmutableList<WithType>,
+	call_argument_stack : ImmutableList<ImmutableList<core.Ast.Expr>>,
 	// variable
 	pass : TyperPass,
 	// per-module
@@ -133,7 +135,7 @@ typedef Typer = {
 	curfun : CurrentFun,
 	ret : core.Type.T,
 	locals : Map<String, core.Type.TVar>,
-	opened : Array<Ref<core.Type.AnonStatus>>,
+	opened : ImmutableList<Ref<core.Type.AnonStatus>>,
 	vthis : Option<core.Type.TVar>,
 	in_call_args : Bool,
 	// events
@@ -217,69 +219,58 @@ class Typecore {
 		return v;
 	}
 
-	public static function delay (ctx:context.Typecore.Typer, p:context.Typecore.TyperPass, f:Void->Void) : Void {
-		function loop (s:Array<{fst:TyperPass, snd:Array<Void->Void>}>) {
-			if (s.length == 0) {
-				return [{fst:p, snd:[f]}];
+	public static function delay (ctx:Typer, p:TyperPass, f:Void->Void) : Void {
+		function loop (s:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>) :ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>{
+			return switch (s) {
+				case []: [{fst:p, snd:[f]}];
+				case {fst:p2, snd:l}::rest:
+					var rest:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = rest;
+					if (p2.equals(p)) {
+						{fst:p, snd:(f::l)}::rest;
+					}
+					else if (typerPassToInt(p2) < typerPassToInt(p)) {
+						{fst:p2, snd:l}::loop(rest);
+					}
+					else {
+						var _tmp:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = [{fst:p, snd:[f]}, {fst:p2, snd:l}];
+						List.concat(_tmp,rest);
+					}
 			}
-			var rest = s.slice(1);
-			var p2 = s[0].fst;
-			var l = s[0].snd.copy();
-			if (p2.equals(p)) {
-				l.unshift(f);
-				rest.unshift({fst:p, snd:l});
-			}
-			// else if (p2.getIndex() < p.getIndex()) {
-			else if (typerPassToInt(p2) < typerPassToInt(p)) {
-				rest = loop(rest);
-				rest.unshift({fst:p2, snd:l});
-			}
-			else {
-				rest.unshift({fst:p2, snd:l});
-				rest.unshift({fst:p, snd:[f]});
-			}
-			return rest;
 		}
 		ctx.g.delayed = loop(ctx.g.delayed);
 	}
 
-	public static function delay_late (ctx:context.Typecore.Typer, p:context.Typecore.TyperPass, f:Void->Void) : Void {
-		function loop (s:Array<{fst:TyperPass, snd:Array<Void->Void>}>) {
-			if (s.length == 0) {
-				return [{fst:p, snd:[f]}];
+	public static function delay_late (ctx:Typer, p:TyperPass, f:Void->Void) : Void {
+		function loop (s:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>) :ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>{
+			return switch (s) {
+				case []: [{fst:p, snd:[f]}];
+				case {fst:p2, snd:l}::rest:
+					var rest:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = rest;
+					if (typerPassToInt(p2) <= typerPassToInt(p)) {
+						{fst:p2, snd:l}::loop(rest);
+					}
+					else {
+						var _tmp:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = [{fst:p, snd:[f]}, {fst:p2, snd:l}];
+						List.concat(_tmp,rest);
+					}
 			}
-			var rest = s.slice(1);
-			var p2 = s[0].fst;
-			var l = s[0].snd.copy();
-			// if (p2.getIndex() <= p.getIndex()) {
-			if (typerPassToInt(p2) < typerPassToInt(p)) {
-				rest = loop(rest);
-				rest.unshift({fst:p2, snd:l});
-			}
-			else {
-				rest.unshift({fst:p2, snd:l});
-				rest.unshift({fst:p, snd:[f]});
-			}
-			return rest;
 		}
 		ctx.g.delayed = loop(ctx.g.delayed);
 	}
 
-	public static function flush_pass (ctx:context.Typecore.Typer, p:context.Typecore.TyperPass, where:String) {
-		if (ctx.g.delayed.length > 0) {
-			var p2 = ctx.g.delayed[0].fst;
-			if (typerPassToInt(p2) <= typerPassToInt(p)) {
-				var l = ctx.g.delayed[0].snd;
-				if (l.length == 0) {
-					ctx.g.delayed.shift();
-				}
-				else {
-					var f = l.shift();
-					ctx.g.delayed.unshift({fst:p2, snd:l});
-					f();
+	public static function flush_pass (ctx:Typer, p:TyperPass, where:String) {
+		switch (ctx.g.delayed) {
+			case {fst:p2, snd:l}::rest if (typerPassToInt(p2) <= typerPassToInt(p)):
+				switch (l) {
+					case []:
+						ctx.g.delayed = rest;
+					case f::l:
+						var rest:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = rest;
+						ctx.g.delayed = {fst:p2, snd:l}::rest;
+						f();
 				}
 				flush_pass(ctx, p, where);
-			}
+			case _:
 		}
 	}
 

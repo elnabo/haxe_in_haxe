@@ -1,14 +1,16 @@
 package optimization;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 using ocaml.Cloner;
+using ocaml.List;
 
 class Optimizer {
 
 	// ----------------------------------------------------------------------
 	// API OPTIMIZATIONS
 
-	public static function api_inline (ctx:context.Typecore.Typer, c:core.Type.TClass, field:String, params:Array<core.Type.TExpr>, p:core.Globals.Pos) : Option<core.Type.TExpr> {
+	public static function api_inline (ctx:context.Typecore.Typer, c:core.Type.TClass, field:String, params:ImmutableList<core.Type.TExpr>, p:core.Globals.Pos) : Option<core.Type.TExpr> {
 		trace("Optimizer.api_inline");
 		throw false;
 	}
@@ -16,7 +18,7 @@ class Optimizer {
 	// ----------------------------------------------------------------------
 	// INLINING
 
-	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:Array<core.Type.TExpr>, tret:core.Type.T, config:Option<Any>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {
+	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, tret:core.Type.T, config:Option<Any>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {
 		trace("Optimizer.type_inline");
 		throw false;
 	}
@@ -229,13 +231,13 @@ class Optimizer {
 				}
 			case TTry(e1, catches):
 				var e1 = block(e1);
-				var catches = catches.map(function (c) { return {v:c.v, e:block(c.e)};});
+				var catches = List.map(function (c) { return {v:c.v, e:block(c.e)};}, catches);
 				var _e = e.clone();
 				_e.eexpr = TTry(e1, catches);
 				_e;
 			case TSwitch(e1, cases, def):
 				var e1 = parent(e1);
-				var cases = cases.map(function (c) { return {values:c.values, e:complex(c.e)};});
+				var cases = List.map(function (c) { return {values:c.values, e:complex(c.e)};}, cases);
 				var def = switch (def) {
 					case None: None;
 					case Some(e): Some(complex(e));
@@ -252,39 +254,41 @@ class Optimizer {
 	public static function reduce_expr (com:Any, e:core.Type.TExpr) : core.Type.TExpr {
 		return switch (e.eexpr) {
 			case TSwitch (_,cases,_):
-				for (_c in cases) {
-					for (e in _c.values) {
+				List.iter(function (_c) {
+					List.iter (function (e:core.Type.TExpr) {
 						switch (e.eexpr) {
 							case TCall({eexpr:TField(_, FEnum(_))}, _): core.Error.error("Not-constant enum in switch cannot be matched", e.epos);
 							case _:
 						}
-					}
-				}
+					}, _c.values);
+				}, cases);
 				e;
 			case TBlock(l):
-				if (l.length == 0) { e; }
-				else {
-					var ec = l[0];
-					var l = l.slice(1);
-					// remove all no-ops : not-final constants in blocks
-					var _tmp = l.filter(function (e) { return switch (e.eexpr) {
-						case TConst(_): false;
-						case TBlock(arr) if (arr.length == 0): false;
-						case TObjectDecl(arr) if (arr.length == 0): false;
-						case _: true;
-					}});
-					if (_tmp.length == 0) { ec; }
-					else {
-						var _e = e.clone();
-						_e.eexpr = TBlock(ocaml.List.rev([ec].concat(l)));
-						_e;
-					}
+				switch (List.rev(l)) {
+					case []: e;
+					case ec::l:
+						var l:ImmutableList<core.Type.TExpr> = l;
+						// remove all no-ops : not-final constants in blocks
+						function _f(e:core.Type.TExpr) {
+							return switch (e.eexpr) {
+								case TConst(_):false;
+								case TBlock([]), TObjectDecl([]): false;
+								case _: true;
+							}
+						}
+						switch (List.filter(_f, l)) {
+							case []: ec;
+							case l: 
+								var _e = e.clone();
+								_e.eexpr = TBlock(ocaml.List.rev(ec :: l));
+								_e;
+						}
 				}
 			case TParenthesis(ec):
 				var _ec = ec.clone();
 				_ec.epos = e.epos;
 				_ec;
-			case TTry(e,l) if (l.length == 0):
+			case TTry(e,[]):
 				e;
 			case _:
 				e;
@@ -322,22 +326,21 @@ class Optimizer {
 			case TSwitch(e1, cases, def):
 				var e = switch (core.Texpr.skip(e1)) {
 					case e1={eexpr:TConst(ct)}:
-						function loop(cases:Array<Dynamic>) : core.Type.TExpr {
-							if (cases.length > 0) {
-								var el=cases[0].values;
-								var e = cases[0].e;
-								return if (ocaml.List.exists(core.Texpr.equal.bind(e1), el)) {
-									e;
-								}
-								else {
-									loop(cases.slice(1));
-								}
-							}
-							else {
-								return switch (def) {
-									case None: e;
-									case Some(e): e;
-								}
+						function loop(cases:ImmutableList<{values:ImmutableList<core.Type.TExpr>, e:core.Type.TExpr}>) : core.Type.TExpr {
+							return switch (cases) {
+								case ({values:el, e:e})::cases:
+									var cases:ImmutableList<{values:ImmutableList<core.Type.TExpr>, e:core.Type.TExpr}> = cases;
+									if (List.exists(core.Texpr.equal.bind(e1), el)) {
+										e;
+									}
+									else {
+										loop(cases);
+									}
+								case []:
+									switch (def) {
+										case None: e;
+										case Some(e): e;
+									}
 							}
 						}
 						loop(cases);

@@ -2,7 +2,11 @@ package core;
 
 import core.Globals.Pos;
 import core.Meta.StrictMeta;
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
+
+using equals.Equal;
 
 enum Keyword {
 	Function;
@@ -134,9 +138,9 @@ enum QuoteStatus {
 }
 
 typedef TypePath = {
-	tpackage : Array<String>,
+	tpackage : ImmutableList<String>,
 	tname : String,
-	tparams : Array<TypeParamOrConst>,
+	tparams : ImmutableList<TypeParamOrConst>,
 	tsub : Option<String>
 }
 
@@ -152,10 +156,10 @@ enum TypeParamOrConst {
 
 enum ComplexType {
 	CTPath (tp:TypePath);
-	CTFunction (l:Array<TypeHint>, th:TypeHint);
-	CTAnonymous (cf:Array<ClassField>);
+	CTFunction (l:ImmutableList<TypeHint>, th:TypeHint);
+	CTAnonymous (cf:ImmutableList<ClassField>);
 	CTParent (th:TypeHint);
-	CTExtend (l:Array<PlacedTypePath>, cf:Array<ClassField>);
+	CTExtend (l:ImmutableList<PlacedTypePath>, cf:ImmutableList<ClassField>);
 	CTOptional (th:TypeHint);
 	CTNamed (pn:PlacedName, th:TypeHint);
 }
@@ -173,15 +177,8 @@ typedef FunArg = {
 	value:Option<Expr>
 };
 typedef Func = {
-	f_params : Array<TypeParam>,
-	// f_args : Array<{
-	// 	pn:PlacedName,
-	// 	opt:Bool,
-	// 	meta:Metadata,
-	// 	th:Option<TypeHint>,
-	// 	e:Option<Expr>
-	// }>,
-	f_args : Array<FunArg>,
+	f_params : ImmutableList<TypeParam>,
+	f_args : ImmutableList<FunArg>,
 	f_type : Option<TypeHint>,
 	f_expr : Option<Expr>
 }
@@ -203,7 +200,7 @@ typedef Var = {
 	type:Option<TypeHint>,
 	expr:Option<Expr>
 };
-typedef Case = {values:Array<Expr>, guard:Option<Expr>, expr:Option<Expr>, pos:Pos};
+typedef Case = {values:ImmutableList<Expr>, guard:Option<Expr>, expr:Option<Expr>, pos:Pos};
 typedef Catch = {name:PlacedName, type:TypeHint, expr:Expr, pos:Pos};
 enum ExprDef {
 	EConst (c:Constant);
@@ -211,22 +208,22 @@ enum ExprDef {
 	EBinop (op:Binop, e1:Expr, e2:Expr);
 	EField (e:Expr, s:String);
 	EParenthesis (e:Expr);
-	EObjectDecl (fields:Array<ObjectField>);
-	EArrayDecl (values:Array<Expr>);
-	ECall (e:Expr, params:Array<Expr>);
-	ENew (ptp:PlacedTypePath, exprs:Array<Expr>);
+	EObjectDecl (fields:ImmutableList<ObjectField>);
+	EArrayDecl (values:ImmutableList<Expr>);
+	ECall (e:Expr, params:ImmutableList<Expr>);
+	ENew (ptp:PlacedTypePath, exprs:ImmutableList<Expr>);
 	EUnop (op:Unop, flag:UnopFlag, e:Expr);
 	// EVars of (placed_name * type_hint option * expr option) list
-	EVars (vars:Array<Var>);
+	EVars (vars:ImmutableList<Var>);
 	EFunction (s:Option<String>, f:Func);
-	EBlock (exprs:Array<Expr>);
+	EBlock (exprs:ImmutableList<Expr>);
 	EFor (e1:Expr, e2:Expr);
 	EIf (econd:Expr, eif:Expr, eelse:Option<Expr>);
 	EWhile (econd:Expr, e:Expr, flag:WhileFlag);
 	//ocaml type: ESwitch of expr * (expr list * expr option * expr option * pos) list * (expr option * pos) option
-	ESwitch (e:Expr, cases:Array<Case>, edef:Option<{e:Option<Expr>, pos:Pos}>);
+	ESwitch (e:Expr, cases:ImmutableList<Case>, edef:Option<{e:Option<Expr>, pos:Pos}>);
 	// ETry of expr * (placed_name * type_hint * expr * pos) list
-	ETry (e:Expr, catches:Array<Catch>);
+	ETry (e:Expr, catches:ImmutableList<Catch>);
 	EReturn (e:Option<Expr>);
 	EBreak;
 	EContinue;
@@ -247,17 +244,17 @@ typedef Expr = {
 
 typedef TypeParam = {
 	tp_name : PlacedName,
-	tp_params :	Array<TypeParam>,
-	tp_constraints : Array<TypeHint>,
+	tp_params :	ImmutableList<TypeParam>,
+	tp_constraints : ImmutableList<TypeHint>,
 	tp_meta : Metadata
 }
 
 typedef Documentation = Option<String>;
 
-typedef Metadata = Array<MetadataEntry>;
+typedef Metadata = ImmutableList<MetadataEntry>;
 typedef MetadataEntry = {
 	name : StrictMeta,
-	params : Array<Expr>,
+	params : ImmutableList<Expr>,
 	pos : Pos
 };
 
@@ -283,7 +280,7 @@ typedef ClassField = {
 	cff_doc : Documentation,
 	cff_pos : Pos,
 	cff_meta : Metadata,
-	cff_access : Array<Access>,
+	cff_access : ImmutableList<Access>,
 	cff_kind : ClassFieldKind
 }
 
@@ -312,18 +309,18 @@ typedef EnumConstructor = {
 	ec_name : PlacedName,
 	ec_doc : Documentation,
 	ec_meta : Metadata,
-	ec_args : Array<{name:String, opt:Bool, type:TypeHint}>,
+	ec_args : ImmutableList<{name:String, opt:Bool, type:TypeHint}>,
 	ec_pos : Globals.Pos,
-	ec_params : Array<TypeParam>,
+	ec_params : ImmutableList<TypeParam>,
 	ec_type : Option<TypeHint>
 }
 
 typedef Definition<A,B> = {
 	d_name : PlacedName,
 	d_doc : Documentation,
-	d_params : Array<TypeParam>,
+	d_params : ImmutableList<TypeParam>,
 	d_meta : Metadata,
-	d_flags : Array<A>,
+	d_flags : ImmutableList<A>,
 	d_data : B,
 }
 
@@ -334,17 +331,17 @@ enum ImportMode {
 }
 
 typedef Import = {
-	pns:Array<PlacedName>,
+	pns:ImmutableList<PlacedName>,
 	mode:ImportMode
 }
 
 enum TypeDef {
-	EClass (d:Definition<ClassFlag, Array<ClassField>>);// of (class_flag, class_field list) definition
-	EEnum (d:Definition<EnumFlag, Array<EnumConstructor>>); //of (enum_flag, enum_constructor list) definition
+	EClass (d:Definition<ClassFlag, ImmutableList<ClassField>>);// of (class_flag, class_field list) definition
+	EEnum (d:Definition<EnumFlag, ImmutableList<EnumConstructor>>); //of (enum_flag, enum_constructor list) definition
 	ETypedef (d:Definition<EnumFlag, TypeHint>);//of (enum_flag, type_hint) definition
-	EAbstract (d:Definition<AbstractFlag, Array<ClassField>>);
+	EAbstract (d:Definition<AbstractFlag, ImmutableList<ClassField>>);
 	EImport (i:Import);
-	EUsing (pns:Array<PlacedName>);
+	EUsing (pns:ImmutableList<PlacedName>);
 }
 
 typedef TypeDecl = {
@@ -353,8 +350,8 @@ typedef TypeDecl = {
 }
 
 typedef Package = {
-	pack:Array<String>,
-	decls:Array<TypeDecl>
+	pack:ImmutableList<String>,
+	decls:ImmutableList<TypeDecl>
 }
 
 class Invalid_escape_sequence {
@@ -368,6 +365,10 @@ class Invalid_escape_sequence {
 
 class Ast {
 
+	public static function is_lower_ident(i:String) : Bool {
+		return haxeparser.HaxeParser.isLowerIdent(i);
+	}
+
 	public static inline function punion(p1:core.Globals.Pos, p2:core.Globals.Pos) {
 		return new core.Globals.Pos(p1.pfile, 
 			(p1.pmin < p2.pmin) ? p1.pmin : p2.pmin,
@@ -375,34 +376,34 @@ class Ast {
 			);
 	}
 
-	public static function string_list_of_expr_path_raise (e:core.Ast.Expr) : Array<String> {
+	public static function string_list_of_expr_path_raise (e:core.Ast.Expr) : ImmutableList<String> {
 		return switch (e.expr) {
 			case EConst(CIdent(i)) : [i];
-			case EField(e, f): [f].concat(string_list_of_expr_path_raise(e));
-			case _: throw new ocaml.Exit();
+			case EField(e, f): f :: string_list_of_expr_path_raise(e);
+			case _: throw ocaml.Exit.instance;
 		}
 	}
 
-	public static function exprOfTypePath(tp:core.Ast.TypePath, p:core.Globals.Pos) : core.Ast.Expr {
-		var sl = tp.tpackage;
-		var s = tp.tname;
-		if (sl.length == 0) {
-			return {expr:EConst(CIdent(s)), pos:p};
+	public static function expr_of_type_path(tp:core.Ast.TypePath, p:core.Globals.Pos) : core.Ast.Expr {
+		var sl = tp.tpackage; var s = tp.tname;
+		return switch (sl) {
+			case []: {expr:EConst(CIdent(s)), pos:p};
+			case s1::sl:
+				var sl:ImmutableList<String> = sl;
+				var e1 = {expr:EConst(CIdent(s1)), pos:p};
+				var e = List.fold_left(function (e, s) {
+					return {expr:EField(e, s), pos:p};
+				}, e1, sl);
+				{expr:EField(e,s), pos:p};
 		}
-		var e1 = {expr:EConst(CIdent(sl[0])), pos:p};
-		var e = e1;
-		for (pack in sl) {
-			e = {expr:EField(e, s), pos:p};
-		}
-		return {expr:EField(e,s), pos:p};
 	}
 
-	public static function safe_for_all2<A,B> (f:A->B->Bool, a:Array<A>, b:Array<B>) : Bool {
-		try {
-			return ocaml.List.for_all2(f, a, b);
+	public static function safe_for_all2<A,B> (f:A->B->Bool, a:ImmutableList<A>, b:ImmutableList<B>) : Bool {
+		return try {
+			List.for_all2(f, a, b);
 		}
 		catch (err:Bool) { throw err; }
-		catch (_:Any) { return false; }
+		catch (_:Any) { false; }
 	}
 
 	public static function unescape (s:String) {
@@ -680,46 +681,30 @@ class Ast {
 		};
 	}
 
-	public static function match_path (recursive:Bool, sl:Array<String>, sl_pattern:Array<String>) : Bool {
-		function loop (sl1:Array<String>, sl2:Array<String>) {
-			var l1 = sl1.length;
-			var l2 = sl2.length;
-			if (l1 == 0 && l2 == 0) {
-				return true;
+	public static function match_path (recursive:Bool, sl:ImmutableList<String>, sl_pattern:ImmutableList<String>) : Bool {
+		function loop (sl1:ImmutableList<String>, sl2:ImmutableList<String>) {
+			return switch ({f:sl1, s:sl2}) {
+				case {f:[], s:[]}: true;
+				// always recurse into types of package paths
+				case {f:(s1::(s11::_)), s:[s2]} if (is_lower_ident(s2) && !(is_lower_ident(s11))):
+					s1 == s2;
+				case {f:[_], s:[""]}: true;
+				case {s:([]|[""])}: recursive;
+				case {f:[]}: false;
+				case {f:s1::sl1, s:s2::sl2}:
+					var sl1:ImmutableList<String> = sl1; var sl2:ImmutableList<String> = sl2;
+					s1 == s2 && loop(sl1, sl2);
 			}
-			// always recurse into types of package paths
-			if (l1 > 2 && l2 == 1 && haxeparser.HaxeParser.isLowerIdent(sl2[0]) && !(haxeparser.HaxeParser.isLowerIdent(sl1[1]))) {
-				return sl1[0] == sl2[0];
-			}
-
-			if (l1 == 1 && l2 == 1 && sl2[0] == "") {
-				return true;
-			}
-
-			if (l2 == 0 || (l2 == 1 && sl2[0]=="")) {
-				return recursive;
-			}
-			
-			if (l1 == 0) {
-				return false;
-			}
-			
-			return (sl1[0] == sl2[0]) && loop(sl1.slice(1), sl2.slice(1));
 		}
 		return loop(sl, sl_pattern);
 	}
 
-	public static function full_dot_path(mpath:core.Path, tpath:core.Path) : Array<String> {
-		if (mpath == tpath) {
-			var res = tpath.a.copy();
-			res.push(tpath.b);
-			return res;
+	public static function full_dot_path(mpath:core.Path, tpath:core.Path) : ImmutableList<String> {
+		if (mpath.equals(tpath)) {
+			return List.concat(tpath.a, [tpath.b]);
 		}
 		else {
-			var res = mpath.a.copy();
-			res.push(mpath.b);
-			res.push(tpath.b);
-			return res;
+			return List.concat(tpath.a, [mpath.b, tpath.b]);
 		}
 	}
 }

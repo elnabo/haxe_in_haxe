@@ -1,6 +1,8 @@
 package core.type;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 import ocaml.PMap;
 
 class Printer {
@@ -20,13 +22,13 @@ class Printer {
 		return '${p.pfile}: ${p.pmin}-${p.pmax}';
 	}
 
-	public static function s_record_fields (tabs:String, fields:Array<{fst:String, snd:String}>) : String {
-		var sl = fields.map(function (f) { return s_record_field(f.fst, f.snd); });
-		return '{\n${tabs}\t${sl.join("\n\t"+tabs)}\n${tabs}}';
+	public static function s_record_fields (tabs:String, fields:ImmutableList<{fst:String, snd:String}>) : String {
+		var sl = List.map(function (f) { return s_record_field(f.fst, f.snd); }, fields);
+		return '{\n${tabs}\t${List.join("\n\t"+tabs, sl)}\n${tabs}}';
 	}
 
-	public static inline function s_list<T> (sep:String, f:T->String, l:Array<T>) : String {
-		return '[${l.map(f).join(sep)}]';
+	public static inline function s_list<T> (sep:String, f:T->String, l:ImmutableList<T>) : String {
+		return '[${List.join(sep, List.map(f, l))}]';
 	}
 
 	public static inline function s_opt<T> (f:T->String, o:Option<T>) : String {
@@ -37,13 +39,15 @@ class Printer {
 	}
 
 	public static inline function s_pmap<K,V> (fk:K->String, fv:V->String, pm:Map<K, V>) : String {
-		return '{${PMap.foldi(function (k, v, acc:Array<String>) : Array<String> { acc.unshift('${fk(k)} = ${fv(v)}'); return acc; }, pm, []).join(", ")}';
+		return '{${List.join(", ", PMap.foldi(function (k, v, acc:ImmutableList<String>) : ImmutableList<String> { 
+			return ('${fk(k)} = ${fv(v)}') :: acc; }, pm, []))
+		}';
 	}
 
 	public static var s_doc = s_opt.bind(function (s:String) { return s; });
 
 	public static inline function s_metadata_entry (entry:core.Ast.MetadataEntry) : String {
-		return '@${core.Meta.to_string(entry.name)}${(entry.params.length == 0) ? "" : "("+entry.params.map(core.Ast.s_expr).join(", ")+")"}';
+		return "@"+core.Meta.to_string(entry.name) + (switch (entry.params) { case []: ""; case el: "("+List.join(", ",List.map(core.Ast.s_expr, el))+")";});
 	}
 
 	public static inline function s_metadata (metadata:core.Ast.Metadata) : String {
@@ -53,11 +57,9 @@ class Printer {
 	public static function s_type_param (tp:{name:String, t:core.Type.T}) : String {
 		return switch (core.Type.follow(tp.t)) {
 			case TInst({cl_kind:KTypeParameter(tl1)}, tl2):
-				if (tl1.length == 0) {
-					tp.name;
-				}
-				else {
-					'${tp.name}:${tl1.map(s_type).join(", ")}';
+				switch (tl1) {
+					case []: tp.name;
+					case _: '${tp.name}:${List.join(", ", List.map(s_type, tl1))}';
 				}
 			case _: throw false;
 		}

@@ -1,147 +1,216 @@
 package ocaml;
 
 import haxe.ds.Option;
+import haxe.ds.ImmutableList;
 using equals.Equal;
 
 class List {
-	public static function equals<T> (a:Array<T>, b:Array<T>) : Bool {
-		if (a == null) { return b == null; }
-		if (b == null) { return false; }
-		if (a.length != b.length) { return false; }
-		for (i in 0...a.length) {
-			if (a[i] != b[i]) {
-				return false;
+	public static function concat<T> (a : ImmutableList<T>, b : ImmutableList<T> ) : ImmutableList<T> {
+		return switch (a) {
+			case Tl: b;
+			case Hd(v, tl):
+				v::concat(tl, b);
+		}
+	}
+
+	public static function length<T> (l:ImmutableList<T>) : Int {
+		return switch (l) {
+			case Tl: 0;
+			case Hd(_, tl): 1 + length(tl);
+		}
+	}
+	public static function tl<T> (l:ImmutableList<T>) : ImmutableList<T> {
+		return switch (l) {
+			case Tl: throw Failure.instance;
+			case Hd(_, tl): tl;
+		}
+	}
+
+	public static function join<T> (sep:String, l:ImmutableList<T>) : String {
+		var buf = new StringBuf();
+		function loop (l:ImmutableList<T>) {
+		 	switch (l) {
+				case Tl: return;
+				case Hd(v, Tl):
+					buf.add(v);
+				case Hd(v, tl):
+					buf.add(v);
+					buf.add(sep);
+					loop(tl);
 			}
 		}
-		return true;
+		loop(l);
+		return buf.toString();
 	}
 
-	public static function iter<T> (f:T->Void, l:Array<T>) : Void {
-		for (e in l) {
-			f(e);
+	public static function sort<T> (f:T->T->Int, l:ImmutableList<T>) : ImmutableList<T> {
+		var _tmp:Array<T> = l;
+		_tmp.sort(f);
+		return _tmp;
+	}
+
+	public static function iter<T> (f:T->Void, l:ImmutableList<T>) : Void {
+		switch (l) {
+			case Tl:
+			case Hd(v, tl):
+				f(v);
+				iter(f, tl);
 		}
 	}
 
-	public static function iter2<A,B> (f:A->B->Void, l1:Array<A>, l2:Array<B>) : Void {
-		if (l1.length != l2.length) { throw new Invalid_argument(); }
-		for (i in 0...l1.length) {
-			f(l1[i], l2[i]);
+	public static function iter2<A,B> (f:A->B->Void, l1:ImmutableList<A>, l2:ImmutableList<B>) : Void {
+		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		switch ({f:l1, s:l2}) {
+			case {f:Tl, s:Tl}:
+			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
+				f(v1, v2);
+			case _: throw new Invalid_argument(); }
 		}
 	}
 
-	public static function for_all<A> (f:A->Bool, l:Array<A>) : Bool {
-		var flag = true;
-		for (e in l) {
-			flag = flag && f(e);
+	public static function for_all<T> (f:T->Bool, l:ImmutableList<T>) : Bool {
+		return switch (l) {
+			case Tl: true;
+			case Hd(v, tl): f(v) && for_all(f, tl);
 		}
-		return flag;
 	}
-	public static function for_all2<A,B> (f:A->B->Bool, l1:Array<A>, l2:Array<B>) : Bool {
-		if (l1.length != l2.length) { throw new Invalid_argument(); }
-		var flag = true;
-		for (i in 0...l1.length) {
-			flag = flag && f(l1[i], l2[i]);
+	public static function for_all2<A,B> (f:A->B->Bool, l1:ImmutableList<A>, l2:ImmutableList<B>) : Bool {
+		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		return switch ({f:l1, s:l2}) {
+			case {f:Tl, s:Tl}: true;
+			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
+				if (f(v1, v2)) {
+					for_all2(f, tl1, tl2);
+				}
+				else {
+					false;
+				}
+			case _: throw new Invalid_argument(); }
 		}
-		return flag;
 	}
 
-	public static inline function map<A, B> (f:A->B, l:Array<A>) : Array<B> {
-		return l.map(f);
+	public static inline function map<A, B> (f:A->B, l:ImmutableList<A>) : ImmutableList<B> {
+		return switch (l) {
+			case Tl: Tl;
+			case Hd(v, tl):
+				return Hd(f(v), map(f, tl));
+		}
 	}
 	
-	public static function rev_map<A, B> (f:A->B, l:Array<A>) : Array<B> {
-		var res = [];
-		for (e in l) {
-			res.unshift(f(e));
-		}
-		return res;
-	}
-
-	public static function map2<A,B,C> (f:A->B->C, l1:Array<A>, l2:Array<B>) : Array<C> {
-		if (l1.length != l2.length) { throw new Invalid_argument(); }
-		return [ for (i in 0...l1.length) f(l1[i], l2[i]) ];
-	}
-
-	public static function filter_map<A,B> (f:A->Option<B>, l:Array<A>): Array<B> {
-		var res = [];
-		for (e in l) {
-			switch (f(e)) {
-				case None:
-				case Some(b): res.push(b);
+	public static function rev_map<A, B> (f:A->B, l:ImmutableList<A>) : ImmutableList<B> {
+		var res = Tl;
+		var l = a;
+		while (true) {
+			switch (l) {
+				case Tl: break;
+				case Hd(v, tl):
+					l = tl;
+					res = Hd(f(v), res);
 			}
 		}
 		return res;
 	}
 
-	public static function mem<T> (a:T, l:Array<T>) : Bool {
-		for (e in l) {
-			if (e.equals(a)) {
-				return true;
-			}
+	public static function map2<A,B,C> (f:A->B->C, l1:ImmutableList<A>, l2:ImmutableList<B>) : ImmutableList<C> {
+		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		return switch ({f:l1, s:l2}) {
+			case {f:Tl, s:Tl}: Tl;
+			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
+				Hd(f(v1, v2), map2(f, tl1, tl2));
+			case _: throw new Invalid_argument(); }
 		}
-		return false;
+	}
+
+	public static function filter<T> (f:T->Bool, l:ImmutableList<T>) : ImmutableList<T> {
+		return switch (l) {
+			case Tl: Tl;
+			case Hd(v, tl):
+				(f(v)) ? v::filter(f, l) : filter(f, l);
+		}
+	}
+
+	public static function filter_map<A,B> (f:A->Option<B>, l:ImmutableList<A>): ImmutableList<B> {
+		return switch (l) {
+			case Tl: Tl;
+			case Hd(v, tl):
+				switch (f(v)) {
+					case None: filter_map(f, tl);
+					case Some(b): Hd(b, filter_map(f, tl));
+				}
+		}
+	}
+
+	public static function mem<T> (a:T, l:ImmutableList<T>) : Bool {
+		return switch (l) {
+			case Tl: false;
+			case Hd(v, tl): a.equals(v) || mem(a, tl);
+		}
 	}
 
 	// Same as List.mem, but uses physical equality instead of structural equality to compare list elements.
-	public static function memq<T> (a:T, l:Array<T>) : Bool {
-		return l.indexOf(a) != -1;
+	public static function memq<T> (a:T, l:ImmutableList<T>) : Bool {
+		return switch (l) {
+			case Tl: false;
+			case Hd(v, tl): (a == v) || mem(a, tl);
+		}
 	}
 
-	public static function rev<T> (a:Array<T>) : Array<T> {
-		var copy = a.copy();
-		copy.reverse();
-		return copy;
-	}
-
-	public static function fold_left<A, B>(f:A->B->A, a:A, l:Array<B>) : A {
-		var res = a;
-		for (b in l) {
-			res = f(a, b);
+	public static function rev<T> (a:ImmutableList<T>) : ImmutableList<T> {
+		var res = Tl;
+		var l = a;
+		while (true) {
+			switch (l) {
+				case Tl: break;
+				case Hd(v, tl):
+					l = tl;
+					res = Hd(v, res);
+			}
 		}
 		return res;
 	}
 
-	public static function exists<T> (f:T->Bool, l:Array<T>) : Bool {
-		for (e in l) {
-			if (f(e)) {
-				return true;
-			}
+	public static function fold_left<A, B>(f:A->B->A, a:A, l:ImmutableList<B>) : A {
+		return switch (l) {
+			case Tl: a;
+			case Hd(v, tl):
+				fold_left(f, f(a, v), tl);
 		}
-		return false;
-	}
-	public static function find<T> (f:T->Bool, l:Array<T>) : T {
-		for (e in l) {
-			if (f(e)) {
-				return e;
-			}
-		}
-		throw ocaml.Not_found.instance;
 	}
 
-	public static function assoc<A, B> (a:A, b:Array<{fst:A, snd:B}>) : B {
-		for (e in b) {
-			if (a.equals(e.fst)) {
-				return e.snd;
-			}
+	public static function exists<T> (f:T->Bool, l:ImmutableList<T>) : Bool {
+		return switch (l) {
+			case Tl: false;
+			case Hd(v, tl): f(v) || exists(f, tl);
 		}
-		throw ocaml.Not_found.instance;
+	}
+	public static function find<T> (f:T->Bool, l:ImmutableList<T>) : T {
+		return switch (l) {
+			case Tl: throw ocaml.Not_found.instance;
+			case Hd(v, tl): f(v) ? v : find(f, tl);
+		}
+	}
+
+	public static function assoc<A, B> (a:A, b:ImmutableList<{fst:A, snd:B}>) : B {
+		return switch (b) {
+			case Tl: throw ocaml.Not_found.instance;
+			case Hd(v, tl):
+				(a.equals(v.fst)) ? v.snd : assoc(a, tl);
+		}
 	}
 	
-	public static function assq<A, B> (a:A, b:Array<{fst:A, snd:B}>) : B {
-		for (e in b) {
-			if (a == e.fst) {
-				return e.snd;
-			}
+	public static function assq<A, B> (a:A, b:ImmutableList<{fst:A, snd:B}>) : B {
+		return switch (b) {
+			case Tl: throw ocaml.Not_found.instance;
+			case Hd(v, tl):
+				(a == v.fst) ? v.snd : assq(a, tl);
 		}
-		throw ocaml.Not_found.instance;
 	}
 
 	public static function assoc_typeparams (a:String, l:core.Type.TypeParams ) : core.Type.T {
-		for (tp in l) {
-			if (a == tp.name) {
-				return tp.t;
-			}
+		return switch (l) {
+			case Tl: throw ocaml.Not_found.instance;
+			case Hd(v, tl):
+				(a == v.name) ? v.t : assoc_typeparams(a, tl);
 		}
-		throw ocaml.Not_found.instance;
 	}
 }

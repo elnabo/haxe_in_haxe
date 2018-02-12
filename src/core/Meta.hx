@@ -1,6 +1,9 @@
 package core;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
+import ocaml.Ref;
 
 enum StrictMeta {
 	Abi;
@@ -385,24 +388,14 @@ class Meta {
 	}
 
 	public static function has(m:StrictMeta, ml:core.Ast.Metadata) : Bool {
-		for (entry in ml) {
-			if (entry.name == m) {
-				return true;
-			}
-		}
-		return false;
+		return List.exists(function (m2:core.Ast.MetadataEntry) { return m == m2.name; }, ml);
 	}
 	
 	public static function get(m:StrictMeta, ml:core.Ast.Metadata) : core.Ast.MetadataEntry {
-		for (entry in ml) {
-			if (entry.name == m) {
-				return entry;
-			}
-		}
-		throw ocaml.Not_found.instance;
+		return List.find(function (m2:core.Ast.MetadataEntry) { return m == m2.name; }, ml);
 	}
 
-	public static function get_info(m:StrictMeta) : {a:String, b:{a:String, b:Array<MetaParameter>}} {
+	public static function get_info(m:StrictMeta) : {a:String, b:{a:String, b:ImmutableList<MetaParameter>}} {
 		return switch (m) {
 			case Abi:
 				{a:":abi", b:{a:"Function ABI/calling convention",b: [Platforms([Cpp])]}};
@@ -757,24 +750,25 @@ class Meta {
 	public static function get_documentation (d:StrictMeta) : Option<{a:String, b:String}> {
 		var meta_info = get_info(d);
 		var flags = meta_info.b.b;
-		if (flags.indexOf(UsedInternally) != -1) {
-			var params = [];
-			var used = [];
-			var pfs = [];
-			for (value in flags) {
+		if (!List.mem(UsedInternally, flags)) {
+			var params = new Ref<ImmutableList<String>>([]);
+			var used = new Ref<ImmutableList<MetaUsage>>([]);
+			var pfs = new Ref<ImmutableList<core.Globals.Platform>>([]);
+			List.iter(function (value) {
 				switch (value) {
-					case HasParam(s): params.unshift(s);
-					case Platform(f): pfs.unshift(f);
-					case Platforms(fl): pfs = fl.concat(pfs);
-					case UsedOn(u): used.unshift(u);
-					case UsedOnEither(ul): used = ul.concat(used);
+					case HasParam(s): params.set(s::params.get());
+					case Platform(f): pfs.set(f::pfs.get());
+					case Platforms(fl): pfs.set(List.concat(fl,pfs.get()));
+					case UsedOn(u): used.set(u::used.get());
+					case UsedOnEither(ul): used.set(List.concat(ul,used.get()));
 					case UsedInternally: throw false;
 				}
+			}, flags);
+			var string_params = switch (List.rev(params.get())) {
+				case []: "";
+				case l: "(" + List.join(",", l) + ")";
 			}
-			var sfp = pfs.copy();
-			sfp.reverse();
-			var string_params = (sfp.length == 0) ? "" : "(" + sfp.join(",") + ")";
-			var string_pfs = core.Globals.platform_list_help(sfp);
+			var string_pfs = core.Globals.platform_list_help(List.rev(pfs.get()));
 			var str = "@" + meta_info.a;
 			var doc = meta_info.b.a;
 			return Some({a:str,b: string_params + doc + string_pfs});
@@ -782,7 +776,7 @@ class Meta {
 		return None;
 	}
 
-	public static function get_documentation_list () : {a:Array<{a:String,b:String}>, b:Int} {
+	public static function get_documentation_list () : {a:ImmutableList<{a:String,b:String}>, b:Int} {
 		var m = 0;
 		var acc = [];
 

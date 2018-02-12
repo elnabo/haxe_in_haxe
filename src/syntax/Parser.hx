@@ -66,7 +66,7 @@ class Parser {
 	}
 
 	public static inline function serror() : Dynamic {
-		throw new ocaml.Stream.Error();
+		throw ocaml.Error.instance;
 	}
 
 	public static inline function error(m:syntax.parser.ErrorMsg, p:core.Globals.Pos) : Dynamic {

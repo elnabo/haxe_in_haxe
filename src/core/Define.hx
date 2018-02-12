@@ -1,5 +1,10 @@
 package core;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+import ocaml.PMap;
+import ocaml.Ref;
+
 enum StrictDefined {
 	AbsolutePath;
 	AdvancedTelemetry;
@@ -111,7 +116,7 @@ enum StrictDefined {
 enum DefineParameter {
 	HasParam (s:String);
 	Platform (p:core.Globals.Platform);
-	Platforms (l:Array<core.Globals.Platform>);
+	Platforms (l:ImmutableList<core.Globals.Platform>);
 }
 
 @:structInit
@@ -125,7 +130,7 @@ class Define {
 	// }
 
 
-	public static function infos (k:StrictDefined) : {a:String, b:{a:String, b:Array<DefineParameter>}} {
+	public static function infos (k:StrictDefined) : {a:String, b:{a:String, b:ImmutableList<DefineParameter>}} {
 		return switch (k) {
 			case AbsolutePath:
 				{a:"absolute_path",
@@ -430,7 +435,7 @@ class Define {
 		}
 	}
 
-	public static function get_documentation_list () : {a:Array<{a:String,b:String}>, b:Int} {
+	public static function get_documentation_list () : {a:ImmutableList<{a:String,b:String}>, b:Int} {
 		var m = 0;
 		var acc = [];
 
@@ -439,21 +444,19 @@ class Define {
 			var t = i.a;
 			var doc = i.b.a;
 			var flags = i.b.b;
-			var pfs = [];
-			for (f in flags) {
+			var pfs:ImmutableList<core.Globals.Platform> = [];
+			List.iter(function (f) {
 				switch (f) {
 					case HasParam(s): // TODO
-					case Platform (p): pfs.unshift(p);
-					case Platforms(pl): pfs = pl.concat(pfs);
+					case Platform (p): pfs = p :: pfs;
+					case Platforms(pl): pfs = List.concat(pl,pfs);
 				}
-				var sfp = pfs.copy();
-				sfp.reverse();
-				var pfs_string = core.Globals.platform_list_help(sfp);
+				var pfs_string = core.Globals.platform_list_help(List.rev(pfs));
 				if (t.length > m) {
 					m = t.length;
 				}
 				acc.push({a:t.split("_").join("-"), b: doc+pfs_string});
-			}
+			}, flags);
 		}
 
 		haxe.ds.ArraySort.sort(acc, function (x:{a:String, b:String}, y:{a:String, b:String}) {
@@ -465,18 +468,14 @@ class Define {
 	}
 
 	public static function raw_defined (ctx:Define, v:String) : Bool {
-		return ctx.values.exists(v);
+		return PMap.mem(v, ctx.values);
 	}
 	public static function defined (ctx:Define, v:StrictDefined) : Bool {
 		return raw_defined(ctx, infos(v).a);
 	}
 
 	public static function raw_defined_value (ctx:Define, k:String) : String {
-		var value = ctx.values.get(k);
-		if (value == null) {
-			throw ocaml.Not_found.instance;
-		}
-		return value;
+		return PMap.find(k, ctx.values);
 	}
 
 	public static function defined_value (ctx:Define, v:StrictDefined) {
@@ -497,7 +496,7 @@ class Define {
 		}
 
 		var k = k.split("-").join("_");
-		ctx.values.set(k, v);
+		ctx.values = PMap.add(k, v, ctx.values);
 		ctx.defines_signature = None;
 	}
 
@@ -513,21 +512,18 @@ class Define {
 		return switch (def.defines_signature) {
 			case Some(s) : s;
 			case None:
-				function f(k:String, v:String, acc:Array<String>) : Array<String> {
+				function f(k:String, v:String, acc:ImmutableList<String>) : ImmutableList<String> {
 					// don't make much difference between these special compilation flags
 					return switch (k.split("-").join("_")) {
 						// If we add something here that might be used in conditional compilation it should be added to
 						// Parser.parse_macro_ident as well (issue #5682).
 						case "display", "use_rtti_doc", "macro_times", "display_details", "no_copt", "display_stdin": acc;
 						case _:
-							acc.unshift(k + "=" + v);
-							acc;
+							(k + "=" + v) :: acc;
 					}
 				}
-				var defines = ocaml.PMap.foldi(f, def.values, []);
-				var arr = defines.copy();
-				arr.sort(function (a, b) {return Reflect.compare(a,b);});
-				var str = arr.join("@");
+				var defines = PMap.foldi(f, def.values, []);
+				var str = List.join("@", List.sort(function (a, b) {return Reflect.compare(a,b);}, defines));
 				var s = haxe.crypto.Md5.encode(str);
 				def.defines_signature = Some(s);
 				s;

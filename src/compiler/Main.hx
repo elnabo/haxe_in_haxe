@@ -1,11 +1,16 @@
 package compiler;
 
 import ocaml.Arg;
+import ocaml.List;
+import ocaml.PMap;
 import context.Common;
 import core.Define;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import sys.io.Process;
+
+// using ocaml.List;
 
 using StringTools;
 
@@ -25,11 +30,6 @@ class Failure {
 class Abort {
 	public function new() {}
 }
-// enum MainException {
-// 	// Abort;
-// 	Error;
-// 	Exit;
-// }
 
 class Initialize {
 	public static function set_platform (com:context.Common.Context, pf:core.Globals.Platform, file:String) {
@@ -43,11 +43,11 @@ class Initialize {
 		}
 	}
 
-	public static function initialize_target (ctx:Server.Context, com:context.Common.Context, classes:Array<core.Path>) : String {
-		function add_std(dir:String) {
-			var p1 = com.class_path.filter(function(s:String) { return com.std_path.indexOf(s) == -1; });
-			var p2 = [for (sp in com.std_path) sp + dir + "/_std/"];
-			com.class_path = p1.concat(p2).concat(com.std_path);
+	public static function initialize_target (ctx:Server.Context, com:context.Common.Context, classes:ImmutableList<core.Path>) : String {
+		function add_std(dir:String) : Void {
+			var p1 = List.filter(function(s:String) { return !List.mem(s,com.std_path); }, com.class_path);
+			var p2 = List.map(function (p) { return p + dir + "/_std/"; }, com.std_path);
+			com.class_path = List.concat(p1, List.concat(p2,com.std_path));
 		}
 		return switch (com.platform) {
 			case Cross:
@@ -55,15 +55,19 @@ class Initialize {
 				set_platform(com, Cross, "");
 				"?";
 			case Flash:
-				for (fv in context.Common.flash_versions) {
-					if (fv.a > com.flash_version) {
-						break;
-					}
-					else {
-						context.Common.raw_define(com, "flash"+fv.b);
+				function loop (l:ImmutableList<{a:Float, b:String}>) {
+					switch (l) {
+						case []:
+						case {a:v}::_ if (v > com.flash_version):
+						case {a:v, b:def}::l:
+							var l:ImmutableList<{a:Float, b:String}> = l;
+							context.Common.raw_define(com, "flash"+def);
+							loop(l);
 					}
 				}
-				com.package_rules.remove("flash");
+				loop(context.Common.flash_versions);
+				context.Common.raw_define(com, "flash");
+				com.package_rules = PMap.remove("flash", com.package_rules);
 				add_std("flash");
 				"swf";
 			case Neko:
@@ -107,7 +111,7 @@ class Initialize {
 				context.Common.define_value(com, HxcppApiLevel, "332");
 				add_std("cpp");
 				if (context.Common.defined(com, Cppia)) {
-					classes.unshift(core.Path.parse_path("cpp.cppia.HostClasses"));
+					classes = core.Path.parse_path("cpp.cppia.HostClasses") :: classes;
 				}
 				"cpp";
 			case Cs:
@@ -157,7 +161,7 @@ class Main {
 	];
 
 	public static function message (ctx:compiler.Server.Context,  msg:context.Common.CompilerMessage) {
-		ctx.messages.unshift(msg);
+		ctx.messages = msg :: ctx.messages;
 	}
 
 	public static var deprecated : Array<{a:String, b:String}>= [];
@@ -318,7 +322,7 @@ class Main {
 						? serr.substr(0, serr.length - 1)
 						: serr, core.Globals.null_pos
 				);
-				ctx.messages.unshift(m);
+				ctx.messages = m :: ctx.messages;
 			}
 			if (sout != "") {
 				ctx.com.print(sout + "\n");
@@ -339,14 +343,12 @@ class Main {
 		}
 
 		if (com.platform == Flash || com.platform == Cpp || com.platform == Hl) {
-			for (ct in com.types) {
-				codegen.Codegen.fix_overrides(com, ct);
-			}
+			List.iter(codegen.Codegen.fix_overrides.bind(com), com.types);
 		}
 
 	}
 
-	public static function get_std_class_paths () : Array<String> {
+	public static function get_std_class_paths () : ImmutableList<String> {
 		var p = std.Sys.getEnv("HAXE_STD_PATH");
 		if (p != null) {
 			var parts = ~/[;:]/.split(p);
@@ -393,66 +395,35 @@ class Main {
 		}
 	}
 
-	public static function process_params(create:Array<String>->compiler.Server.Context, a:Array<String>) {
-		var each_params = [];
-		var acc = [];
-		var args = a.copy();
-
-		// put --display in front if it was last parameter
-		var pl = args.copy();
-		pl.reverse();
-		if (pl.length > 2 && pl[1] == "--display" && pl[0] != "memory" ) {
-			args.unshift(args.pop());
-			args.unshift(args.pop());
-		}
-		else if (pl.length > 4 && pl[0] == "use_rtti_doc" && pl[1] == "-D" && pl[3] == "--display") {
-			args.pop();
-			args.pop();
-			args.unshift(args.pop());
-			args.unshift(args.pop());
-		}
-
-		while (true) {
-			if (args.length == 0) {
-				acc.reverse();
-				each_params = each_params.concat(acc);
-				var ctx = create(each_params);
-				init(ctx);
-				ctx.flush();
-				break;
-			}
-			switch (args[0]) {
-				case "--next":
-					if (acc.length > 0) {
-						acc.reverse();
-						each_params = each_params.concat(acc);
-						var ctx = create(each_params);
-						ctx.has_next = true;
-						init(ctx);
-						ctx.flush();
-						acc = [];
-					}
-					args.shift();
-				case "--each":
-					acc.reverse();
-					each_params = acc;
-					args.shift();
-					acc = [];
-				case "--cwd":
+	public static function process_params(create:ImmutableList<String>->compiler.Server.Context, pl:ImmutableList<String>) {
+		var each_params:ImmutableList<String> = [];
+		function loop (acc:ImmutableList<String>, l:ImmutableList<String>) : Void {
+			switch (l) {
+				case []: 
+					var ctx = create(List.concat(each_params, List.rev(acc)));
+					init(ctx);
+					ctx.flush();
+				case "--next"::l if (acc == []): // skip empty --next
+					loop([], l);
+				case "--next"::l:
+					var ctx = create(List.concat(each_params, List.rev(acc)));
+					ctx.has_next = true;
+					init(ctx);
+					ctx.flush();
+					loop([], l);
+				case "--each"::l:
+					each_params = List.rev(acc);
+					loop([], l);
+				case "--cwd"::(dir::l):
 					// we need to change it immediately since it will affect hxml loading
-					var dir = args[1];
 					try {
 						std.Sys.setCwd(dir);
 					}
 					catch (_:Dynamic) {
 						throw new ocaml.Arg.Bad("Invalid directory: " + dir);
 					}
-					args.shift();
-					args.shift();
-				case "--connect":
-					var hp = args[1];
-					args.shift();
-					args.shift();
+					loop(acc, l);
+				case "--connect"::(hp::l):
 					switch (context.common.CompilationServer.get()) {
 						case None:
 							var host : String;
@@ -472,50 +443,56 @@ class Main {
 							catch (_:Dynamic) {
 								throw new ocaml.Arg.Bad("Invalid port");
 							}
-
-							acc.reverse();
-							compiler.Server.do_connect(host, port, acc.concat(args));
-							break;
+							compiler.Server.do_connect(host, port, List.concat(acc, List.rev(l)));
 						case Some(_):
+							// already connected : skip
+							loop(acc, l);
 					}
-				case "--run":
-					var cl = args[1];
-					args.shift();
-					args.shift();
-					acc = [cl, "-main", "--interp"].concat(acc);
-					acc.reverse();
-					var ctx = create(each_params.concat(acc));
+				case "--run"::(cl::args):
+					var acc = List.concat([cl, "--main", "--interp"], acc);
+					var ctx = create(List.concat(each_params, List.rev(acc)));
 					ctx.com.sys_args = args;
+					init(ctx);
 					ctx.flush();
-					break;
-				default:
-					var arg = args.shift();
-					var splited = arg.split(".");
-					if (splited[arg.length-1] == "hxml" && acc[0] != "-cmd") {
-						try {
-							args = compiler.Server.parse_hxml(arg).concat(args);
-						}
-						catch (_:Dynamic) {
-							acc.unshift(arg+" (file not found)");
-						}
+				case arg::l:
+					var splited:ImmutableList<String> = arg.split(".");
+					switch (List.rev(splited)) {
+						case "hxml"::_ if (switch (acc) { case "-cmd"::_: false; case _: true;}):
+							var acc = acc;
+							var l:ImmutableList<String> = l;
+							try {
+								l = List.concat(compiler.Server.parse_hxml(arg), l);
+							}
+							catch (_:ocaml.Not_found) {
+								acc = (arg + " (file not found)")::acc;
+							}
+							loop(acc, l);
+						case _: loop(arg::acc, l);
 					}
-					else {
-						acc.unshift(arg);
-					}
+
 			}
 		}
+		// put --display in front if it was last parameter
+		var pl = switch (List.rev(pl)) {
+			case file :: ("--display" :: pl) if (file != "memory"):
+				"--display" :: (file :: List.rev(pl));
+			case "use_rtti_doc" :: ("-D" :: (file :: ("--display" :: pl))):
+				 "--display" :: (file :: List.rev(pl));
+			case _: pl;
+		}
+		loop([], pl);
 	}
 
 	public static function init (ctx:compiler.Server.Context) {
 		var end = (std.Sys.systemName() == "Windows") ? ".exe" : "";
 		var usage = 'Haxe Compiler ${Server.s_version()} - (C)2005-2018 Haxe Foundation\n Usage : haxe${end} -main <class> [-swf|-js|-neko|-php|-cpp|-cppia|-as3|-cs|-java|-python|-hl|-lua] <output> [options]\n Options :';
 		var com = ctx.com;
-		var classes:Array<core.Path> = [new core.Path([],"Std")];
+		var classes:ImmutableList<core.Path> = [new core.Path([],"Std")];
 		try {
 			var xml_out = None;
 			var swf_header = None;
 			var cmds = [];
-			var config_macros = [];
+			var config_macros: ImmutableList<String> = [];
 			var cp_libs : Array<String> = [];
 			var added_libs = new Map<String, Dynamic>();
 			var no_output = false;
@@ -542,10 +519,9 @@ class Main {
 			
 			syntax.Parser.use_doc = context.Common.display_default.get() == DMNone || context.common.CompilationServer.runs();
 			com.class_path = get_std_class_paths();
-			com.std_path = com.class_path.filter(function (p:String) : Bool {
+			com.std_path = List.filter(function (p:String) : Bool {
 					return p.endsWith("std/") || p.endsWith("std\\");
-				}
-			);
+			}, com.class_path);
 
 			var define = function (f:core.Define.StrictDefined) : Void->Void {
 				// Arg.Unit (fun () -> context.Common.define(com, f) in
@@ -573,7 +549,7 @@ class Main {
 			basic_args_spec = [
 				{arg:"-cp", spec:S_String(function (path:String) {
 					process_libs();
-					com.class_path.unshift(haxe.io.Path.addTrailingSlash(path));
+					com.class_path = haxe.io.Path.addTrailingSlash(path)::com.class_path;
 				}), doc:"<path> : add a directory to find source files"},
 				{arg:"-js", spec:S_String(Initialize.set_platform.bind(com).bind(Js)), doc:"<file> : compile code to JavaScript file"},
 				{arg:"-lua", spec:S_String(Initialize.set_platform.bind(com).bind(Lua)), doc:"<file> : compile code to Lua file"},
@@ -585,7 +561,7 @@ class Main {
 				}), doc:"<directory> : generate AS3 code into target directory"},
 				{arg:"-neko", spec:S_String(Initialize.set_platform.bind(com).bind(Neko)), doc:"<file> : compile code to Neko Binary"},
 				{arg:"-php", spec:S_String(function (dir:String) {
-					classes.unshift(new core.Path(["php"], "Boot"));
+					classes = (new core.Path(["php"], "Boot")) :: classes;
 					Initialize.set_platform(com,Php,dir);
 				}), doc:"<directory> : generate PHP code into target directory"},
 				{arg:"-cpp", spec:S_String(Initialize.set_platform.bind(com).bind(Cpp)), doc:"<directory> : generate C++ code into target directory"},
@@ -614,7 +590,7 @@ class Main {
 					}
 					var cpath = core.Path.parse_type_path(cl);
 					com.main_class = Some(cpath);
-					classes.unshift(cpath);
+					classes = cpath :: classes;
 				}), doc:"<class> : select startup class"},
 				{arg:"-lib", spec:S_String( function(l:String) {
 					cp_libs.unshift(l);
@@ -721,7 +697,7 @@ class Main {
 					// Dotnet.add_net_std com file
 				}), doc:"<file> : add a root std .NET DLL search path"},
 				{arg:"-c-arg", spec:S_String( function(arg:String) {
-					com.c_args.unshift(arg);
+					com.c_args = arg :: com.c_args;
 				}), doc:"<arg> : pass option <arg> to the native Java/C# compiler"},
 				{arg:"-x", spec:S_String( function(file:String) {
 					var neko_file = file + ".n";
@@ -729,7 +705,7 @@ class Main {
 					if (com.main_class == None ) {
 						var cpath = core.Path.parse_type_path(file);
 						com.main_class = Some(cpath);
-						classes.unshift(cpath);
+						classes = cpath :: classes;
 					}
 					cmds.unshift("neko " + neko_file);
 				}), doc:"<file> : shortcut for compiling and executing a neko file"},
@@ -774,24 +750,24 @@ class Main {
 				{arg:"--gen-hx-classes", spec:S_Unit(function() {
 					force_typing = true;
 					pre_compilation.unshift( function() {
-						for (lib in com.swf_libs) {
+						List.iter(function (lib) {
 							// (fun (_,_,extract) -> Hashtbl.iter (fun n _ -> classes := n :: !classes) (extract()))
 							trace("TODO gen-hx-classes swf");
-						}
-						for (lib in com.java_libs) {
+						}, com.swf_libs);
+						List.iter(function (lib) {
 							// (fun (_,std,_,all_files,_) ->
 							// 	if not std then
 							// 		List.iter (fun path -> if path <> (["java";"lang"],"String") then classes := path :: !classes) (all_files())
 							// )
 							trace("TODO gen-hx-classes java");
-						}
-						for (lib in com.net_libs) {
+						}, com.java_libs);
+						List.iter(function (lib) {
 							// (fun (_,std,all_files,_) ->
 							// 	if not std then
 							// 		List.iter (fun path -> classes := path :: !classes) (all_files())
 							// )
 							trace("TODO gen-hx-classes net");
-						}
+						}, com.net_libs);
 					});
 					xml_out = Some("hx");
 				}), doc:": generate hx headers for all input classes"},
@@ -821,7 +797,7 @@ class Main {
 				}), doc:": interpret the program using internal macro system"},
 				{arg:"--macro", spec:S_String( function(e:String) {
 					force_typing = true;
-					config_macros.unshift(e);
+					config_macros = e :: config_macros;
 				}), doc:" : call the given macro before typing anything else"},
 				{arg:"--wait", spec:S_String( function(hp:String) {
 					var accept = switch(hp) {
@@ -860,10 +836,11 @@ class Main {
 					var all = define_info.a;
 					var max_length = define_info.b;
 
-					var all_string = [ for (a in all) " "+a.a.lpad(" ", max_length) + limit_string(a.b, max_length + 3)];
-					for (msg in all_string) {
-						ctx.com.print(msg + "\n");
-					}
+					var all_string = List.map(function (a:{a:String, b:String}) {
+						var n = a.a; var doc = a.b;
+						return " "+n.lpad(" ", max_length) + limit_string(doc, max_length + 3);
+					}, all);
+					List.iter(function (msg) { ctx.com.print(msg+"\n"); }, all_string);
 					did_something = true;
 				}), doc:": print help for all compiler specific defines"},
 				{arg:"--help-metas", spec:S_Unit(function() {
@@ -871,10 +848,11 @@ class Main {
 					var all = meta_info.a;
 					var max_length = meta_info.b;
 
-					var all_string = [ for (a in all) " "+a.a.lpad(" ", max_length) + limit_string(a.b, max_length + 3)];
-					for (msg in all_string) {
-						ctx.com.print(msg + "\n");
-					}
+					var all_string = List.map(function (a:{a:String, b:String}) {
+						var n = a.a; var doc = a.b;
+						return " "+n.lpad(" ", max_length) + limit_string(doc, max_length + 3);
+					}, all);
+					List.iter(function (msg) { ctx.com.print(msg+"\n"); }, all_string);
 					did_something = true;
 				}), doc:": print help for all compiler metadatas"}
 			];
@@ -882,11 +860,11 @@ class Main {
 			var args_callback = function(cl:String) {
 				var p = core.Path.parse_path(cl);
 				if (core.Path.starts_uppercase(p.b)) {
-					classes.unshift(p);
+					classes = p::classes;
 				}
 				else {
 					force_typing = true;
-					config_macros.unshift("include('" + cl +"', true, null, null, true)");
+					config_macros = ("include('" + cl +"', true, null, null, true)") :: config_macros;
 				}
 			};
 
@@ -958,14 +936,11 @@ class Main {
 				}
 			}
 			com.config = context.Common.get_config(com); // make sure to adapt all flags changes defined after platform
-			var niotalipmoc_erp = pre_compilation.copy();
-			niotalipmoc_erp.reverse();
-			for (np in niotalipmoc_erp) {
-				np();
-			}
-			if (classes.length == 1 && (classes[0].a.length==0 && classes[0].b == "Std") && !force_typing) {
+			List.iter(function (f) { f(); }, List.rev(pre_compilation));
+			if (classes.equals(Hd(new core.Path([], "Std"), Tl)) && !force_typing) {
 				var empty_func = S_Unit(function () {});
 				var help_spec = basic_args_spec.concat([
+					{arg:"-help", spec: empty_func, doc:": show extended help information"},
 					{arg:"--help", spec: empty_func, doc:": show extended help information"},
 					{arg:"--help-defines", spec: empty_func, doc:": print help for all compiler specific defines"},
 					{arg:"--help-metas", spec: empty_func, doc:": print help for all compiler metadatas"},
@@ -977,7 +952,7 @@ class Main {
 			}
 			else {
 				ctx.setup();
-				context.Common.log(com, "Classpath : " + com.class_path.join(";"));
+				context.Common.log(com, "Classpath : " + List.join(";",com.class_path));
 				// PMap.foldi (fun k v acc -> (match v with "1" -> k | _ -> k ^ "=" ^ v) :: acc) com.defines.Define.values [])));
 				var acc : Array<String> = [
 					for (k in com.defines.values.keys()) {
@@ -991,12 +966,8 @@ class Main {
 					return typing.Typer.type_expr(ctx, e, with_type);
 				});
 				var tctx = typing.Typer.create(com);
-				for (sg in ocaml.List.rev(config_macros)) {
-					typing.MacroContext.call_init_macro(tctx);
-				}
-				for (cpath in ocaml.List.rev(classes)) {
-					tctx.g.do_load_module(tctx, cpath, core.Globals.null_pos);
-				}
+				List.iter(typing.MacroContext.call_init_macro.bind(tctx), List.rev(config_macros));
+				List.iter(function (cpath) { tctx.g.do_load_module(tctx, cpath, core.Globals.null_pos); }, List.rev(classes));
 				typing.Typer.finalize(tctx);
 				t();
 				if (!ctx.com.display.dms_display && ctx.has_error) {
@@ -1043,10 +1014,8 @@ class Main {
 					generate(tctx, ext, xml_out, interp, swf_header);
 				}
 			}
-			// Sys.catch_break false;
-			var g_a_c_c = com.callbacks.after_generation.copy();
-			g_a_c_c.reverse();
-			for (element in g_a_c_c) { element(); } 
+			// Sys.catch_break false; 
+			List.iter(function (f) { f(); }, List.rev(com.callbacks.after_generation));
 			if (!no_output) {
 				var sdmc = cmds.copy();
 				sdmc.reverse();
@@ -1140,29 +1109,32 @@ class Main {
 		catch (e:context.Display.DisplayException) {
 			switch (e) {
 				case DisplayPackage(pack):
-					throw DisplayOutput.DOException.Completion(pack.join("."));
+					throw DisplayOutput.DOException.Completion(List.join(".", pack));
 				case DisplayFields(fields):
-					var f = [for (element in fields) {
-						name:element.name,
-						kind:element.kind,
-						doc:switch(element.doc) {
-								case Some(v):v;
-								case None: "";
-							}
-						}
-					];
-					if (Server.measure_times) {
+					var fields = List.map(function (element) {
+						return {
+							name:element.name,
+							kind:element.kind,
+							doc:switch(element.doc) {
+									case Some(v):v;
+									case None: "";
+								}
+						};
+					}, fields);
+					fields = if (Server.measure_times) {
 						core.Timer.close_times();
-						
-						for (element in DisplayOutput.get_timer_fields(Server.start_time)) {
-							f.unshift({
+						List.concat(List.map(function (element) {
+							return {
 								name: "@TIME "+element.a,
-								kind: FKTimer(element.b),
+								kind: context.Display.DisplayFieldKind.FKTimer(element.b),
 								doc: ""
-							});
-						}
+							};
+						}, DisplayOutput.get_timer_fields(Server.start_time)), fields);
 					}
-					throw DisplayOutput.DOException.Completion(DisplayOutput.print_fields(f));
+					else {
+						fields;
+					}
+					throw DisplayOutput.DOException.Completion(DisplayOutput.print_fields(fields));
 				case DisplayType(t, p, doc):
 					var doc_string = switch (doc) {
 						case Some(v): v;
@@ -1179,14 +1151,16 @@ class Main {
 				case DisplayPosition(pl):
 					throw DisplayOutput.DOException.Completion(DisplayOutput.print_positions(pl));
 				case DisplayToplevel(il):
-					var _il = il.copy();
-					if (Server.measure_times) {
+					var il = if (Server.measure_times) {
 						core.Timer.close_times();
-						for (element in DisplayOutput.get_timer_fields(Server.start_time)) {
-							il.unshift(ITTimer("@TIME "+element.a + ": "+element.b));
-						}
+						List.concat(List.map(function (element) {
+							return context.common.identifiertype.T.ITTimer("@TIME "+element.a + ": "+element.b);
+						}, DisplayOutput.get_timer_fields(Server.start_time)), il);
 					}
-					throw DisplayOutput.DOException.Completion(DisplayOutput.print_toplevel(_il));
+					else {
+						il;
+					}
+					throw DisplayOutput.DOException.Completion(DisplayOutput.print_toplevel(il));
 				case ModuleSymbols(s), Diagnostics(s), Statistics(s), Metadata(s):
 					throw DisplayOutput.DOException.Completion(s);
 			}

@@ -1,5 +1,8 @@
 package compiler;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+
 import context.Common;
 import context.Common.CompilerMessage;
 
@@ -9,7 +12,7 @@ typedef Context = {
 	com : context.Common.Context,
 	flush : Void -> Void,
 	setup : Void -> Void,
-	messages : Array<CompilerMessage>,
+	messages : ImmutableList<CompilerMessage>,
 	has_next : Bool,
 	has_error : Bool
 }
@@ -20,11 +23,11 @@ class Server {
 	public static var prompt : Bool = false;
 	public static var start_time : Float = core.Timer.get_time();
 
-	public static function do_connect (host:String, port:Int, args:Array<String>) : Void {
+	public static function do_connect (host:String, port:Int, args:ImmutableList<String>) : Void {
 
 	}
 
-	public static function parse_hxml (file:String) : Array<String> {
+	public static function parse_hxml (file:String) : ImmutableList<String> {
 		return null;
 	}
 
@@ -51,21 +54,17 @@ class Server {
 
 		var messages = ocaml.List.rev(ctx.messages);
 		
-		var printer = function(msg:context.CompilerMessage) {
-				switch (msg) {
-					case CMInfo(_):
-						std.Sys.println(context.Common.compiler_message_string(msg));
-					case CMWarning(_), CMError(_):
-						var stderr = std.Sys.stderr();
-						stderr.writeString(context.Common.compiler_message_string(msg)+"\n");
-						stderr.flush();
-						stderr.close();
-				}
-				 return null;
-		};
-		for (msg in messages) {
-			printer(msg);
-		}
+		List.iter(function(msg:context.CompilerMessage) {
+			switch (msg) {
+				case CMInfo(_):
+					std.Sys.println(context.Common.compiler_message_string(msg));
+				case CMWarning(_), CMError(_):
+					var stderr = std.Sys.stderr();
+					stderr.writeString(context.Common.compiler_message_string(msg)+"\n");
+					stderr.flush();
+					stderr.close();
+			}
+		}, messages);
 		if (ctx.has_error && prompt) {
 			std.Sys.println("Press enter to exit...");
 			//ignore(read_line());
@@ -80,8 +79,8 @@ class Server {
 		}
 	}
 
-	public static function createContext(params:Array<String>) : Context {
-		var ctx = {
+	public static function createContext(params:ImmutableList<String>) : Context {
+		var ctx:Context = {
 			com : Common.create(version, s_version, params),
 			flush : function () {},
 			setup : function () {},

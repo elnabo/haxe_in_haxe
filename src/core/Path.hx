@@ -1,40 +1,44 @@
 package core;
 
+import haxe.ds.ImmutableList;
+
+using equals.Equal;
+using ocaml.List;
+
 class Path {
 
-	public var a : Array<String>;
+	public var a : ImmutableList<String>;
 	public var b : String;
 	@:structInit
-	public function new (a:Array<String>, b:String) {
+	public function new (a:ImmutableList<String>, b:String) {
 		this.a = a;
 		this.b = b;
 	}
 
-	@:op(A == B) static function equals (a:Path, b:Path) : Bool {
-		if ((a.b != b.b) || (a.a.length != b.a.length)) { return false; }
-	
-		for (i in 0...a.a.length) {
-			if (a.a[i] != b.a[i]) {
-				return false;
-			}
-		}
-		return true;
+	@:op(A == B) static inline function equals (a:Path, b:Path) : Bool {
+		return a.equals(b);
 	}
 
-	@:op(A != B) static function diff (a:Path, b:Path) : Bool {
-		return !equals(a, b);
+	@:op(A != B) static inline function diff (a:Path, b:Path) : Bool {
+		return !a.equals(b);
 	}
 
-	@:op(A > B) public static function gt (a:Path, b:Path) : Int {
+	public static inline function compare (a:Path, b:Path) : Int {
+		return gt(a, b);
+	}
+
+	@:op(A > B) static function gt (a:Path, b:Path) : Int {
 		if (a == b) { return 0; }
 
-		var la = a.a.length;
-		var lb = b.a.length;
+		var _a:Array<String> = a.a;
+		var _b:Array<String> = b.a;
+		var la = _a.length;
+		var lb = _a.length;
 		for (i in 0...Std.int(Math.min(la, lb))) {
-			if (a.a[i] > b.a[i]) {
+			if (_a[i] > _b[i]) {
 				return 1;
 			}
-			if (a.a[i] < b.a[i]) {
+			if (_a[i] < _b[i]) {
 				return -1;
 			}
 		}
@@ -60,7 +64,7 @@ class Path {
 	 * refactor this stuff so it doesn't mix up file and module paths and doesn't introduce
 	 * the weird "path part" entity.
 	*/
-	public static function get_path_parts (f:String) : Array<String> {
+	public static function get_path_parts (f:String) : ImmutableList<String> {
 		var l = f.length;
 		if (l > 3 && f.substr(l-3, 3) == ".hx"){
 			var ff = f.substr(0, l-3); /// strip the .hx;
@@ -75,8 +79,12 @@ class Path {
 
 
 	public static function parse_path(f:String) : Path {
-		var cl = get_path_parts(f).copy();
-		var invalid_char = function (x:String) {
+		var cl = get_path_parts(f);
+		function error (msg) : Path {
+			var msg = "Could not process argument "+f+"\n"+msg;
+			throw msg;
+		}
+		function invalid_char (x:String) {
 			for (i in 1...x.length) {
 				var c = x.charCodeAt(i);
 				if ( (c>="A".code && c<="Z".code) ||
@@ -85,37 +93,30 @@ class Path {
 					 (c=="_".code) || (c<=".".code)) {
 				}
 				else {
-					var msg = "invalid character: " + x.charAt(i);
-					throw "Could not process argument " + f + "\n" + msg;
+					error("invalid character: " + x.charAt(i));
 				}
 			}
-		};
+		}
 
-		var path : Array<String> = [];
-		var name : String = null;
-		while (true) {
-			switch (cl.length) {
-				case 0:
-					throw "Could not process argument " + f + "\nempty part";
-				case 1:
-					var x = cl.shift();
+		function loop (l:ImmutableList<String>) : core.Path {
+			return switch (l) {
+				case []: error("empty part");
+				case [x]: 
 					invalid_char(x);
-					name = x;
-					break;
-				default:
-					var x = cl.shift();
+					new Path([], x);
+				case x::l:
 					if (x.length == 0) {
-						throw "Could not process argument " + f + "\nempty part";
+						error("empty part");
 					}
-					var c = x.charCodeAt(0);
-					if (c < "a".code || c > "z".code ) {
-						throw "Could not process argument " + f + "\nPackage name must start with a lower case character";
+					else if (x.charCodeAt(0) < 'a'.code || x.charCodeAt(0) > 'z'.code) {
+						error("Package name must start with a lower case character");
 					}
 					invalid_char(x);
-					path.push(x);
+					var path = loop(l);
+					new Path(x::path.a, path.b);
 			}
 		}
-		return new Path(path, name);
+		return loop(cl);
 	}
 
 	public static function starts_uppercase (x:String) : Bool {

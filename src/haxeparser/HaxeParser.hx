@@ -1,6 +1,9 @@
 package haxeparser;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+
+import ocaml.List;
 // import byte.ByteData;
 
 // eval
@@ -296,7 +299,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		return [for (i in 0...n) peek(i) ];
 	}
 
-	public function parse() : {pack:Array<String>, decls:Array<core.Ast.TypeDecl>} {
+	public function parse() : {pack:ImmutableList<String>, decls:ImmutableList<core.Ast.TypeDecl>} {
 		function catched () : Dynamic {
 			var l = peek(0);
 			if (l == null) {
@@ -316,8 +319,8 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			}
 			l;
 		}
-		catch (_:ocaml.Stream.Error) { catched(); }
-		catch (_:ocaml.Stream.Failure) { catched(); }
+		catch (_:ocaml.Error) { catched(); }
+		catch (_:ocaml.Failure) { catched(); }
 		catch (_:hxparse.ParserError) { catched(); }
 		catch (e:Any) {
 			syntax.Lexer.restore(stream.old);
@@ -554,7 +557,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			}
 	}
 
-	function parseFile() : {pack:Array<String>, decls:Array<core.Ast.TypeDecl>} {
+	function parseFile() : {pack:ImmutableList<String>, decls:ImmutableList<core.Ast.TypeDecl>} {
 		syntax.Parser.last_doc = None;
 		return switch stream {
 			case [{td:Kwd(Package)}, pack = parsePackage()]:
@@ -569,10 +572,10 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		}
 	}
 
-	function parseTypeDecls(pack:Array<String>, acc:Array<core.Ast.TypeDecl>) : Array<core.Ast.TypeDecl> {
+	function parseTypeDecls(pack:ImmutableList<String>, acc:ImmutableList<core.Ast.TypeDecl>) : ImmutableList<core.Ast.TypeDecl> {
 		try {
 			return switch stream {
-				case [ v = parseTypeDecl(), l = parseTypeDecls(pack,apush(acc,v)) ]:
+				case [ v = parseTypeDecl(), l = parseTypeDecls(pack,v::acc) ]:
 					l;
 				case _: ocaml.List.rev(acc);
 			}
@@ -589,24 +592,19 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 				case _: throw tp;
 			}
 			// resolve imports
-			for (a in acc) {
-				switch (a.decl) {
+			List.iter(function (d:core.Ast.TypeDecl) {
+				switch (d.decl) {
 					case EImport({pns:t, mode:_}):
-						if (t.length > 0) {
-							var n = t[t.length -1].pack;
-							var when = n == name;
-							for (i in 0...(t.length-1)) {
-								when = when && isLowerIdent(t[i].pack);
-							}
-							if (when) {
+						switch (List.rev(t)) {
+							case {pack:n} :: path if (n == name && List.for_all(function (p) { return isLowerIdent(p.pack); }, {var _path:ImmutableList<core.Ast.PlacedName> = path; path;})):
 								throw new syntax.parser.TypePath(
-									t.slice(0, t.length-1).map(function (e) {return e.pack;}),
-									Some({c:name,cur_package:false}),b);
-							}
+									List.map(function (p) {return p.pack;}, List.rev(path)), Some({c:name, cur_package:false}), b
+								);
+							case _:
 						}
 					case _:
 				}
-			}
+			}, acc);
 			throw new syntax.parser.TypePath(pack, Some({c:name, cur_package:true}), b);
 		}
 	}
@@ -941,8 +939,8 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			var c = parseClassField();
 			aunshift(parseClassFieldResume(tdecl), c);
 		}
-		catch (_:ocaml.Stream.Error) { catchFunction();}
-		catch (_:ocaml.Stream.Failure) { catchFunction();}
+		catch (_:ocaml.Error) { catchFunction();}
+		catch (_:ocaml.Failure) { catchFunction();}
 		catch (_:hxparse.NoMatch<Dynamic>) { catchFunction();}
 	}
 
@@ -1016,7 +1014,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 							{name:Last, pos:p};
 						}
 						else {
-							throw new ocaml.Stream.Failure();
+							throw ocaml.Failure.instance;
 						}
 				}
 		}
@@ -1251,15 +1249,16 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			case [{td:Question} && !opt]: parseTypeAnonymous(true);
 			case [id = ident(), t = parseTypeHint()]:
 				var p2 = last.pos;
-				function next(acc) {
-					return aunshift(acc, {
+				function next(acc:ImmutableList<core.Ast.ClassField>) : ImmutableList<core.Ast.ClassField> {
+					var cf:core.Ast.ClassField = {
 						cff_name: id,
-						cff_meta: opt ? [{name:core.Meta.StrictMeta.Optional,params:[], pos:core.Globals.Pos}] : [],
+						cff_meta: opt ? [{name:core.Meta.StrictMeta.Optional,params:[], pos:core.Globals.null_pos}] : [],
 						cff_access: [],
 						cff_doc: None,
 						cff_kind: core.Ast.ClassFieldKind.FVar(Some(t),None),
 						cff_pos: punion(id.pos, p2)
-					});
+					};
+					return cf :: acc;
 				}
 				switch stream {
 					case [{td:BrClose, pos:p2}]: {fst:next([]), snd:p2};
@@ -1327,7 +1326,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 						{ expr: None, pos: p}
 					case _: syntax.Parser.serror();
 				}
-				var f = {
+				var f:core.Ast.Func = {
 					f_params: pl,
 					f_args: args,
 					f_type: t,
@@ -1394,7 +1393,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 						f;
 					case _:
 						if (al.length == 0)
-							throw new ocaml.Stream.Failure();
+							throw ocaml.Failure.instance;
 						else
 							syntax.Parser.serror();
 				};
@@ -1492,7 +1491,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					{tp:{tpackage:[], tname:"", tparams:[], tsub:None}, pos:core.Globals.null_pos}
 				}
 				else {
-					throw new ocaml.Stream.Failure();
+					throw ocaml.Failure.instance;
 				}
 		}
 	}
@@ -1549,10 +1548,10 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		catch (_:hxparse.NoMatch<Dynamic>) { // Stream.Failure ?
 			return {acc:acc, pos:p};
 		}
-		catch (_:ocaml.Stream.Failure) {
+		catch (_:ocaml.Failure) {
 			return {acc:acc, pos:p};
 		}
-		catch (_:ocaml.Stream.Error) {
+		catch (_:ocaml.Error) {
 			var tk = nextToken();
 			syntax.Parser.display_error(Unexpected(tk.td), tk.pos);
 			return blockWithPos(acc, tk.pos);
@@ -1692,7 +1691,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		return switch stream {
 			case [name = popt(dollarIdent), pl = parseConstraintParams(), {td:POpen}, al=psep(Comma, parseFunParam), {td:PClose}, t = popt(parseTypeHint)]:
 				function make(e:core.Ast.Expr) : core.Ast.Expr {
-					var f = {
+					var f:core.Ast.Func = {
 						f_params : pl,
 						f_type : t,
 						f_args : al,
@@ -2207,10 +2206,10 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			catch (exc:hxparse.ParserError) {
 				catched(exc);
 			}
-			catch (exc:ocaml.Stream.Error) {
+			catch (exc:ocaml.Error) {
 				catched(exc);
 			}
-			catch (exc:ocaml.Stream.Failure) {
+			catch (exc:ocaml.Failure) {
 				catched(exc);
 			}
 			catch (e:syntax.parser.Display) {
@@ -2264,7 +2263,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 
 	function makeIs (e:core.Ast.Expr, pt:core.Ast.PlacedTypePath, p:core.Globals.Pos, p_is:core.Globals.Pos) : core.Ast.Expr {
 		var e_is:core.Ast.Expr = {expr:EField({expr:EConst(CIdent("Std")), pos:core.Globals.null_pos},"is"), pos:p_is};
-		var e2 = core.Ast.exprOfTypePath(pt.tp, pt.pos);
+		var e2 = core.Ast.expr_of_type_path(pt.tp, pt.pos);
 		return {expr:ECall(e_is, [e,e2]),pos:p};
 	}
 

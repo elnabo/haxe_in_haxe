@@ -1,7 +1,10 @@
 package core;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+
 enum CallError {
-	Not_enough_arguments (l:Array<core.Type.TSignatureArg>);
+	Not_enough_arguments (l:ImmutableList<core.Type.TSignatureArg>);
 	Too_many_arguments;
 	Could_not_unify (error_msg:ErrorMsg);
 	Cannot_skip_non_nullable (s:String);
@@ -10,7 +13,7 @@ enum CallError {
 enum ErrorMsg {
 	Module_not_found (path:core.Path);
 	Type_not_found (path:core.Path, s:String);
-	Unify (l:Array<core.Type.UnifyError>);
+	Unify (l:ImmutableList<core.Type.UnifyError>);
 	Custom (s:String);
 	Unknown_ident (s:String);
 	Stack (e1:ErrorMsg, e2:ErrorMsg);
@@ -49,11 +52,11 @@ class Error {
 	// public static function of(msg:ErrorMsg, pos:{file:String, min:Int, max:Int}) {
 		// return new Error(msg, new core.Globals.Pos(pos.file, pos.min, pos.max));
 	// }
-	public static function string_source(t:core.Type.T) : Array<String> {
+	public static function string_source(t:core.Type.T) : ImmutableList<String> {
 		return switch (t) {
-			case TInst(c, _): c.cl_ordered_fields.map(function (cf) {return cf.cf_name;});
-			case TAnon(a): ocaml.PMap.fold(function (cf, acc:Array<String>) {acc.unshift(cf.cf_name); return acc;}, a.a_fields, []);
-			case TAbstract({a_impl:Some(c)}, _): c.cl_ordered_statics.map(function (cf) {return cf.cf_name;});
+			case TInst(c, _): List.map(function (cf) {return cf.cf_name;}, c.cl_ordered_fields);
+			case TAnon(a): ocaml.PMap.fold(function (cf, acc:ImmutableList<String>) {return cf.cf_name :: acc;}, a.a_fields, []);
+			case TAbstract({a_impl:Some(c)}, _): List.map(function (cf) {return cf.cf_name;}, c.cl_ordered_statics);
 			case _: [];
 		};
 	}
@@ -115,7 +118,7 @@ class Error {
 			case Type_not_found(m, t): "Module "+core.Globals.s_type_path(m)+" does not define type "+t;
 			case Unify(l):
 				var ctx = core.Type.print_context();
-				l.map(unify_error_msg.bind(ctx)).join("\n");
+				List.join("\n", List.map(unify_error_msg.bind(ctx), l));
 			case Unknown_ident(s): "Unknown identifier : "+s;
 			case Custom(s): s;
 			case Stack(m1, m2):
@@ -130,7 +133,7 @@ class Error {
 		return switch (e) {
 			case Not_enough_arguments(tl):
 				var pctx = core.Type.print_context();
-				"Not enough arguments, expected "+tl.map(function (arg) { return arg.name + ":"+short_type(pctx, arg.t); }).join(", ");
+				"Not enough arguments, expected "+List.join(", ",List.map(function (arg) { return arg.name + ":"+short_type(pctx, arg.t); }, tl));
 			case Too_many_arguments: "Too many arguments";
 			case Could_not_unify (err): error_msg(err);
 			case Cannot_skip_non_nullable(s): "Cannot skip non-nullable argument "+s;

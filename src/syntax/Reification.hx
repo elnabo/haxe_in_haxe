@@ -1,6 +1,8 @@
 package syntax;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 
 class Reification {
 	var curPos:Option<core.Ast.Expr>;
@@ -38,7 +40,7 @@ class Reification {
 		};
 	}
 
-	function mkEnum(ename:String, name:String, vl:Array<core.Ast.Expr>, p:core.Globals.Pos) : core.Ast.Expr{
+	function mkEnum(ename:String, name:String, vl:ImmutableList<core.Ast.Expr>, p:core.Globals.Pos) : core.Ast.Expr{
 		// We don't want the position of the call expression to span the entire call (#6396).
 		var pmin = new core.Globals.Pos(p.pfile, p.pmin, p.pmin);
 		var constr:core.Ast.Expr = {expr:EConst(CIdent(name)), pos:pmin};
@@ -107,17 +109,11 @@ class Reification {
 		return toString(s.pack, s.pos);
 	}
 
-	function toArray<T>(f:T->core.Globals.Pos->core.Ast.Expr, a:Array<T>, p:core.Globals.Pos):core.Ast.Expr{
-		var vals = [];
-		for (v in a){
-			vals.push(f(v,p));
-		}
-
-		var e:core.Ast.Expr = {
-		pos:p,
-		expr:EArrayDecl(vals)
+	function toArray<T>(f:T->core.Globals.Pos->core.Ast.Expr, a:ImmutableList<T>, p:core.Globals.Pos):core.Ast.Expr{
+		return {
+			expr:EArrayDecl(List.map(function (s) { return f(s, p);}, a)),
+			pos:p
 		};
-		return e;
 	}
 
 	function toNull(p:core.Globals.Pos):core.Ast.Expr{
@@ -136,15 +132,15 @@ class Reification {
 		return {expr:EConst(CIdent(s)),pos:p};
 	}
 
-	function toObj(fields:Array<{field:String, expr:core.Ast.Expr}>, p:core.Globals.Pos):core.Ast.Expr{
-		var map = fields.map(function (s):core.Ast.ObjectField {
+	function toObj(fields:ImmutableList<{field:String, expr:core.Ast.Expr}>, p:core.Globals.Pos):core.Ast.Expr{
+		var map = List.map(function (s):core.Ast.ObjectField {
 			return {
 				name:s.field,
 				pos:core.Globals.null_pos,
 				quotes:NoQuotes,
 				expr:s.expr
 			};
-		});
+		}, fields);
 		return {expr:EObjectDecl(map),pos:p};
 	}
 
@@ -166,24 +162,25 @@ class Reification {
 	function toTPath(ptp:core.Ast.PlacedTypePath, p:core.Globals.Pos):core.Ast.Expr{
 		var t = ptp.tp;
 		var len = t.tname.length;
-		if (t.tpackage.length == 0 && len > 1 && t.tname.charAt(0) == "$") {
+		if (t.tpackage == Tl && len > 1 && t.tname.charAt(0) == "$") {
 			var name = t.tname.substr(1);
 			var ei:core.Ast.Expr = {expr:EConst(CIdent(name)), pos:p};
-			if (t.tparams.length == 0) {
-				return ei;
+			return switch (t.tparams) {
+				case []: ei;
+				case _:
+					//macro : $TP<Int>` conveys the intent to use TP and overwrite the type parameters.
+					var ea = toArray(toTParam, t.tparams, p);
+					var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
+						{field:"pack", expr:{expr:EField(ei, "pack"), pos:p}},
+						{field:"name", expr:{expr:EField(ei, "name"), pos:p}},
+						{field:"sub", expr:{expr:EField(ei, "sub"), pos:p}},
+						{field:"params", expr:ea}
+					];
+					toObj(fields, p);
 			}
-			//macro : $TP<Int>` conveys the intent to use TP and overwrite the type parameters.
-			var ea = toArray(toTParam, t.tparams, p);
-			var fields:Array<{field:String, expr:core.Ast.Expr}> = [
-				{field:"pack", expr:{expr:EField(ei, "pack"), pos:p}},
-				{field:"name", expr:{expr:EField(ei, "name"), pos:p}},
-				{field:"sub", expr:{expr:EField(ei, "sub"), pos:p}},
-				{field:"params", expr:ea}
-			];
-			return toObj(fields, p);
 		}
 		else {
-			var fields = [
+			var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
 				{field:"pack", expr:toArray(toString, t.tpackage, p)},
 				{field:"name", expr:toString(t.tname, p)},
 				{field:"pack", expr:toArray(toTParam, t.tparams, p)}
@@ -191,14 +188,14 @@ class Reification {
 			switch (t.tsub) {
 				case None:
 				case Some(s):
-					fields.push({field:"sub", expr:toString(s, p)});
+					fields = {field:"sub", expr:toString(s, p)} :: fields;
 			}
 			return toObj(fields, p);
 		}
 	}
 
 	public function toCType(t:core.Ast.TypeHint, p:core.Globals.Pos):core.Ast.Expr {
-		function ct(n:String, vl:Array<core.Ast.Expr>):core.Ast.Expr {
+		function ct(n:String, vl:ImmutableList<core.Ast.Expr>):core.Ast.Expr {
 			return mkEnum("ComplexType", n, vl, p);
 		}
 
@@ -226,7 +223,7 @@ class Reification {
 			var o = vv.opt;
 			var t = vv.type;
 			var e = vv.value;
-			var fields:Array<{field:String, expr:core.Ast.Expr}> = [
+			var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
 				{field:"name", expr:toString(n.pack, p)},
 				{field:"opt", expr:toBool(o, p)},
 				{field:"type", expr:toOpt(toTypeHint, t, p)}
@@ -234,13 +231,13 @@ class Reification {
 			switch (e) {
 				case None:
 				case Some(e):
-					fields.push({field:"value", expr:toExpr(e, p)});
+					fields = {field:"value", expr:toExpr(e, p)} :: fields;
 			}
 			return toObj(fields, p);
 		}
 
 		function fparam(t:core.Ast.TypeParam,p:core.Globals.Pos):core.Ast.Expr{
-			var fields:Array<{field:String, expr:core.Ast.Expr}> = [
+			var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
 				{field:"name", expr:toPlacedName(t.tp_name)},
 				{field:"constraints", expr:toArray(toCType, t.tp_constraints, p)},
 				{field:"params", expr:toArray(fparam, t.tp_params, p)}
@@ -248,7 +245,7 @@ class Reification {
 			return toObj(fields, p);
 		}
 
-		var fields:Array<{field:String, expr:core.Ast.Expr}> = [
+		var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
 			{field:"args",   expr:toArray(farg, f.f_args, p)},
 			{field:"ret",    expr:toOpt(toTypeHint, f.f_type, p)},
 			{field:"expr",   expr:toOpt(toExpr, f.f_expr, p)},
@@ -263,7 +260,7 @@ class Reification {
 
 		function toKind(k:core.Ast.ClassFieldKind):core.Ast.Expr {
 			var n:String;
-			var vl:Array<core.Ast.Expr>;
+			var vl:ImmutableList<core.Ast.Expr>;
 			switch(k){
 				case FVar(ct, e): n = "FVar"; vl = [toOpt(toTypeHint, ct, p), toOpt(toExpr, e, p)];
 				case FFun(f): n = "FFun"; vl = [toFun(f, p)];
@@ -279,16 +276,15 @@ class Reification {
 			case Some(s):
 				fields.push({field:"doc", expr:toString(s, p)});
 		}
-		if (f.cff_access != null && f.cff_access.length > 0) {
+		if (f.cff_access != Tl) {
 			fields.push({field:"access", expr:toArray(toAccess, f.cff_access, p)});
 		}
 		fields.push({field:"kind", expr:toKind(f.cff_kind)});
 		fields.push({field:"pos",  expr:toPos(f.cff_pos)});
-		if (f.cff_meta != null && f.cff_meta.length > 0) {
+		if (f.cff_meta != Tl) {
 			fields.push({field:"meta", expr:toMeta(f.cff_meta, p)});
 		}
-
-		return toObj(fields, p);
+		return toObj(List.rev(fields), p);
 	}
 
 	function toAccess(a:core.Ast.Access, p:core.Globals.Pos):core.Ast.Expr {
@@ -307,7 +303,7 @@ class Reification {
 
 	function toMeta(m:core.Ast.Metadata, p:core.Globals.Pos):core.Ast.Expr {
 		return toArray(function(me:core.Ast.MetadataEntry, _:core.Globals.Pos):core.Ast.Expr {
-			var fields:Array<{field:String, expr:core.Ast.Expr}> = [
+			var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
 				{field:"name",   expr:toString(core.Meta.to_string(me.name), me.pos)},
 				{field:"params", expr:toExprArray(me.params, me.pos)},
 				{field:"pos",    expr:toPos(me.pos)}
@@ -331,23 +327,20 @@ class Reification {
 			return toObj([{field:"file", expr:file}, {field:"min", expr:pmin}, {field:"max", expr:pmax}], p);
 	}
 
-	function toExprArray(a:Array<core.Ast.Expr>, p:core.Globals.Pos):core.Ast.Expr {
-		if (a.length > 0){
-			switch(a[0].expr){
-			case EMeta({name:Dollar("a"), params:[]},e1):
+	function toExprArray(a:ImmutableList<core.Ast.Expr>, p:core.Globals.Pos):core.Ast.Expr {
+		return switch (a) {
+			case [{expr:EMeta({name:Dollar("a"), params:[]},e1)}]:
 				switch(e1.expr){
-					case EArrayDecl(el): return toExprArray(el, p);
-					default: return e1;
+					case EArrayDecl(el): toExprArray(el, p);
+					case _: e1;
 				}
-			default:
-			}
+			case _: toArray(toExpr, a, p);
 		}
-		return toArray(toExpr, a, p);
 	}
 
 	public function toExpr(e:core.Ast.Expr, _:core.Globals.Pos):core.Ast.Expr {
 		var p = e.pos;
-		function expr(n:String, vl:Array<core.Ast.Expr>):core.Ast.Expr {
+		function expr(n:String, vl:ImmutableList<core.Ast.Expr>):core.Ast.Expr {
 			var e = mkEnum("ExprDef", n, vl, p);
 			return toObj([{field:"expr", expr:e}, {field:"pos", expr:toPos(p)}], p);
 		}
@@ -403,10 +396,9 @@ class Reification {
 				expr("EUnop", [op2, toBool(flag == Postfix, p), loop(e)]);
 			case EVars(vl):
 				expr("EVars", [toArray(function(vv:core.Ast.Var, p:core.Globals.Pos):core.Ast.Expr {
-					var name = vv.name;
-					var type = vv.type;
-					var expr = vv.expr;
-					var fields:Array<{field:String, expr:core.Ast.Expr}> = [
+					var name = vv.name; var type = vv.type; var expr = vv.expr;
+					var fields:ImmutableList<{field:String, expr:core.Ast.Expr}> = [
+						// "name", to_obj ["name",to_string n pn;"pos",to_pos pn] p;
 						{field:"name", expr:toString(name.pack, p)},
 						{field:"type", expr:toOpt(toTypeHint, type, p)},
 						{field:"expr", expr:toOpt(toExpr, expr, p)}
@@ -414,7 +406,7 @@ class Reification {
 					return toObj(fields, p);
 				}, vl, p)]);
 			case EFunction(name, f):
-				var name2 = switch (name) {
+				var name = switch (name) {
 					case None: toNull(core.Globals.null_pos);
 					case Some(n):
 						if (StringTools.startsWith(n, "inline_$")) {
@@ -428,7 +420,7 @@ class Reification {
 							toString(n, p);
 						}
 				}
-				expr("EFunction", [name2, toFun(f, p)]);
+				expr("EFunction", [name, toFun(f, p)]);
 			case EBlock(el):
 				expr("EBlock", [toExprArray(el, p)]);
 			case EFor(e1, e2):
@@ -545,13 +537,16 @@ class Reification {
 						[e]
 					),
 					pos:p};
-				case ":pos" if (md.params.length == 1):
+				case ":pos" if (List.length(md.params) == 1):
 					var old = curPos;
-					curPos = Some(md.params[0]);
+					switch (md.params) {
+						case Hd(v, Tl): curPos = Some(v);
+						case _: throw false;
+					}
 					var e = loop(e1);
 					curPos = old;
 					e;
-				default: expr("EMeta", [
+				case _: expr("EMeta", [
 						toObj([
 							{field:"name",expr:toString(core.Meta.to_string(md.name), p)},
 							{field:"params",expr:toExprArray(md.params, p)},
@@ -564,15 +559,12 @@ class Reification {
 	}
 
 	function toTParamDecl(t:core.Ast.TypeParam, p:core.Globals.Pos):core.Ast.Expr{
-		var params = [];
-		for (tp in t.tp_params){
-			params.push(toTParamDecl(tp,p));
-		}
-
-		var constraints = [];
-		for (c in t.tp_constraints){
-			constraints.push(toCType(c,p));
-		}
+		var params = List.map(function (tp) { 
+			return toTParamDecl(tp, p);
+		}, t.tp_params);
+		var constraints = List.map(function (c) { 
+			return toCType(c, p);
+		}, t.tp_constraints);
 
 		return toObj([
 			{field:"name", expr:toPlacedName(t.tp_name)},
@@ -587,10 +579,10 @@ class Reification {
 		switch(td.decl){
 			case EClass(d):
 				var ext = None;
-				var impl = [];
+				var impl:ImmutableList<core.Ast.Expr> = [];
 				var interf = false;
 
-				for (f in d.d_flags){
+				List.iter(function (f:core.Ast.ClassFlag) {
 					switch(f){
 						case HExtern | HPrivate:
 						case HInterface: interf = true;
@@ -598,40 +590,28 @@ class Reification {
 							ext = switch (ext) {
 								case None: Some(toTPath(t, p));
 								case Some(_):
-									impl.push(toTPath(t, p));
+									impl = (toTPath(t, p)) :: impl;
 									ext;
 							};
-						case HImplements(i): impl.push(toTPath(i, td.pos));
+						case HImplements(i): (toTPath(i, td.pos)) :: impl;
 					}
-				}
+				}, d.d_flags);
 
-				var params = [];
-				for (par in d.d_params){
-					params.push(toTParamDecl(par,p));
-				}
+				var params = List.map(function (par) {
+					return toTParamDecl(par, p);
+				}, d.d_params);
 
-				var isExtern = false;
-				for (f in d.d_flags){
-					switch(f){
-						case HExtern: isExtern = true; break;
-						default:
-					}
-				}
+				var isExtern = List.mem(core.Ast.ClassFlag.HExtern, d.d_flags);
 
-				var kindParams:Array<core.Ast.Expr> = [];
+				var kindParams:ImmutableList<core.Ast.Expr> = [
+					switch(ext) { case None: {expr:EConst(CIdent("null")), pos:p}; case Some(t): t;},
+					{expr:EArrayDecl(impl), pos:p},
+					toBool(interf, p)
+				];
 
-				switch (ext) {
-					case None: kindParams.push({expr:EConst(CIdent("null")),pos:p});
-					case Some(t): kindParams.push(t);
-				}
-
-				kindParams.push({expr:EArrayDecl(impl),pos:p});
-				kindParams.push(toBool(interf, p));
-
-				var fields = [];
-				for (d in d.d_data){
-					fields.push(toCField(d,p));
-				}
+				var fields = List.map(function (f) {
+					return toCField(f, p);
+				}, d.d_data);
 
 				return toObj([
 					{field:"pack", expr:{expr:EArrayDecl([]),pos:p}},
@@ -643,7 +623,7 @@ class Reification {
 					{field:"kind", expr:mkEnum("TypeDefKind", "TDClass", kindParams, p)},
 					{field:"fields", expr:{expr:EArrayDecl(fields), pos:p}}
 				], td.pos);
-			default: throw "Invalid type for reification";
+			case _: throw false;
 		}
 	}
 }

@@ -1,5 +1,8 @@
 package core;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+
 class Pos {
 	public final pfile : String;
 	public final pmin : Int;
@@ -68,11 +71,11 @@ class Globals {
 		};
 	}
 
-	public static function platform_list_help (list:Array<Platform>) : String {
-		return switch (list.length) {
-			case 0: "";
-			case 1: " (" + platform_name(list[0]) + " only)";
-			default: " (for " + Lambda.map(list, platform_name).join(",") + ")";
+	public static function platform_list_help (list:ImmutableList<Platform>) : String {
+		return switch (list) {
+			case []: "";
+			case [p]: " (" + platform_name(p) + " only)";
+			case pl: " (for " + List.join(",", List.map(platform_name, pl)) + ")";
 		};
 	}
 
@@ -83,11 +86,9 @@ class Globals {
 	// public static final null_pos = new Pos("?", -1, -1);
 
 	public static function s_type_path (p:Path) {
-		if (p.a.length == 0) {
-			return p.b;
-		}
-		else {
-			return p.a.join(".") + "." + p.b;
+		return switch (p.a) {
+			case []: p.b;
+			case _: List.join(".",p.a) + "." + p.b;
 		}
 	}
 }

@@ -1,5 +1,8 @@
 package compiler;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+
 enum DOException {
 	Completion(s:String);
 }
@@ -12,7 +15,7 @@ class DisplayOutput {
 		return StringTools.htmlEscape(s);
 	}
 
-	public static function get_timer_fields (start_time:Float) : Array<{a:String, b:String}> {
+	public static function get_timer_fields (start_time:Float) : ImmutableList<{a:String, b:String}> {
 		var tot = 0.0;
 		for (value in core.Timer.htimers) {
 			tot += value.total;
@@ -30,11 +33,10 @@ class DisplayOutput {
 		return fields;
 	}
 
-	public static function print_fields (fields:Array<DOField>) {
+	public static function print_fields (fields:ImmutableList<DOField>) {
 		var b = new StringBuf();
 		b.add("<list>\n");
-		var f = fields.copy();
-		f.sort(function (a:DOField, b:DOField){
+		var f = List.sort(function (a:DOField, b:DOField){
 			var av = context.Display.display_field_kind_index(a.kind);
 			var bv = context.Display.display_field_kind_index(b.kind);
 			if (av == bv) { 
@@ -43,8 +45,8 @@ class DisplayOutput {
 			}
 			return (av > bv) ? 1 : -1;
 
-		});
-		for (element in f) {
+		}, fields);
+		List.iter(function (element:DOField) {
 			var s_kind:String;
 			var t:String;
 			switch (element.kind) {
@@ -79,12 +81,12 @@ class DisplayOutput {
 			b.add('</t><d>');
 			b.add(htmlescape(element.doc));
 			b.add('</d></i>\n');
-		}
+		}, f);
 		b.add("</list>\n");
 		return b.toString();
 	}
 
-	public static function print_toplevel (il:Array<context.common.identifiertype.T>) : String {
+	public static function print_toplevel (il:ImmutableList<context.common.identifiertype.T>) : String {
 		trace("TDOO: compiler.DisplayOutput.print_toplevel");
 		return null;
 	}
@@ -116,9 +118,9 @@ class DisplayOutput {
 		// Buffer.contents b
 	}
 
-	public static function print_signatures (tl:Array<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>) : String {
+	public static function print_signatures (tl:ImmutableList<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>) : String {
 		var b = new StringBuf();
-		for (element in tl) {
+		List.iter(function (element:{sig:core.Type.TSignature, doc:core.Ast.Documentation}) {
 			b.add("<type");
 			switch (element.doc) {
 				case None:
@@ -130,26 +132,26 @@ class DisplayOutput {
 			b.add(">\n");
 			b.add(htmlescape(core.Type.s_type(core.Type.print_context(), TFun(element.sig))));
 			b.add("\n</type>\n");
-		}
+		}, tl);
 		return b.toString();
 	}
 
-	public static function print_positions(pl:Array<core.Globals.Pos>) : String {
+	public static function print_positions(pl:ImmutableList<core.Globals.Pos>) : String {
 		var b = new StringBuf();
 		var error_printer = function(file:String, line:Int) : String {
 			return core.Path.get_real_path()(file) + ":" + line + ":";
 		};
 		b.add("<list>\n");
-		for (p in pl) {
+		List.iter(function (p) {
 			b.add("<pos>");
 			b.add(syntax.Lexer.get_error_pos(error_printer, p));
 			b.add("</pos>");
-		}
+		}, pl);
 		b.add("</list>");
 		return b.toString();
 	}
 
-	public static function print_signature (tl:Array<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>, display_arg:Int) : String {
+	public static function print_signature (tl:ImmutableList<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>, display_arg:Int) : String {
 		trace("TODO compiler.DisplayOutput.print_signature");
 		return null;
 	}
@@ -236,7 +238,7 @@ class DisplayOutput {
 		// }
 	}
 
-	public static function process_display_file (com:context.Common.Context, classes:Array<core.Path> ){
+	public static function process_display_file (com:context.Common.Context, classes:ImmutableList<core.Path> ){
 		trace("TODO: compiler.DisplayOutput.process_display_file");
 		// let get_module_path_from_file_path com spath =
 		// 	let rec loop = function

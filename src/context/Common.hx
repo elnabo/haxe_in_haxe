@@ -3,8 +3,11 @@ package context;
 import core.Globals;
 // import core.Define.StrictDefined;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 using ocaml.Cloner;
+using ocaml.Hashtbl;
+using ocaml.List;
 
 class Abort {
 	public var s:String;
@@ -40,7 +43,7 @@ enum CompilerMessage {
 
 	See details/implementation in Codegen.captured_vars
 */
-enum CapturePolicy {
+enum Capture_policy {
 	/* do nothing, let the platform handle it */
 	CPNone;
 	/* wrap all captured variables into a single-element array to allow modifications */
@@ -49,13 +52,13 @@ enum CapturePolicy {
 	CPLoopVars;
 }
 
-typedef PlatformConfig = {
+typedef Platform_config = {
 	/** has a static type system, with not-nullable basic types (Int/Float/Bool) */
 	pf_static : Bool,
 	/** has access to the "sys" package */
 	pf_sys : Bool,
 	/** captured variables handling (see before) */
-	pf_capture_policy : CapturePolicy,
+	pf_capture_policy : Capture_policy,
 	/** when calling a method with optional args, do we replace the missing args with "null" constants */
 	pf_pad_nulls : Bool,
 	/** add a final return to methods not having one already - prevent some compiler warnings */
@@ -65,40 +68,40 @@ typedef PlatformConfig = {
 	/** can the platform use default values for non-nullable arguments */
 	pf_can_skip_non_nullable_argument : Bool,
 	/** type paths that are reserved on the platform */
-	pf_reserved_type_paths : Array<core.Path>
+	pf_reserved_type_paths : ImmutableList<core.Path>
 }
 
 typedef CompilerCallback = {
-	after_typing : Array<Array<core.Type.ModuleType>->Void>,
-	before_dce : Array<Void->Void>,
-	after_generation : Array<Void->Void>
+	after_typing : ImmutableList<ImmutableList<core.Type.ModuleType>->Void>,
+	before_dce : ImmutableList<Void->Void>,
+	after_generation : ImmutableList<Void->Void>
 }
 
 typedef SharedDisplayInformation = {
-	import_positions : Map<core.Globals.Pos, {b:ocaml.Ref<Bool>, l:Array<core.Ast.PlacedName>}>,
-	diagnostics_messages : Array<{
+	import_positions : Map<core.Globals.Pos, {b:ocaml.Ref<Bool>, l:ImmutableList<core.Ast.PlacedName>}>,
+	diagnostics_messages : ImmutableList<{
 		s:String,
 		pos:core.Globals.Pos,
 		t:context.displaytypes.diagnosticsseverity.T
 	}>,
 	type_hints : Map<core.Globals.Pos, core.Type.T>,
-	document_symbols : Array<{
+	document_symbols : ImmutableList<{
 		s:String,
-		l:Array<context.displaytypes.symbolinformation.T>
+		l:Array<context.displaytypes.symbolinformation.T> // DynArray
 	}>,
-	removable_code : Array<{s:String, p1:core.Globals.Pos, p2:core.Globals.Pos}>
+	removable_code : ImmutableList<{s:String, p1:core.Globals.Pos, p2:core.Globals.Pos}>
 }
 
 typedef DisplayInformation = {
-	unresolved_identifiers : Array<{
+	unresolved_identifiers : ImmutableList<{
 		s:String,
 		pos:core.Globals.Pos,
-		l:Array<{
+		l:ImmutableList<{
 			fst:String,
 			snd:context.common.identifiertype.T
 		}>
 	}>,
-	interface_field_implementations : Array<{
+	interface_field_implementations : ImmutableList<{
 		c1:core.Type.TClass,
 		cf1:core.Type.TClassField, 
 		c2:core.Type.TClass,
@@ -114,34 +117,34 @@ typedef SharedContext = {
 @:structInit
 class Context {
 	public var version : Int;
-	public var args : Array<String>;
+	public var args : ImmutableList<String>;
 	public var shared : SharedContext;
 	public var display_information : DisplayInformation;
-	public var sys_args : Array<String>;
+	public var sys_args : ImmutableList<String>;
 	public var display : context.common.DisplayMode.Settings;
 	public var debug: Bool;
 	public var verbose : Bool;
 	public var foptimize : Bool;
 	public var platform : core.Globals.Platform;
-	public var config : PlatformConfig;
-	public var std_path : Array<String>;
-	public var class_path : Array<String>;
+	public var config : Platform_config;
+	public var std_path : ImmutableList<String>;
+	public var class_path : ImmutableList<String>;
 	public var main_class : Option<core.Path>;
 	public var package_rules : Map<String, PackageRule>;
 	public var error : String -> core.Globals.Pos -> Void;
 	public var warning : String -> core.Globals.Pos -> Void;
-	public var load_extern_type : Array<core.Path->core.Globals.Pos->Option<{s:String, pack:core.Ast.Package}>>; // allow finding types which are not in source
+	public var load_extern_type : ImmutableList<core.Path->core.Globals.Pos->Option<{s:String, pack:core.Ast.Package}>>; // allow finding types which are not in source
 	public var callbacks : CompilerCallback;
 	public var defines : core.Define;
 	public var print : String -> Void;
 	public var get_macros : Void -> Option<Context>;
 	public var run_command : String -> Int;
 	public var file_lookup_cache : Map<String, Option<String>>;
-	public var parser_cache : Map<String, Array<core.Ast.TypeDecl>>;
+	public var parser_cache : Map<String, ImmutableList<core.Ast.TypeDecl>>;
 	public var cached_macros : Map<
 		{path:core.Path, s:String},
 		{
-			l:Array<{s:String, b:Bool, t:core.Type.T}>,
+			l:ImmutableList<{s:String, b:Bool, t:core.Type.T}>,
 			t:core.Type.T,
 			c:core.Type.TClass,
 			cf:core.Type.TClassField
@@ -152,29 +155,29 @@ class Context {
 	public var file : String;
 	public var flash_version : Float;
 	public var features : Map<String, Bool>;
-	public var modules : Array<core.Type.ModuleDef>;
+	public var modules : ImmutableList<core.Type.ModuleDef>;
 	public var main : Option<core.Type.TExpr>;
-	public var types : Array<core.Type.ModuleType>;
+	public var types : ImmutableList<core.Type.ModuleType>;
 	public var resources : Map<String, String>;
-	public var neko_libs : Array<String>;
-	public var include_files : Array<{a:String, b:String}>;
+	public var neko_libs : ImmutableList<String>;
+	public var include_files : ImmutableList<{a:String, b:String}>;
 	// ocaml type: (string * (unit -> Swf.swf) * (unit -> ((string list * string),As3hl.hl_class) Hashtbl.t)) list;
-	public var swf_libs : Array<Dynamic>;
+	public var swf_libs : ImmutableList<Dynamic>;
 	// ocaml type: (string * bool * (unit -> unit) * (unit -> (path list)) * (path -> ((JData.jclass * string * string) option))) list; (* (path,std,close,all_files,lookup) *)
-	public var java_libs : Array<Dynamic>;
+	public var java_libs : ImmutableList<Dynamic>;
 	// ocaml type: (string * bool * (unit -> path list) * (path -> IlData.ilclass option)) list; (* (path,std,all_files,lookup) *)
-	public var net_libs : Array<Dynamic>;
-	public var net_std : Array<String>;
+	public var net_libs : ImmutableList<Dynamic>;
+	public var net_std : ImmutableList<String>;
 	public var net_path_map : Map<core.Path, {
-		a1:Array<String>,
-		a2:Array<String>,
+		a1:ImmutableList<String>,
+		a2:ImmutableList<String>,
 		s:String
 	}>;
-	public var c_args : Array<String>;
+	public var c_args : ImmutableList<String>;
 	public var js_gen : Option<Void->Void>;
 	// typing
 	public var basic : core.Type.BasicTypes;
-	public var memory_marker : Array<Float>;
+	public var memory_marker : ImmutableList<Float>;
 }
 
 class Common {
@@ -209,8 +212,8 @@ class Common {
 		s_macros_called: new ocaml.Ref(0)
 	};
 
-	public static var default_config(get, never):PlatformConfig;
-	static function get_default_config () : PlatformConfig {
+	public static var default_config(get, never):Platform_config;
+	static function get_default_config () : Platform_config {
 		return {
 			pf_static : true,
 			pf_sys : true,
@@ -269,7 +272,7 @@ class Common {
 			args : args,
 			shared : {
 				shared_display_information : {
-					import_positions : new Map<core.Globals.Pos, {b:ocaml.Ref<Bool>, l:Array<core.Ast.PlacedName>}>(),
+					import_positions : new Map<core.Globals.Pos, {b:ocaml.Ref<Bool>, l:ImmutableList<core.Ast.PlacedName>}>(),
 					diagnostics_messages : [],
 					type_hints : new Map<core.Globals.Pos, core.Type.T>(),
 					document_symbols : [],
@@ -306,8 +309,8 @@ class Common {
 			net_libs : [],
 			net_std : [],
 			net_path_map : new Map<core.Path, {
-				a1:Array<String>,
-				a2:Array<String>,
+				a1:ImmutableList<String>,
+				a2:ImmutableList<String>,
 				s:String
 			}>(),
 			c_args : [],
@@ -333,14 +336,14 @@ class Common {
 			cached_macros : new Map<
 				{path:core.Path, s:String},
 				{
-					l:Array<{s:String, b:Bool, t:core.Type.T}>,
+					l:ImmutableList<{s:String, b:Bool, t:core.Type.T}>,
 					t:core.Type.T,
 					c:core.Type.TClass,
 					cf:core.Type.TClassField
 				}
 			>(),
 			memory_marker : memory_marker(),
-			parser_cache : new Map<String, Array<core.Ast.TypeDecl>>()
+			parser_cache : new Map<String, ImmutableList<core.Ast.TypeDecl>>()
 		};
 		
 		return ctx;
@@ -395,19 +398,20 @@ class Common {
 		return split[split.length - 1].toLowerCase();
 	}
 
-	static var flash_versions_internal = [9.,10.,10.1,10.2,10.3,11.,11.1,11.2,11.3,11.4,11.5,11.6,11.7,11.8,11.9,12.0,13.0,14.0,15.0,16.0,17.0];
-	public static var flash_versions(get, never) : Array<{a:Float, b:String}>;
-	static function get_flash_versions () : Array<{a:Float, b:String}> {
-		return [ for (v in flash_versions_internal)
-			{
+	static var flash_versions_internal: ImmutableList<{a:Float, b:String}> = Tl;
+	public static var flash_versions(get, never) : ImmutableList<{a:Float, b:String}>;
+	static function get_flash_versions () : ImmutableList<{a:Float, b:String}> {
+		if (flash_versions_internal == Tl) {
+			flash_versions_internal = [for (v in [9.,10.,10.1,10.2,10.3,11.,11.1,11.2,11.3,11.4,11.5,11.6,11.7,11.8,11.9,12.0,13.0,14.0,15.0,16.0,17.0]) {
 				var maj = Std.int(v);
 				var min = Std.int(v * 10) % 10;
 				{a:v, b:maj + "" + ((min == 0) ? "" : "_") + maj}
-			}
-		];
+			}];
+		}
+		return flash_versions_internal;
 	}
 
-	public static function get_config (com:Context) : PlatformConfig {
+	public static function get_config (com:Context) : Platform_config {
 		var defined = function (f:core.Define.StrictDefined) : Bool {
 			return com.defines.values.exists(core.Define.infos(f).a);
 		};
@@ -489,7 +493,7 @@ class Common {
 		};
 	}
 
-	public static function memory_marker () : Array<Float> {
+	public static function memory_marker () : ImmutableList<Float> {
 		return [std.Sys.time()];
 	}
 
@@ -521,65 +525,62 @@ class Common {
 	}
 
 	public static function find_file (ctx:Context, f:String) : String {
-		var v = ctx.file_lookup_cache.get(f);
-		if (v != null) {
+		return try {
+			var v = Hashtbl.find(ctx.file_lookup_cache,f);
 			switch (v) {
-				case None:
-				case Some(s): return s;
+				case None: throw ocaml.Exit.instance;
+				case Some(f): f;
 			}
 		}
-
-		var had_empty = false;
-		var acc = ctx.class_path.copy();
-
-		var r : Option<String> = None;
-		try {
-			while (true) {
-				if (acc.length == 0) {
-					if (had_empty) { throw ocaml.Not_found.instance; }
-					else {
-						had_empty = true;
-						acc = [""];
-					}
-				}
-				else {
-					var p = acc.shift();
-					var file = p + f;
-					if (sys.FileSystem.exists(file)) {
-						var ext = file.lastIndexOf(".");
-						if (ext == -1) {
-							r = Some(file);
-							break;
-						}
-						var file_pf = file.substr(0, ext+1) + core.Globals.platform_name(ctx.platform) + file.substr(ext, (file.length - ext));
-						if (!defined(ctx, CoreApi) && sys.FileSystem.exists(file_pf)) {
-							r = Some(file_pf);
-							break;
+		catch (_:ocaml.Exit) {
+			throw ocaml.Not_found.instance;
+		}
+		catch (_:ocaml.Not_found) {
+			function loop(had_empty:Bool, l:ImmutableList<String>) {
+				return switch (l) {
+					case [] if (had_empty): throw ocaml.Not_found.instance;
+					case []: loop(true, [""]);
+					case p::l:
+						var l:ImmutableList<String> = l;
+						var file = p + f;
+						if (sys.FileSystem.exists(file)) {
+							return try {
+								var ext = file.lastIndexOf("."); 
+								if (ext == -1) { throw ocaml.Not_found.instance; }
+								var file_pf = file.substr(0, ext+1) + core.Globals.platform_name(ctx.platform) + file.substr(ext, (file.length - ext));
+								if (!defined(ctx, CoreApi) && sys.FileSystem.exists(file_pf)) {
+									file_pf;
+								}
+								else {
+									file;
+								}
+							}
+							catch (_:ocaml.Not_found) {
+								file;
+							}
 						}
 						else {
-							r = Some(file);
-							break;
+							loop(had_empty || p == "", l);
 						}
-					}
-					else {
-						had_empty = (had_empty || p =="");
-					}
+						
 				}
 			}
-		}
-		catch (e:ocaml.Not_found) {
-			 r = None;
-		}
-
-		ctx.file_lookup_cache.set(f, r);
-		switch (r) {
-			case None: throw ocaml.Not_found.instance;
-			case Some(s): return s;
+			var r = try {
+				Some(loop(false, ctx.class_path));
+			}
+			catch (_:ocaml.Not_found) {
+				None;
+			}
+			Hashtbl.add(ctx.file_lookup_cache,f, r);
+			switch (r) {
+				case None: throw ocaml.Not_found.instance;
+				case Some(s): s;
+			}
 		}
 	}
 
 	public static function add_diagnostics_message (com:Context, s:String, p:core.Globals.Pos, sev:context.displaytypes.diagnosticsseverity.T) {
 		var di = com.shared.shared_display_information;
-		di.diagnostics_messages.unshift({s:s, pos:p, t:sev});
+		di.diagnostics_messages = ({s:s, pos:p, t:sev}):: di.diagnostics_messages;
 	}
 }

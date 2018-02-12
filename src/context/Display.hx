@@ -1,5 +1,6 @@
 package context;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
 enum DisplayFieldKind {
@@ -17,12 +18,12 @@ enum DisplayException {
 	Statistics (s:String);
 	ModuleSymbols (s:String);
 	Metadata (s:String);
-	DisplaySignatures (l:Array<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>, i:Int);
+	DisplaySignatures (l:ImmutableList<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>, i:Int);
 	DisplayType (t:core.Type.T, pos:core.Globals.Pos, s:Option<String>);
-	DisplayPosition (l:Array<core.Globals.Pos>);
-	DisplayFields (l:Array<{name:String, kind:DisplayFieldKind, doc:core.Ast.Documentation}>);
-	DisplayToplevel (l:Array<context.common.identifiertype.T>);
-	DisplayPackage (l:Array<String>);
+	DisplayPosition (l:ImmutableList<core.Globals.Pos>);
+	DisplayFields (l:ImmutableList<{name:String, kind:DisplayFieldKind, doc:core.Ast.Documentation}>);
+	DisplayToplevel (l:ImmutableList<context.common.identifiertype.T>);
+	DisplayPackage (l:ImmutableList<String>);
 }
 
 class Display {

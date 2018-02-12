@@ -1,6 +1,9 @@
 package codegen;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
+import ocaml.PMap;
 
 class Codegen {
 
@@ -10,59 +13,59 @@ class Codegen {
 	 */
 
 	public static function find_field (com:context.Common.Context, c:core.Type.TClass, f:core.Type.TClassField) {
-		try {
+		return try {
 			switch (c.cl_super) {
+				case None:
+					throw ocaml.Not_found.instance;
 				case Some(v):
 					if (v.c.cl_path == new core.Path(["cpp"], "FastIterator")) {
 						throw ocaml.Not_found.instance; // This is a strongly typed 'extern' and the usual rules don't apply
 					}
-					return find_field(com, v.c, f);
-				case None:
-					throw ocaml.Not_found.instance;
+					find_field(com, v.c, f);
 
 			}
 		}
-		catch (e:ocaml.Not_found) {
+		catch (_:ocaml.Not_found) {
 			try {
 				if (com.platform == Cpp || com.platform == Hl) { // uses delegation for interfaces
 					throw ocaml.Not_found.instance;
 				}
-				for (element in c.cl_implements) {
-					try {
-						return find_field(com, element.c, f);
-					}
-					catch (ee:ocaml.Not_found) {
+				function loop (arr:ImmutableList<{c:core.Type.TClass, params:core.Type.TParams}>) {
+					switch (arr) {
+						case []: throw ocaml.Not_found.instance;
+						case {c:c}::l:
+							try {
+								return find_field(com, c, f);
+							}
+							catch (_:ocaml.Not_found) {
+								return loop(l);
+							}
 					}
 				}
-				throw ocaml.Not_found.instance;
+				loop(c.cl_implements);
 
 			}
-			catch (ee:ocaml.Not_found) {
-				var ff = c.cl_fields.get(f.cf_name);
-				if (ff == null) { throw ocaml.Not_found.instance; }
-				switch (ff.cf_kind) {
-					case Var(v):
-						switch (v.v_read) {
-							case AccRequire(_,_): throw ocaml.Not_found.instance;
-							default:
-						}
-					default:
+			catch (_:ocaml.Not_found) {
+				var f = PMap.find(f.cf_name, c.cl_fields);
+				switch (f.cf_kind) {
+					case Var({v_read:AccRequire(_)}):
+						throw ocaml.Not_found.instance;
+					case _:
 				}
-				return ff;
+				f;
 			}
 		}
 	}
 
 	public static function fix_override (com:context.Common.Context, c:core.Type.TClass, f:core.Type.TClassField, fd:Option<core.Type.TFunc>) {
 		trace("TODO-FINISH: codegen.Codegen.fix_override");
-		// let f2 = (try Some (find_field com c f) with Not_found -> None) in
 		var f2 = try {
 			Some(find_field(com, c, f));
 		}
-		catch (e:ocaml.Not_found) {
+		catch (_:ocaml.Not_found) {
 			None;
 		}
-
+		throw false;
 		switch (f2) {
 			case Some(ff2):
 				switch (core.Type.follow(ff2.cf_type)) {
@@ -72,10 +75,10 @@ class Codegen {
 								var changed_argfs = [];
 								var prefix = "_tmp_";
 								var nargs = [];
-								for (i in 0...tf.args.length) {
-									var cur = ffd.tf_args[i];
-									var other = tf.args;
-								}
+								// for (i in 0...tf.args.length) {
+								// 	var cur = ffd.tf_args[i];
+								// 	var other = tf.args;
+								// }
 
 								// 		let targs, tret = (match follow f2.cf_type with TFun (args,ret) -> args, ret | _ -> assert false) in
 								// 		let changed_args = ref [] in
@@ -138,32 +141,27 @@ class Codegen {
 			case TClassDecl(c):
 				// overrides can be removed from interfaces
 				if (c.cl_interface) {
-					c.cl_ordered_fields = c.cl_ordered_fields.filter(function (f:core.Type.TClassField) {
-						if (find_field(com, c, f) == f) { return true; }
-						c.cl_fields.remove(f.cf_name);
-						return false;
-					});
+					c.cl_ordered_fields = List.filter(function (f:core.Type.TClassField) {
+						try {
+							if (find_field(com, c, f) == f) { throw ocaml.Not_found.instance; }
+							c.cl_fields = PMap.remove(f.cf_name, c.cl_fields);
+							return false;
+						}
+						catch (_:ocaml.Not_found) {
+							return true;
+						}
+					}, c.cl_ordered_fields);
 				}
 
-				for (f in c.cl_ordered_fields) {
-					switch (f.cf_kind) {
-						case Method(MethNormal), Method(MethInline):
-							switch (f.cf_expr) {
-								case Some(v):
-									switch (v.eexpr) {
-										case TFunction(fd):
-											fix_override(com, c, f, Some(fd));
-										default:
-									}
-								case None:
-									if (c.cl_interface) {
-										fix_override(com, c, f, None);
-									}
-								
-							}
-						default:
+				List.iter( function (f:core.Type.TClassField) {
+					switch ({f:f.cf_expr, s:f.cf_kind}) {
+						case {f:Some({eexpr:TFunction(fd)}), s:Method(MethNormal|MethInline)}:
+							fix_override(com, c, f, Some(fd));
+						case {f:None, s:Method(MethNormal|MethInline)} if (c.cl_interface):
+							fix_override(com, c, f, None);
+						case _:
 					}
-				}
+				}, c.cl_ordered_fields);
 			default:
 		}
 	}

@@ -5,9 +5,12 @@ using equals.Equal;
 class PMap {
 
 	public static function add<A,B> (key:A, value:B, m:Map<A,B>) : Map<A,B> {
-		var res = m.copy();
-		res.set(key, value);
-		return res;
+		m.set(key, value);
+		return m;
+	}
+	public static function remove<A,B> (key:A, m:Map<A,B>) : Map<A,B> {
+		m.remove(key);
+		return m;
 	}
 
 	public static function fold<A,B,C> (f:B->C->C, map:Map<A,B>, c:C) : C {
