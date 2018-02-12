@@ -269,7 +269,7 @@ class Reification {
 			return mkEnum("FieldType", n, vl, p);
 		}
 
-		var fields:Array<{field:String, expr:core.Ast.Expr}> = [];
+		var fields:ocaml.DynArray<{field:String, expr:core.Ast.Expr}> = [];
 		fields.push({field:"name", expr:toPlacedName(f.cff_name)});
 		switch (f.cff_doc) {
 			case None:

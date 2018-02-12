@@ -195,9 +195,9 @@ enum MetaUsage {
 enum MetaParameter {
 	HasParam (s:String);
 	Platform (pf:core.Globals.Platform);
-	Platforms (l:Array<core.Globals.Platform>);
+	Platforms (l:ImmutableList<core.Globals.Platform>);
 	UsedOn (mu:MetaUsage);
-	UsedOnEither (l:Array<MetaUsage>);
+	UsedOnEither (l:ImmutableList<MetaUsage>);
 	UsedInternally;
 }
 
@@ -784,8 +784,7 @@ class Meta {
 			switch (get_documentation(d)) {
 				case None:
 				case Some(smt):
-					var str = smt.a;
-					var desc = smt.b;
+					var str = smt.a; var desc = smt.b;
 					if (str.length > m) {
 						m = str.length;
 					}

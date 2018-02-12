@@ -83,8 +83,7 @@ class Texpr {
 
 	public static function skip (e:core.Type.TExpr) : core.Type.TExpr {
 		return switch (e.eexpr) {
-			case TParenthesis(e1), TMeta(_, e1), TCast(e1, None): skip(e1);
-			case TBlock(l) if (l.length == 0): skip(l[0]);
+			case TParenthesis(e1), TMeta(_, e1), TBlock([e1]), TCast(e1, None): skip(e1);
 			case _: e;
 		}
 	}

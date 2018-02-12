@@ -6,8 +6,10 @@ import core.Globals;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 using ocaml.Cloner;
+using ocaml.DynArray;
 using ocaml.Hashtbl;
 using ocaml.List;
+using ocaml.PMap;
 
 class Abort {
 	public var s:String;
@@ -87,7 +89,7 @@ typedef SharedDisplayInformation = {
 	type_hints : Map<core.Globals.Pos, core.Type.T>,
 	document_symbols : ImmutableList<{
 		s:String,
-		l:Array<context.displaytypes.symbolinformation.T> // DynArray
+		l:DynArray<context.displaytypes.symbolinformation.T>
 	}>,
 	removable_code : ImmutableList<{s:String, p1:core.Globals.Pos, p2:core.Globals.Pos}>
 }
@@ -252,7 +254,7 @@ class Common {
 		}
 	}
 
-	public static function create(version:Int, s_version:Void->String, args:Array<String>) : Context {
+	public static function create(version:Int, s_version:Void->String, args:ImmutableList<String>) : Context {
 		
 		var m:core.Type.T = core.Type.mk_mono();
 		var defines = new Map<String, String>();
@@ -500,17 +502,15 @@ class Common {
 	public static function init_platform (com:Context, pf:core.Globals.Platform) {
 		com.platform = pf;
 		var name = core.Globals.platform_name(pf);
-		var acc = new Map<String, PackageRule>();
-		for (p in core.Globals.platforms) {
-			var pn = core.Globals.platform_name(p);
-			if (pn == name || acc.exists(pn)) {
-
+		function forbid(acc, p) {
+			return if (p == name || PMap.mem(p, acc)) {
+				acc;
 			}
 			else {
-				acc.set(pn, Forbidden);
+				PMap.add(p, Forbidden, acc);
 			}
 		}
-		com.package_rules = acc;
+		com.package_rules = List.fold_left(forbid, com.package_rules, List.map(core.Globals.platform_name, core.Globals.platforms));
 		com.config = get_config(com);
 		if (com.config.pf_static) {
 			define(com, Static);

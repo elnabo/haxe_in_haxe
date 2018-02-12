@@ -3,14 +3,16 @@ package syntax;
 // import haxeparser.Data;
 import core.Ast;
 import core.Type;
+import haxe.ds.ImmutableList;
+import ocaml.DynArray;
 
 typedef LexerFile = {
 	lfile : String,
 	lline : Int,
 	lmaxline : Int,
-	llines : Array<{a:Int, b:Int}>, // ocaml list
-	lalines : Array<{a:Int, b:Int}>, // ocaml array
-	lstrings : Array<Int>,
+	llines : ImmutableList<{a:Int, b:Int}>, // ocaml list
+	lalines : DynArray<{a:Int, b:Int}>, // ocaml array
+	lstrings : ImmutableList<Int>,
 	llast : Int,
 	llastindex : Int
 }
@@ -429,9 +431,9 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 			lfile : cur.lfile,
 			lline : cur.lline,
 			lmaxline : cur.lmaxline,
-			llines : cur.llines.copy(), // ocaml list
+			llines : cur.llines, // ocaml list
 			lalines : cur.lalines.copy(), // ocaml array
-			lstrings : cur.lstrings.copy(),
+			lstrings : cur.lstrings,
 			llast : cur.llast,
 			llastindex : cur.llastindex
 		};
@@ -443,7 +445,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 
 	public static inline function newline (lexbuf:hxparse.Lexer) {
 		cur.lline ++;
-		cur.llines.unshift({a:lexbuf.curPos().pmax, b:cur.lline});
+		cur.llines = {a:lexbuf.curPos().pmax, b:cur.lline} :: cur.llines;
 	}
 
 	public static function fmt_pos (p:hxparse.Position) : Int {
@@ -451,7 +453,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	}
 
 	public static function fast_add_fmt_string(p:hxparse.Position) {
-		cur.lstrings.unshift(fmt_pos(p));
+		cur.lstrings = fmt_pos(p) :: cur.lstrings;
 	}
 
 	public static function error_msg (m:syntax.lexer.ErrorMsg) : String {
@@ -506,7 +508,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 			function inc (i:Int) : Void->Int {
 				return function () {
 					f.lline++;
-					f.llines.unshift({a:p+i, b:f.lline});
+					f.llines = {a:p+i, b:f.lline} :: f.llines;
 					return i;
 				}
 			}

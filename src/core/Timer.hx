@@ -1,8 +1,12 @@
 package core;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+import ocaml.Ref;
+
 typedef TimerInfos = {
-	id : Array<String>,
-	start : Array<Float>,
+	id : ImmutableList<String>,
+	start : ImmutableList<Float>,
 	total : Float,
 	calls : Int
 }
@@ -11,14 +15,14 @@ class Timer {
 
 	public static var get_time : Void->Float = std.Sys.time;
 	public static var htimers : Map<String, TimerInfos> = new Map<String, TimerInfos>();
-	public static var curtime : Array<TimerInfos> = [];
+	public static var curtime = new Ref<ImmutableList<TimerInfos>>([]);
 
-	public static function new_timer (id:Array<String>) : TimerInfos {
+	public static function new_timer (id:ImmutableList<String>) : TimerInfos {
 		// let key = String.concat "." id in
-		var key = id.join(".");
+		var key = List.join(".", id);
 		var t = htimers.get(key);
 		if (t != null) {
-			t.start.unshift(get_time()); 
+			t.start = get_time() :: t.start; 
 			t.calls++;
 			return t;
 		}
@@ -35,59 +39,47 @@ class Timer {
 	}
 
 	public static function close (t:TimerInfos) : Void {
-		if (t.start.length == 0) {
-			// assert false;
-			throw false;
+		var start = switch (t.start) {
+			case []: throw false;
+			case s::l:
+				t.start = l;
+				s;
 		}
-		var start = t.start.shift();
 		var now = get_time();
 		var dt = now - start;
 		t.total = t.total + dt;
-		while (true) {
-			if (curtime.length == 0) {
-				throw "Timer " + t.id.join(".") + " closed while not active";
-			}
-			else {
-				var tt = curtime.shift();
-				if (t.id.toString() == tt.id.toString() && t.start.toString() == tt.start.toString() && t.total == tt.total && t.calls == tt.calls) {
-					break;
-				}
+		function loop() {
+			switch (curtime.get()) {
+				case []: throw "Timer " + List.join(".", t.id) + " closed while not active";
+				case tt::l:
+					curtime.set(l);
+					if (t != tt) {
+						loop();
+					}
 			}
 		}
-		// let rec loop() =
-		// 	match !curtime with
-		// 	| [] -> failwith ("Timer " ^ (String.concat "." t.id) ^ " closed while not active")
-		// 	| tt :: l -> curtime := l; if t != tt then loop()
-		// in
-		// loop();
-		// if (curtime.length == 0) {
-		// 	throw "Timer " + t.id.join(".") + " closed while not active";
-		// }
-		// for (tt in curtime) {
-		// 	if (t.id.toString() == tt.id.toString() && t.start.toString() == tt.start.toString() && t.total == tt.total && t.calls == tt.calls) {
-		// 		curtime.remove(tt);
-		// 		break;
-		// 	}
-		// }
-		
+		loop();
 		// because of rounding errors while adding small times, we need to make sure that we don't have start > now 
-		for (ct in curtime) {
-			ct.start = [for (t in ct.start) {
+		List.iter(function (ct) {
+			ct.start = List.map(function (t) {
 				var s = t + dt;
-				(s > now) ? now : s;
-			}];
-		}
+				return (s > now) ? now : s;
+			}, ct.start);
+		}, curtime.get());
 	}
 
-	public static function timer (id:Array<String>) : Void->Void {
+	public static function timer (id:ImmutableList<String>) : Void->Void {
 		var t = new_timer(id);
-		curtime.unshift(t);
+		curtime.set(t::curtime.get());
 		return function () { core.Timer.close(t); };
 	}
 
 	public static function close_times () : Void {
-		for (ct in curtime) {
-			close(ct);
+		switch (curtime.get()) {
+			case []:
+			case t::_:
+				close(t);
+				close_times();
 		}
 	}
 

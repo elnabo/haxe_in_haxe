@@ -11,13 +11,13 @@ class OptimizerTexpr {
 	public static function optimize_binop(e:core.Type.TExpr, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Type.TExpr) : core.Type.TExpr {
 		function is_float(t:core.Type.T) {
 			return switch (core.Type.follow(t)) {
-				case TAbstract({ a_path: path },_) if (path.a.length == 0 && path.b == "Float"): true;
+				case TAbstract({ a_path:{a:[], b:"Float"} },_): true;
 				case _: false;
 			}
 		}
 		function is_numeric (t:core.Type.T) : Bool {
 			return switch (core.Type.follow(t)) {
-				case TAbstract({ a_path : path }, _) if (path.a.length == 0 && (path.b == "Float" || path.b == "Int")): true;
+				case TAbstract({ a_path:{a:[], b:("Float"|"Int")} }, _): true;
 				case _: false;
 			}
 		}
@@ -243,7 +243,7 @@ class OptimizerTexpr {
 	public static function optimize_unop(e:core.Type.TExpr, op:core.Ast.Unop, flag:core.Ast.UnopFlag, esub:core.Type.TExpr) :core.Type.TExpr {
 		function is_int (t:core.Type.T) : Bool{
 			return switch (core.Type.follow(t)) {
-				case TAbstract({a_path:path}, _) if (path.a.length==0 && path.b == "Int"): true;
+				case TAbstract({a_path:{a:[], b:"Int"}}, _): true;
 				case _: false;
 			}
 		}

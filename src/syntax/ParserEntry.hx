@@ -1,6 +1,7 @@
 package syntax;
 
 import haxe.ds.Option;
+import ocaml.DynArray;
 
 // eval
 enum Small_type {
@@ -17,7 +18,7 @@ class ParserEntry {
 
 	var old:syntax.Lexer.LexerFile;
 	var restore_cache:Void->Void;
-	var mstack:Array<Any>;
+	var mstack:DynArray<Any>;
 
 	var sraw:haxeparser.HaxeParser;
 

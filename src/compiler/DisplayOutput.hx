@@ -25,7 +25,7 @@ class DisplayOutput {
 		if (tot > 0.0) {
 			for (value in core.Timer.htimers) {
 				fields.unshift({
-					a:value.id.join("."),
+					a:List.join(".",value.id),
 					b:Std.int(value.total)+ "." + (Std.int(value.total*1000)%1000) + "s (" + Std.int(value.total * 100.0 / tot) + "%)"
 				});
 			}

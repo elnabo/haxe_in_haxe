@@ -64,7 +64,7 @@ class List {
 			case {f:Tl, s:Tl}:
 			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
 				f(v1, v2);
-			case _: throw new Invalid_argument(); }
+			case _: throw new Invalid_argument();
 		}
 	}
 
@@ -85,7 +85,7 @@ class List {
 				else {
 					false;
 				}
-			case _: throw new Invalid_argument(); }
+			case _: throw new Invalid_argument();
 		}
 	}
 
@@ -99,12 +99,12 @@ class List {
 	
 	public static function rev_map<A, B> (f:A->B, l:ImmutableList<A>) : ImmutableList<B> {
 		var res = Tl;
-		var l = a;
+		var curr = l;
 		while (true) {
-			switch (l) {
+			switch (curr) {
 				case Tl: break;
 				case Hd(v, tl):
-					l = tl;
+					curr = tl;
 					res = Hd(f(v), res);
 			}
 		}
@@ -117,7 +117,7 @@ class List {
 			case {f:Tl, s:Tl}: Tl;
 			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
 				Hd(f(v1, v2), map2(f, tl1, tl2));
-			case _: throw new Invalid_argument(); }
+			case _: throw new Invalid_argument();
 		}
 	}
 
@@ -125,7 +125,7 @@ class List {
 		return switch (l) {
 			case Tl: Tl;
 			case Hd(v, tl):
-				(f(v)) ? v::filter(f, l) : filter(f, l);
+				(f(v)) ? v::filter(f, tl) : filter(f, tl);
 		}
 	}
 

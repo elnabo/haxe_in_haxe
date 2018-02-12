@@ -52,7 +52,7 @@ class Server {
 
 	public static function default_flush (ctx:Context) {
 
-		var messages = ocaml.List.rev(ctx.messages);
+		var messages = List.rev(ctx.messages);
 		
 		List.iter(function(msg:context.CompilerMessage) {
 			switch (msg) {
@@ -73,7 +73,6 @@ class Server {
 			std.Sys.stdin().readLine();
 			std.Sys.stdin().close();
 		}
-		
 		if (ctx.has_error) {
 			std.Sys.exit(1);
 		}

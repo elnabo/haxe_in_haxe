@@ -1,6 +1,7 @@
 package context.display;
 
-// import haxe.ds.Option;
+import haxe.ds.Option;
+import ocaml.List;
 
 class DisplayEmitter {
 	public static function display_module_type (dm:context.common.DisplayMode.Settings, mt, p:core.Globals.Pos) : Void {
@@ -8,7 +9,7 @@ class DisplayEmitter {
 			case DMPosition: throw context.Display.DisplayException.DisplayPosition([core.Type.t_infos(mt).mt_pos]);
 			case DMUsage(_):
 				var ti = core.Type.t_infos(mt);
-				ti.mt_meta.unshift({name:Usage, params:[], pos:ti.mt_pos});
+				ti.mt_meta = ({name:Usage, params:[], pos:ti.mt_pos} : core.Ast.MetadataEntry) :: ti.mt_meta;
 			case DMType: throw context.Display.DisplayException.DisplayType(core.Type.type_of_module_type(mt), p, None);
 			case _:
 		}
@@ -56,7 +57,7 @@ class DisplayEmitter {
 		switch (dm.dms_kind) {
 			case DMPosition: throw context.Display.DisplayException.DisplayPosition([v.v_pos]);
 			case DMUsage(_):
-				v.v_meta.unshift({name:Usage, params:[], pos:v.v_pos});
+				v.v_meta = ({name:Usage, params:[], pos:v.v_pos} : core.Ast.MetadataEntry ) :: v.v_meta;
 			case DMType: throw context.Display.DisplayException.DisplayType(v.v_type,p,None);
 			case _:
 		}
@@ -65,7 +66,7 @@ class DisplayEmitter {
 	public static function display_field (dm:context.common.DisplayMode.Settings, cf:core.Type.TClassField, p:core.Globals.Pos) {
 		switch (dm.dms_kind) {
 			case DMPosition: throw context.Display.DisplayException.DisplayPosition([cf.cf_pos]);
-			case DMUsage(_): cf.cf_meta.unshift({name:Usage, params:[], pos:cf.cf_pos});
+			case DMUsage(_): cf.cf_meta = ({name:Usage, params:[], pos:cf.cf_pos} : core.Ast.MetadataEntry) :: cf.cf_meta;
 			case DMType: throw context.Display.DisplayException.DisplayType(cf.cf_type, p, cf.cf_doc);
 			case _:
 		}
@@ -80,7 +81,7 @@ class DisplayEmitter {
 	public static function display_enum_field (dm:context.common.DisplayMode.Settings, ef:core.Type.TEnumField, p:core.Globals.Pos) : Void {
 		switch (dm.dms_kind) {
 			case DMPosition: throw context.Display.DisplayException.DisplayPosition([p]);
-			case DMUsage(_): ef.ef_meta.unshift({name:Usage, params:[], pos:p});
+			case DMUsage(_): ef.ef_meta = ({name:Usage, params:[], pos:p} : core.Ast.MetadataEntry) :: ef.ef_meta;
 			case DMType: throw context.Display.DisplayException.DisplayType(ef.ef_type, p, ef.ef_doc);
 			case _:
 		}
@@ -101,24 +102,28 @@ class DisplayEmitter {
 				}
 			case DMField:
 				var all = core.Meta.get_documentation_list().a;
-				var all = all.map(function (e) { return {name:e.a, kind:context.Display.DisplayFieldKind.FKMetadata, doc:e.b}; });
+				var all = List.map(function (e) { 
+					var s = e.a; var doc = e.b;
+					return {name:s, kind:context.Display.DisplayFieldKind.FKMetadata, doc:Some(doc)};
+				}, all);
 				throw context.Display.DisplayException.DisplayFields(all);
 			case _:
 		}
 	}
 
 	public static function check_display_metadata (ctx:context.Typecore.Typer, meta:core.Ast.Metadata) : Void {
-		for (m in meta) {
-			if (context.Display.is_display_position(m.pos)) {
-				display_meta(ctx.com.display, m.name);
+		List.iter(function (m) {
+			var meta = m.name; var args = m.params; var p = m.pos;
+			if (context.Display.is_display_position(p)) {
+				display_meta(ctx.com.display, meta);
 			}
-			for (e in m.params) {
+			List.iter( function (e) {
 				if (context.Display.is_display_position(e.pos)) {
 					var e = context.display.ExprPreprocessing.process_expr(ctx.com, e);
 					context.Typecore.delay(ctx, PTypeField, function () { context.Typecore.type_expr(ctx, e, Value); });
 				}
-			}
-		}
+			}, m.params);
+		}, meta);
 	}
 
 }

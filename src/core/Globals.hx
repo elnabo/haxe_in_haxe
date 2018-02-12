@@ -52,7 +52,7 @@ class Globals {
 	public static var is_windows = std.Sys.systemName() == "Windows" || std.Sys.systemName() == "Cygwin";
 	#end
 
-	public static var platforms:Array<Platform> = [Js, Lua, Neko, Flash, Php, Cpp, Cs, Java, Python, Hl, Eval];
+	public static var platforms:ImmutableList<Platform> = [Js, Lua, Neko, Flash, Php, Cpp, Cs, Java, Python, Hl, Eval];
 
 	public static function platform_name (p:Platform) : String {
 		return switch(p) {

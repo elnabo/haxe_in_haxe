@@ -1,5 +1,8 @@
 package typing.typeload;
 
+import haxe.ds.ImmutableList;
+
+import ocaml.List;
 import ocaml.Ref;
 using equals.Equal;
 using ocaml.Cloner;
@@ -15,23 +18,20 @@ class Inheritance {
 		trace("TODO typing.typeload.Inheritance.check_interfaces");
 	}
 
-	public static function set_heritance (ctx:context.Typecore.Typer, c:core.Type.TClass, herits:Array<core.Ast.ClassFlag>, p:core.Globals.Pos) : Array<Void->Void> {
+	public static function set_heritance (ctx:context.Typecore.Typer, c:core.Type.TClass, herits:ImmutableList<core.Ast.ClassFlag>, p:core.Globals.Pos) : ImmutableList<Void->Void> {
 		var is_lib = core.Meta.has(LibType, c.cl_meta);
 		var ctx = ctx.clone();
 		ctx.curclass = c;
 		ctx.type_params = c.cl_params;
 		var old_meta = c.cl_meta;
 		function process_meta (csup:core.Type.TClass) {
-			ocaml.List.iter(function (m:core.Ast.MetadataEntry) {
+			List.iter(function (m:core.Ast.MetadataEntry) {
 				switch (m) {
 					case {name:Final} if (!core.Meta.has(Hack, c.cl_meta) || switch (c.cl_kind) { case KTypeParameter(_): true; case _: false;} ):
 						core.Error.error("Cannot extend a final class", p);
 					case {name:AutoBuild, params:el, pos:p}:
-						// var pos = c.cl_pos.clone();
-						// pos.pmax = c.cl_pos.pmin;
 						var pos = new core.Globals.Pos(c.cl_pos.pfile, c.cl_pos.pmin, c.cl_pos.pmin);
-						c.cl_meta.unshift(m);
-						c.cl_meta.unshift({name:Build, params:el, pos:pos}); // prevent display metadata
+						c.cl_meta = {name:core.Meta.StrictMeta.Build, params:el, pos:pos} :: m :: c.cl_meta; // prevent display metadata
 					case _:
 				}
 			}, csup.cl_meta);
@@ -53,38 +53,39 @@ class Inheritance {
 		*/
 		function resolve_import (tp:core.Ast.PlacedTypePath) : core.Ast.PlacedTypePath {
 			var t = tp.tp; var p = tp.pos;
-			if (t.tpackage.length > 0) { return tp; }
-			else {
-				try {
-					function path_matches (lt) : Bool {
-						return core.Type.t_path(lt).b == t.tname;
-					}
-					var lt = try {
-						ocaml.List.find(path_matches, ctx.m.curmod.m_types);
+			return switch (t.tpackage) {
+				case _::_: {tp:t, pos:p};
+				case []:
+					try {
+						function path_matches (lt) : Bool {
+							return core.Type.t_path(lt).b == t.tname;
+						}
+						var lt = try {
+							List.find(path_matches, ctx.m.curmod.m_types);
+						}
+						catch (_:ocaml.Not_found) {
+							var _tmp = List.find(function (mt:{mt:core.Type.ModuleType, pos:core.Globals.Pos}) { return path_matches(mt.mt); }, ctx.m.module_types);
+							var t = _tmp.mt; var pi = _tmp.pos;
+							context.display.ImportHandling.mark_import_position(ctx.com, pi);
+							t;
+						}
+						var _t = t.clone();
+						_t.tpackage = core.Type.t_path(lt).a;
+						{tp:_t, pos:p};
 					}
 					catch (_:ocaml.Not_found) {
-						var _tmp = ocaml.List.find(function (mt:{mt:core.Type.ModuleType, pos:core.Globals.Pos}) { return path_matches(mt.mt); }, ctx.m.module_types);
-						var t = _tmp.mt; var pi = _tmp.pos;
-						context.display.ImportHandling.mark_import_position(ctx.com, pi);
-						t;
+						{tp:t, pos:p};
 					}
-					var _t = t.clone();
-					_t.tpackage = core.Type.t_path(lt).a;
-					return {tp:_t, pos:p};
-				}
-				catch (_:ocaml.Not_found) {
-					return tp;
-				}
 			}
 		}
-		var herits = ocaml.List.filter_map(function (a:core.Ast.ClassFlag) {
+		var herits = List.filter_map(function (a:core.Ast.ClassFlag) {
 			return switch (a) {
 				case HExtends(t): Some({is_extends:true, tp:resolve_import(t)});
 				case HImplements(t): Some({is_extends:false, tp:resolve_import(t)});
 				case _: None;
 			}
 		}, herits);
-		herits = herits.filter(ctx.g.do_inherit.bind(ctx, c, p));
+		herits = List.filter(ctx.g.do_inherit.bind(ctx, c, p), herits);
 		// Pass 1: Check and set relations
 		function check_herit (t, is_extends:Bool) : Void->Void {
 			if (is_extends) {
@@ -97,7 +98,7 @@ class Inheritance {
 					if (!csup.cl_interface) {
 						core.Error.error("Cannot extend by using a class", p);
 					}
-					c.cl_implements.unshift({c:csup, params:params});
+					c.cl_implements = {c:csup, params:params} :: c.cl_implements;
 					if (!has_interf.get()) {
 						if (!is_lib) {
 							context.Typecore.delay(ctx, PForce, function () { check_interfaces(ctx, c);});
@@ -118,17 +119,17 @@ class Inheritance {
 			}
 			else {
 				return switch (core.Type.follow(t)) {
-					case TInst(_c, ts) if (_c.cl_extern && _c.cl_path.equals(new core.Path([], "ArrayAccess")) && ts.length == 1):
+					case TInst({cl_path:{a:[], b:"ArrayAccess"}, cl_extern:true}, [t]):
 						if (c.cl_array_access != None) {
 							core.Error.error("Duplicate array access", p);
 						}
-						c.cl_array_access = Some(ts[0]);
+						c.cl_array_access = Some(t);
 						function () {};
 					case TInst(intf, params):
 						if (core.Type.is_parent(c, intf)) { core.Error.error("Recursive class", p); }
 						if (c.cl_interface) { core.Error.error("Interfaces cannot implement another interface (use extends instaed)", p); }
 						if (!intf.cl_interface) { core.Error.error("You can only implement an interface", p); }
-						c.cl_implements.unshift({c:intf, params:params});
+						c.cl_implements = {c:intf, params:params} :: c.cl_implements;
 						if (!has_interf.get() && !is_lib && !core.Meta.has(Custom("$do_not_check_interf"), c.cl_meta)) {
 							context.Typecore.delay(ctx, PForce, function() { check_interfaces(ctx, c); });
 							has_interf.set(true);
@@ -148,7 +149,7 @@ class Inheritance {
 				};
 			}
 		}
-		return ocaml.List.filter_map(function (h) {
+		var fl = List.filter_map(function (h) {
 			var is_extends = h.is_extends; var t = h.tp;
 			return try {
 				var t = typing.Typeload.load_instance(true, ctx, t, false, p);
@@ -156,14 +157,15 @@ class Inheritance {
 			}
 			catch (err:core.Error) {
 				switch (err.msg) {
-					case Module_not_found(path) if (path.a.length == 0 && ctx.com.display.dms_display):
+					case Module_not_found({a:[], b:name}) if (ctx.com.display.dms_display):
 						if (context.display.Diagnostics.is_diagnostics_run(ctx)) {
-							context.DisplayToplevel.handle_unresolved_identifier(ctx, path.b, p, true);
+							context.DisplayToplevel.handle_unresolved_identifier(ctx, name, p, true);
 						}
 						None;
 					case _: throw err;
 				}
 			}
 		}, herits);
+		return fl;
 	}
 }

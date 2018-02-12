@@ -1,7 +1,7 @@
 package syntax.parser;
 
 class TokenCache {
-	public static var cache:Array<syntax.Lexer.Token> = [];
+	public static var cache:ocaml.DynArray<syntax.Lexer.Token> = [];
 
 	public static function add(token:syntax.Lexer.Token) {
 		cache.push(token);

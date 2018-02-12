@@ -581,9 +581,10 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			}
 		}
 		catch (tp:syntax.parser.TypePath) {
+			// resolve imports
 			var b = tp.is_import;
 			var name:String = null;
-			if (tp.p.length > 0) {
+			if (tp.p != Tl) { // != []
 				throw tp;
 			}
 			switch (tp.c) {

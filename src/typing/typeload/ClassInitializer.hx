@@ -1,6 +1,9 @@
 package typing.typeload;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.Hashtbl;
+import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
 
@@ -16,7 +19,7 @@ typedef Class_init_ctx = {
 	extends_public : Bool,
 	_abstract : Option<core.Type.TAbstract>,
 	context_init : Void -> Void,
-	delayed_expr : Array<{typer:context.Typecore.Typer, olazy:Option<Ref<core.Type.TLazy>>}>,
+	delayed_expr : ImmutableList<{typer:context.Typecore.Typer, olazy:Option<Ref<core.Type.TLazy>>}>,
 	force_constructor : Bool,
 	uninitialized_final : Option<core.Globals.Pos>
 }
@@ -96,11 +99,11 @@ class ClassInitializer {
 			case Some(a):
 				switch (a.a_this) {
 					case TMono(_.get()=>r) if (r == None):
-						TAbstract(a, c.cl_params.map(function (p) { return p.t; }));
+						TAbstract(a, List.map(function (p) { return p.t; }, c.cl_params));
 					case t: t; 
 				}
 			case None:
-				TInst(c, c.cl_params.map(function (p) { return p.t; }));
+				TInst(c, List.map(function (p) { return p.t; }, c.cl_params));
 		};
 		_ctx.on_error = function (ctx, msg, ep) {
 			ctx.com.error(msg, ep);
@@ -122,7 +125,7 @@ class ClassInitializer {
 		function extends_public (c:core.Type.TClass) {
 			return core.Meta.has(PublicFields, c.cl_meta) || switch (c.cl_super) { case None: false; case Some({c:c}): extends_public(c); };
 		}
-		var cctx = {
+		var cctx:Class_init_ctx = {
 			tclass: c,
 			is_lib: is_lib,
 			is_native: is_native,
@@ -141,15 +144,15 @@ class ClassInitializer {
 	public static function create_field_context (ctx:context.Typecore.Typer, cctx:Class_init_ctx, c:core.Type.TClass, cff:core.Ast.ClassField) : {fst:context.Typecore.Typer, snd:Field_init_ctx} {
 		var ctx = ctx.clone();
 		ctx.pass = PBuildClass; // will be set later to PTypeExpr
-		var is_static = ocaml.List.mem(core.Ast.Access.AStatic, cff.cff_access);
+		var is_static = List.mem(core.Ast.Access.AStatic, cff.cff_access);
 		var is_extern = core.Meta.has(Extern, cff.cff_meta) || c.cl_extern;
 		var allow_inline = cctx._abstract != None || switch (cff.cff_kind) {
 			case FFun(_): ctx.g.doinline || is_extern;
 			case _: true;
 		};
-		var is_inline = allow_inline && ocaml.List.mem(core.Ast.Access.AInline, cff.cff_access);
-		var is_override = ocaml.List.mem(core.Ast.Access.AOverride, cff.cff_access);
-		var is_macro = ocaml.List.mem(core.Ast.Access.AMacro, cff.cff_access);
+		var is_inline = allow_inline && List.mem(core.Ast.Access.AInline, cff.cff_access);
+		var is_override = List.mem(core.Ast.Access.AOverride, cff.cff_access);
+		var is_macro = List.mem(core.Ast.Access.AMacro, cff.cff_access);
 		var field_kind = switch (cff.cff_name.pack) {
 			case "new": FKConstructor;
 			case "__init__" if (is_static): FKInit;
@@ -161,7 +164,7 @@ class ClassInitializer {
 			is_override: is_override,
 			is_macro: is_macro,
 			is_extern: is_extern,
-			is_final: ocaml.List.mem(core.Ast.Access.AFinal, cff.cff_access),
+			is_final: List.mem(core.Ast.Access.AFinal, cff.cff_access),
 			is_display_field: ctx.is_display_file && context.Display.is_display_position(cff.cff_pos),
 			is_field_debug: cctx.is_class_debug,
 			is_abstract_member: cctx._abstract != None && core.Meta.has(Impl, cff.cff_meta),
@@ -172,12 +175,12 @@ class ClassInitializer {
 		return {fst:ctx, snd:fctx};
 	}
 
-	public static function is_public (ctx:context.Typecore.Typer, cctx:Class_init_ctx, access:Array<core.Ast.Access>, parent:Option<core.Type.TClassField>) : Bool {
+	public static function is_public (ctx:context.Typecore.Typer, cctx:Class_init_ctx, access:ImmutableList<core.Ast.Access>, parent:Option<core.Type.TClassField>) : Bool {
 		var c = cctx.tclass;
-		if (ocaml.List.mem(core.Ast.Access.APrivate, access)) {
+		if (List.mem(core.Ast.Access.APrivate, access)) {
 			return false;
 		}
-		else if (ocaml.List.mem(core.Ast.Access.APublic, access)) {
+		else if (List.mem(core.Ast.Access.APublic, access)) {
 			return true;
 		}
 		else {
@@ -204,11 +207,11 @@ class ClassInitializer {
 	public static function add_field (c:core.Type.TClass, cf:core.Type.TClassField, is_static:Bool) : Void {
 		if (is_static) {
 			c.cl_statics.set(cf.cf_name, cf);
-			c.cl_ordered_statics.unshift(cf);
+			c.cl_ordered_statics = cf :: c.cl_ordered_statics;
 		}
 		else {
 			c.cl_fields.set(cf.cf_name, cf);
-			c.cl_ordered_fields.unshift(cf);
+			c.cl_ordered_fields = cf :: c.cl_ordered_fields;
 		}
 	}
 
@@ -226,50 +229,45 @@ class ClassInitializer {
 		}
 	}
 
-	public static function build_field (ctx:context.Typecore.Typer, cctx:Class_init_ctx, c:core.Type.TClass, fields:Array<core.Ast.ClassField>) {
+	public static function build_field (ctx:context.Typecore.Typer, cctx:Class_init_ctx, c:core.Type.TClass, fields:ImmutableList<core.Ast.ClassField>) {
 		var fields = new Ref(fields);
 		function get_fields () {
 			return fields.get();
 		}
-		var pending = new Ref([]);
+		var pending = new Ref<ImmutableList<Void->Void>>([]);
 		c.cl_build = function () { return BuildMacro(pending); };
 		typing.Typeload.build_module_def(ctx, TClassDecl(c), c.cl_meta, get_fields, cctx.context_init, function (expr:core.Ast.Expr) {
 			var e = expr.expr; var p = expr.pos;
 			switch (e) {
-				case EVars(arr) if (arr.length == 1 && arr[0].expr == None):
-					switch (arr[0].type) {
-						case Some({ct:CTAnonymous(f), pos:p}):
-							var f = f.map(function (f) {
-								var f = switch (cctx._abstract) {
-									case Some(a):
-										var a_t = core.type.TExprToExpr.convert_type_(TAbstract(a, a.a_params.map(function (p) {return p.t; })));
-										var this_t = core.type.TExprToExpr.convert_type_(a.a_this); // TODO: better pos?
-										typing.Typeload.transform_abstract_field(ctx.com, this_t, a_t, a, f);
-									case None:
-										f;
-								}
-								if (ocaml.List.mem(core.Ast.Access.AMacro, f.cff_access)) {
-									switch (ctx.g.macros) {
-										case Some({t:mctx}) if (ocaml.Hashtbl.mem(mctx.g.types_module, c.cl_path)):
-											// assume that if we had already a macro with the same name, it has not been changed during the @:build operation
-											if (!ocaml.List.exists(function(f2) { return f2.cff_name == f.cff_name && ocaml.List.mem(core.Ast.Access.AMacro, f2.cff_access); }, fields.get())) {
-												core.Error.error("Class build macro cannot return a macro function when the class has already been compiled into the macro context", p);
-											}
-										case _:
+				case EVars([{type:Some({ct:CTAnonymous(f), pos:p}), expr:None}]):
+					var f = List.map(function (f) {
+						var f = switch (cctx._abstract) {
+							case Some(a):
+								var a_t = core.type.TExprToExpr.convert_type_(TAbstract(a, List.map(function (p) {return p.t; }, a.a_params)));
+								var this_t = core.type.TExprToExpr.convert_type_(a.a_this); // TODO: better pos?
+								typing.Typeload.transform_abstract_field(ctx.com, this_t, a_t, a, f);
+							case None:
+								f;
+						}
+						if (List.mem(core.Ast.Access.AMacro, f.cff_access)) {
+							switch (ctx.g.macros) {
+								case Some({t:mctx}) if (Hashtbl.mem(mctx.g.types_module, c.cl_path)):
+									// assume that if we had already a macro with the same name, it has not been changed during the @:build operation
+									if (!List.exists(function(f2) { return f2.cff_name == f.cff_name && List.mem(core.Ast.Access.AMacro, f2.cff_access); }, fields.get())) {
+										core.Error.error("Class build macro cannot return a macro function when the class has already been compiled into the macro context", p);
 									}
-								}
-								return f;
-							});
-							fields.set(f);
-							return;
-						case _:
-					}
+								case _:
+							}
+						}
+						return f;
+					}, f);
+					fields.set(f);
 				case _:
+					core.Error.error("Class build macro must return a single variable with anonymous fields", p);
 			}
-			core.Error.error("Class build macro must return a single variable with anonymous fields", p);
 		});
 		c.cl_build = function () {return Building([c]); };
-		ocaml.List.iter(function (f) { f(); }, pending.get());
+		List.iter(function (f) { f(); }, pending.get());
 		return fields.get();
 	}
 
@@ -277,7 +275,7 @@ class ClassInitializer {
 		var c = cctx.tclass;
 		function is_full_type (t:core.Type.T) : Bool {
 			return switch (t) {
-				case TFun({args:args, ret:ret}): is_full_type(ret) && ocaml.List.for_all(function (arg) { return is_full_type(arg.t); }, args);
+				case TFun({args:args, ret:ret}): is_full_type(ret) && List.for_all(function (arg) { return is_full_type(arg.t); }, args);
 				case TMono(r):
 					switch (r.get()) {
 						case None: false;
@@ -302,7 +300,7 @@ class ClassInitializer {
 			}
 			else {
 				cf.cf_type = TLazy(r);
-				cctx.delayed_expr.unshift({typer:ctx, olazy:Some(r)});
+				cctx.delayed_expr = {typer:ctx, olazy:Some(r)} :: cctx.delayed_expr;
 			}
 		}
 		if (ctx.com.display.dms_full_typing) {
@@ -310,7 +308,7 @@ class ClassInitializer {
 			else {
 				cf.cf_type = TLazy(r);
 				// is_lib ?
-				cctx.delayed_expr.unshift({typer:ctx, olazy:Some(r)});
+				cctx.delayed_expr = {typer:ctx, olazy:Some(r)} :: cctx.delayed_expr;
 			}
 		}
 		else if (ctx.com.display.dms_force_macro_typing && fctx.is_macro && !ctx.in_macro) {
@@ -322,7 +320,7 @@ class ClassInitializer {
 			}
 			else {
 				if (!is_full_type(cf.cf_type)) {
-					cctx.delayed_expr.unshift({typer:ctx, olazy:None});
+					cctx.delayed_expr = {typer:ctx, olazy:None} :: cctx.delayed_expr;
 					cf.cf_type = TLazy(r);
 				}
 			}
@@ -342,11 +340,14 @@ class ClassInitializer {
 					switch (ret) {
 						case Some(r): Some(r);
 						case None:
-							function loop (ifaces:Array<{c:core.Type.TClass, params:core.Type.TParams}>) {
-								if (ifaces.length == 0) { return None; }
-								return switch (get_declared(f, Some(ifaces[0]))) {
-									case Some(r): Some(r);
-									case None: loop(ifaces.slice(1));
+							function loop (ifaces:ImmutableList<{c:core.Type.TClass, params:core.Type.TParams}>) {
+								return switch (ifaces) {
+									case []: None;
+									case i :: ifaces:
+										switch (get_declared(f, Some(i))) {
+											case Some(r): Some(r);
+											case None : loop(ifaces);
+										}
 								}
 							}
 							loop(c.cl_implements);
@@ -371,7 +372,7 @@ class ClassInitializer {
 				}
 			case Some(e):
 				if (typing.Typeload.requires_value_meta(ctx.com, Some(c))) {
-					cf.cf_meta.unshift({name:Value, params:[e], pos:core.Globals.null_pos});
+					cf.cf_meta = ({name:Value, params:[e], pos:core.Globals.null_pos} : core.Ast.MetadataEntry ) :: cf.cf_meta;
 				}
 				function check_cast(e:core.Type.TExpr) {
 					// insert cast to keep explicit field type (issue #1901)
@@ -380,7 +381,7 @@ class ClassInitializer {
 					}
 					else {
 						return switch ({fst:e.eexpr, snd:core.Type.follow(cf.cf_type)}) {
-							case {fst:TConst(TInt(i)), snd:TAbstract({a_path:path}, _)} if (path.a.length == 0 && path.b == "Float"):
+							case {fst:TConst(TInt(i)), snd:TAbstract({a_path:{a:[], b:"Float"}}, _)}:
 								// turn int constant to float constant if expected type is float *)
 								var _e = e.clone();
 								_e.eexpr = TConst(TFloat(Std.string(i)));
@@ -466,7 +467,7 @@ class ClassInitializer {
 								var e = require_constant_expression(e, "Inline variable initialization must be a constant value");
 								switch (c.cl_kind) {
 									case KAbstractImpl(a) if (core.Meta.has(Enum, cf.cf_meta) && core.Meta.has(Enum, a.a_meta)):
-										context.Typecore.unify(ctx, t, TAbstract(a, a.a_params.map(function(_) {return core.Type.mk_mono(); })), p);
+										context.Typecore.unify(ctx, t, TAbstract(a, List.map(function(_) {return core.Type.mk_mono(); }, a.a_params)), p);
 										switch (e.eexpr) {
 											case TCast(e1,None): context.Typecore.unify(ctx, e1.etype, a.a_this, e1.epos);
 											case _: throw false;
@@ -539,9 +540,9 @@ class ClassInitializer {
 		else {
 			{v_read: AccNormal, v_write: AccNormal};
 		};
-		var _meta = f.cff_meta.clone();
+		var _meta = f.cff_meta;
 		if (fctx.is_final && !core.Meta.has(Final, f.cff_meta)) {
-			_meta.unshift({name:Final, params:[], pos:core.Globals.null_pos});
+			_meta = ({name:Final, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry ) :: _meta;
 		}
 		var cf = core.Type.mk_field(f.cff_name.pack, t, f.cff_pos, f.cff_name.pos);
 		cf.cf_doc = f.cff_doc;
@@ -557,184 +558,148 @@ class ClassInitializer {
 		switch (cctx._abstract) {
 			case Some(a):
 				var m = core.Type.mk_mono();
-				var ta:core.Type.T = TAbstract(a, a.a_params.map(function (_) { return core.Type.mk_mono(); }));
+				var ta:core.Type.T = TAbstract(a, List.map(function (_) { return core.Type.mk_mono(); }, a.a_params));
 				var tthis = (fctx.is_abstract_member || core.Meta.has(To, cf.cf_meta)) ? core.Type.monomorphs(a.a_params, a.a_this) : a.a_this;
 				var allows_no_expr = new Ref(core.Meta.has(CoreType, a.a_meta));
 				function loop (ml:core.Ast.Metadata) {
-					if (ml.length == 0) {}
-					else {
-						var first = ml[0];
-						switch (first.name) {
-							case From:
-								var r = context.Typecore.exc_protect(ctx, function (r) {
-									r.set(core.Type.lazy_processing(function () {return t;}));
-									// the return type of a from-function must be the abstract, not the underlying type
-									if (!fctx.is_macro) {
-										try {
-											core.Type.type_eq(EqStrict, ret, ta);
-										}
-										catch (ue:core.Type.Unify_error) {
-											core.Error.error(core.Error.error_msg(Unify(ue.l)), p);
-										}
-									}
-									return switch (t) {
-										case TFun({args:args}) if (args.length == 1):
-											args[0].t;
-										case _:
-											core.Error.error(cf.cf_name+": @:from cast functions must accept exactly one argument", p);
-									}
-								}, "@:from");
-								a.a_from_field.unshift({t:TLazy(r), cf:cf});
-							case To:
-								if (fctx.is_macro) {
-									core.Error.error(cf.cf_name + ": Macro cast functions are not supported", p);
-								}
-								// TODO: this doesn't seem quite right...
-								if (!core.Meta.has(Impl, cf.cf_meta)) {
-									cf.cf_meta.unshift({name:Impl,params:[],pos:core.Globals.null_pos});
-								}
-								function resolve_m (args) {
+					switch (ml) {
+						case {name:From}::_:
+							var r = context.Typecore.exc_protect(ctx, function (r) {
+								r.set(core.Type.lazy_processing(function () {return t;}));
+								// the return type of a from-function must be the abstract, not the underlying type
+								if (!fctx.is_macro) {
 									try {
-										context.Typecore.unify_raise(ctx, t, core.Type.tfun([tthis].concat(args), m), cf.cf_pos);
+										core.Type.type_eq(EqStrict, ret, ta);
 									}
-									catch (err:core.Error) {
-										switch (err.msg) {
-											case Unify(l):
-												core.Error.error(core.Error.error_msg(Unify(l)), err.pos);
-											case _: throw err;
-										}
-									}
-									return switch (core.Type.follow(m)) {
-										case TMono(_) if (switch (t) { case TFun({ret:r}): r == core.Type.t_dynamic; case _: false; }): core.Type.t_dynamic;
-										case m: m;
+									catch (ue:core.Type.Unify_error) {
+										core.Error.error(core.Error.error_msg(Unify(ue.l)), p);
 									}
 								}
-								var r = context.Typecore.exc_protect(ctx, function (r) {
-									r.set(core.Type.lazy_processing(function () {return t; }));
-									var args = if (core.Meta.has(MultiType, a.a_meta)) {
-										var ctor = try {
-											ocaml.PMap.find("_new", c.cl_statics);
-										}
-										catch (_:ocaml.Not_found) {
-											core.Error.error("Constructor of multi-type abstract must be defined before the individual @:to-functions are", cf.cf_pos);
-										}
-										// delay ctx PFinal (fun () -> unify ctx m tthis f.cff_pos);
-										var args = switch (core.Type.follow(core.Type.monomorphs(a.a_params, ctor.cf_type))) {
-											case TFun({args:args}): args.map(function (arg) {return arg.t; });
-											case _: throw false;
-										};
-										args;
+								return switch (t) {
+									case TFun({args:[{t:t}]}): t;
+									case _:
+										core.Error.error(cf.cf_name+": @:from cast functions must accept exactly one argument", p);
+								}
+							}, "@:from");
+							a.a_from_field = ({t:core.Type.T.TLazy(r), cf:cf}) :: a.a_from_field;
+						case {name:To}::_:
+							if (fctx.is_macro) {
+								core.Error.error(cf.cf_name + ": Macro cast functions are not supported", p);
+							}
+							// TODO: this doesn't seem quite right...
+							if (!core.Meta.has(Impl, cf.cf_meta)) {
+								cf.cf_meta = ({name:Impl,params:[],pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: cf.cf_meta;
+							}
+							function resolve_m (args) {
+								try {
+									context.Typecore.unify_raise(ctx, t, core.Type.tfun([tthis].concat(args), m), cf.cf_pos);
+								}
+								catch (err:core.Error) {
+									switch (err.msg) {
+										case Unify(l):
+											core.Error.error(core.Error.error_msg(Unify(l)), err.pos);
+										case _: throw err;
+									}
+								}
+								return switch (core.Type.follow(m)) {
+									case TMono(_) if (switch (t) { case TFun({ret:r}): r == core.Type.t_dynamic; case _: false; }): core.Type.t_dynamic;
+									case m: m;
+								}
+							}
+							var r = context.Typecore.exc_protect(ctx, function (r) {
+								r.set(core.Type.lazy_processing(function () {return t; }));
+								var args = if (core.Meta.has(MultiType, a.a_meta)) {
+									var ctor = try {
+										PMap.find("_new", c.cl_statics);
+									}
+									catch (_:ocaml.Not_found) {
+										core.Error.error("Constructor of multi-type abstract must be defined before the individual @:to-functions are", cf.cf_pos);
+									}
+									// delay ctx PFinal (fun () -> unify ctx m tthis f.cff_pos);
+									var args = switch (core.Type.follow(core.Type.monomorphs(a.a_params, ctor.cf_type))) {
+										case TFun({args:args}): List.map(function (arg) {return arg.t; }, args);
+										case _: throw false;
+									};
+									args;
+								}
+								else {
+									Tl; // [];
+								}
+								return resolve_m(args);
+							}, "@:to");
+							a.a_to_field = {t:core.Type.T.TLazy(r), cf:cf} :: a.a_to_field;
+						case {name:ArrayAccess}::_, {name:Op, params:[{expr:EArrayDecl(_)}]}::_:
+							if (fctx.is_macro) {
+								core.Error.error(cf.cf_name + ": Macro array-access functions are not supported", p);
+							}
+							a.a_array = cf :: a.a_array;
+						case {name:Op, params:[{expr:EBinop(op, _, _)}]}::_:
+							if (fctx.is_macro) {
+								core.Error.error(cf.cf_name +": Macro operator functions are not supported", p);
+							}
+							var targ = (fctx.is_abstract_member) ? tthis : ta;
+							var _tmp = switch (core.Type.follow(t)) {
+								case TFun({args:[{t:t1}, {t:t2}]}):
+									{fst:core.Type.type_iseq(targ, t1), snd:core.Type.type_iseq(targ, t2)};
+								case _:
+									if (fctx.is_abstract_member) {
+										core.Error.error(cf.cf_name + ": Member @:op functions must accept exactly one argument", cf.cf_pos);
 									}
 									else {
-										[];
+										core.Error.error(cf.cf_name + ": Static @:op functions must accept exactly two arguments", cf.cf_pos);
 									}
-									return resolve_m(args);
-						 		}, "@:to");
-								a.a_to_field.unshift({t:TLazy(r), cf:cf});
-							case ArrayAccess:
-								if (fctx.is_macro) {
-									core.Error.error(cf.cf_name + ": Macro array-access functions are not supported", p);
-								}
-								a.a_array.unshift(cf);
-							case Op:
-								if (first.params.length == 1) {
-									switch (first.params[0].expr) {
-										case EArrayDecl(_):
-											if (fctx.is_macro) {
-												core.Error.error(cf.cf_name + ": Macro array-access functions are not supported", p);
-											}
-											a.a_array.unshift(cf);
-										case EBinop(op, _, _):
-											if (fctx.is_macro) {
-												core.Error.error(cf.cf_name +": Macro operator functions are not supported", p);
-											}
-											var targ = (fctx.is_abstract_member) ? tthis : ta;
-											var _tmp = switch (core.Type.follow(t)) {
-												case TFun({args:args}) if (args.length == 2):
-													var t1 = args[0].t; var t2 = args[1].t;
-													{fst:core.Type.type_iseq(targ, t1), snd:core.Type.type_iseq(targ, t2)};
-												case _:
-													if (fctx.is_abstract_member) {
-														core.Error.error(cf.cf_name + ": Member @:op functions must accept exactly one argument", cf.cf_pos);
-													}
-													else {
-														core.Error.error(cf.cf_name + ": Static @:op functions must accept exactly two arguments", cf.cf_pos);
-													}
-											};
-											var left_eq = _tmp.fst; var right_eq = _tmp.snd;
-											if (!(left_eq || right_eq)) {
-												core.Error.error(cf.cf_name + ": The left or right argument type must be " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
-											}
-											if (right_eq && core.Meta.has(Commutative, cf.cf_meta)) {
-												core.Error.error(cf.cf_name + ": @:commutative is only allowed if the right argument is not " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
-											}
-											a.a_ops.unshift({op:op, cf:cf});
-											allows_no_expr.set(true);
-										case EUnop(op, flag, _):
-											if (fctx.is_macro) {
-												core.Error.error(cf.cf_name + ": Macro operator functions are not supported", p);
-											}
-											var targ = (fctx.is_abstract_member) ? tthis : ta;
-											try {
-												core.Type.type_eq(EqStrict, t, core.Type.tfun([targ], core.Type.mk_mono()));
-											}
-											catch (ue:core.Type.Unify_error) {
-												throw new core.Error(Unify(ue.l),cf.cf_pos);
-											}
-											a.a_unops.unshift({op:op, flag:flag, cf:cf});
-											allows_no_expr.set(true);
-										case EField(_):
-											if (a.a_resolve != None) {
-												core.Error.error("Multiple resolve methods are not supported", cf.cf_pos);
-											}
-											var targ = (fctx.is_abstract_member) ? tthis : ta;
-											switch (core.Type.follow(t)) {
-												case TFun({args:args}) if (args.length == 2):
-													var t1 = args[0].t; var t2 = args[1].t;
-													if (!fctx.is_macro) {
-														if (!core.Type.type_iseq(targ, t1)) {
-															core.Error.error("First argument type must be " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
-														}
-														if (!core.Type.type_iseq(ctx.t.tstring, t2)) {
-															core.Error.error("Second argument type must be String", cf.cf_pos);
-														}
-													}
-												case _:
-													core.Error.error("Field type of resolve must be " + core.Type.s_type(core.Type.print_context(), targ) + " -> String -> T", cf.cf_pos);
-											}
-											a.a_resolve= Some(cf);
-										case _: loop(ml.slice(1));
-									}
-								}
-							case Impl if (cf.cf_name != "_new" && !fctx.is_macro):
-								switch (core.Type.follow(t)) {
-									case TFun({args:args}) if (args.length > 0 && core.Type.type_iseq(tthis, args[0].t)):
-									case _:
-										context.Typecore.display_error(ctx, "First argument of implementation function must be " + core.Type.s_type(core.Type.print_context(), tthis), cf.cf_pos);
-								}
-								loop(ml.slice(1));
-							case Resolve:
-								if (a.a_resolve != None) {
-									core.Error.error("Multiple resolve methods are not supported", cf.cf_pos);
-								}
-								var targ = (fctx.is_abstract_member) ? tthis : ta;
-								switch (core.Type.follow(t)) {
-									case TFun({args:args}) if (args.length == 2):
-										var t1 = args[0].t; var t2 = args[1].t;
-										if (!fctx.is_macro) {
-											if (!core.Type.type_iseq(targ, t1)) {
-												core.Error.error("First argument type must be " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
-											}
-											if (!core.Type.type_iseq(ctx.t.tstring, t2)) {
-												core.Error.error("Second argument type must be String", cf.cf_pos);
-											}
+							};
+							var left_eq = _tmp.fst; var right_eq = _tmp.snd;
+							if (!(left_eq || right_eq)) {
+								core.Error.error(cf.cf_name + ": The left or right argument type must be " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
+							}
+							if (right_eq && core.Meta.has(Commutative, cf.cf_meta)) {
+								core.Error.error(cf.cf_name + ": @:commutative is only allowed if the right argument is not " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
+							}
+							a.a_ops = ({op:op, cf:cf}) :: a.a_ops;
+							allows_no_expr.set(true);
+						case {name:Op, params:[{expr:EUnop(op, flag, _)}]}::_:
+							if (fctx.is_macro) {
+								core.Error.error(cf.cf_name + ": Macro operator functions are not supported", p);
+							}
+							var targ = (fctx.is_abstract_member) ? tthis : ta;
+							try {
+								core.Type.type_eq(EqStrict, t, core.Type.tfun([targ], core.Type.mk_mono()));
+							}
+							catch (ue:core.Type.Unify_error) {
+								throw new core.Error(Unify(ue.l),cf.cf_pos);
+							}
+							a.a_unops = {op:op, flag:flag, cf:cf} :: a.a_unops;
+							allows_no_expr.set(true);
+						case {name:Impl}::ml if (cf.cf_name != "_new" && !fctx.is_macro):
+							switch (core.Type.follow(t)) {
+								case TFun({args:{t:t1}::_}) if (core.Type.type_iseq(tthis, t1)):
+								case _:
+									context.Typecore.display_error(ctx, "First argument of implementation function must be " + core.Type.s_type(core.Type.print_context(), tthis), cf.cf_pos);
+							}
+							loop(ml);
+						case {name:Resolve}::_, {name:Op, params:[{expr:EField(_)}]}::_:
+							if (a.a_resolve != None) {
+								core.Error.error("Multiple resolve methods are not supported", cf.cf_pos);
+							}
+							var targ = (fctx.is_abstract_member) ? tthis : ta;
+							switch (core.Type.follow(t)) {
+								case TFun({args:[{t:t1}, {t:t2}]}):
+									if (!fctx.is_macro) {
+										if (!core.Type.type_iseq(targ, t1)) {
+											core.Error.error("First argument type must be " + core.Type.s_type(core.Type.print_context(), targ), cf.cf_pos);
 										}
-									case _:
-										core.Error.error("Field type of resolve must be " + core.Type.s_type(core.Type.print_context(), targ) + " -> String -> T", cf.cf_pos);
-								}
-								a.a_resolve= Some(cf);
-							case _: loop(ml.slice(1));
-						}
+										if (!core.Type.type_iseq(ctx.t.tstring, t2)) {
+											core.Error.error("Second argument type must be String", cf.cf_pos);
+										}
+									}
+								case _:
+									core.Error.error("Field type of resolve must be " + core.Type.s_type(core.Type.print_context(), targ) + " -> String -> T", cf.cf_pos);
+							}
+							a.a_resolve= Some(cf);
+						case _::ml:
+							loop(ml);
+						case _:
 					}
 				}
 				loop(cf.cf_meta);
@@ -749,7 +714,7 @@ class ClassInitializer {
 							case Some(_):
 						}
 					}
-					cf.cf_meta.unshift({name:NoExpr,params:[],pos:core.Globals.null_pos});
+					cf.cf_meta = ({name:NoExpr,params:[],pos:core.Globals.null_pos}: core.Ast.MetadataEntry) :: cf.cf_meta;
 					fctx.do_bind = false;
 				}
 				if (cf.cf_name == "_new" && core.Meta.has(MultiType, a.a_meta)) {
@@ -765,18 +730,16 @@ class ClassInitializer {
 	public static function create_method (ctx:context.Typecore.Typer, cctx:Class_init_ctx, fctx:Field_init_ctx, c:core.Type.TClass, f:core.Ast.ClassField, fd:core.Ast.Func, p:core.Globals.Pos) : core.Type.TClassField {
 		var params = typing.Typeload.type_function_params(ctx, fd, f.cff_name.pack, p);
 		if (core.Meta.has(Generic, f.cff_meta)) {
-			if (params.length == 0) {
+			if (params == Tl) { // == []
 				core.Error.error(f.cff_name.pack+": Generic functions must have type parameters", p);
 			}
 		}
-		var fd = if (fctx.is_macro && !ctx.in_macro && !fctx.is_static) {
+		var fd:core.Ast.Func = if (fctx.is_macro && !ctx.in_macro && !fctx.is_static) {
 			// remove display of first argument which will contain the "this" expression
 			var _fd = fd.clone();
-			_fd.f_args = if (fd.f_args.length == 0) {
-				[];
-			}
-			else {
-				fd.f_args.slice(1);
+			_fd.f_args = switch (fd.f_args) {
+				case []: [];
+				case _::l: l;
 			}
 			_fd;
 		}
@@ -794,76 +757,58 @@ class ClassInitializer {
 				var texpr:core.Ast.ComplexType = CTPath({tpackage:["haxe", "macro"], tname:"Expr", tparams:[], tsub:None});
 				// ExprOf type parameter might contain platform-specific type, let's replace it by Expr
 				function no_expr_of (tp:core.Ast.TypeHint) : Option<core.Ast.TypeHint> {
-					var t = tp.ct;
-					switch (t) {
-						case CTPath(ct):
-							if (ct.tparams.length == 1) {
-								switch (ct.tparams[0]) {
-										case TPType(_):
-											if ((ct.tname == "Expr" && ct.tpackage.equals(["haxe", "macro"]) && ct.tsub.equals(Some("ExprOf")))
-											|| (ct.tname == "ExprOf" && ct.tpackage.length == 0 && ct.tsub == None)) {
-												return Some({ct:texpr, pos:tp.pos});
-											}
-										case _:
-									}
-							}
-						case _:
+					var t = tp.ct; var p = tp.pos;
+					return switch (t) {
+						case CTPath({tpackage:["haxe", "macro"], tname:"Expr", tsub:Some("ExprOf"), tparams:[TPType(_)]}), 
+								CTPath({tpackage:[], tname:"ExprOf", tsub:None, tparams:[TPType(_)]}):							
+							Some({ct:texpr, pos:p});
+						case t:
+							Some({ct:t, pos:p});
 					}
-					return Some({ct:t, pos:tp.pos});
 				}
 				{
-					f_params: fd.f_params.clone(),
+					f_params: fd.f_params,
 					f_type: switch (fd.f_type) { case None: Some({ct:texpr, pos:core.Globals.null_pos}); case Some(t): no_expr_of(t);},
-					f_args: fd.f_args.map(function (arg:core.Ast.FunArg) : core.Ast.FunArg {
+					f_args: List.map(function (arg:core.Ast.FunArg) : core.Ast.FunArg {
 						return {
 							name:arg.name,
 							opt:arg.opt,
-							meta:arg.meta.clone(),
+							meta:arg.meta,
 							type: switch (arg.type) {
 								case None: Some({ct:texpr, pos:core.Globals.null_pos});
 								case Some(t): no_expr_of(t);
 							},
 							value:arg.value.clone()
 						};
-					} ),
+					}, fd.f_args),
 					f_expr: fd.f_expr.clone()
 				};
 			}
 			else {
 				var tdyn:Option<core.Ast.TypeHint> = Some({ct:CTPath({tpackage:[], tname:"Dynamic", tparams:[], tsub:None}), pos:core.Globals.null_pos});
 				function to_dyn (p:core.Globals.Pos, t:core.Ast.TypePath) : Option<core.Ast.TypeHint> {
-					if (t.tparams.length == 0) {
-						if (t.tpackage.equals(["haxe"]) && t.tname == "PosInfos" && t.tsub == None) {
-							return core.Error.error("haxe.PosInfos is not allowed on macro functions, use Context.currentPos() instead", p);
-						}
+					return switch (t) {
+						case {tpackage:["haxe", "macro"], tname:"Expr", tsub:Some("ExprOf"), tparams:[TPType(t)]}: Some(t);
+						case {tpackage:[], tname:"ExprOf", tsub:None, tparams:[TPType(t)]}: Some(t);
+						case {tpackage:["haxe"], tname:"PosInfo", tsub:None, tparams:[]}: core.Error.error("haxe.PosInfos is not allowed on macro functions, use Context.currentPos() instead", p);
+						case _: tdyn;
 					}
-					else {
-						switch (t.tparams[0]) {
-							case TPType(_t):
-								if ((t.tpackage.equals(["haxe", "macro"]) && t.tname == "Expr" && t.tsub.equals(Some("ExprOf")))
-								|| (t.tpackage.length == 0 && t.tname == "ExprOf" && t.tsub == None)) {
-									Some(_t);
-								}
-							case _:
-						}
-					}
-					return tdyn;
 				}
 				{
-					f_params: fd.f_params.clone(),
+					f_params: fd.f_params,
 					f_type: switch (fd.f_type) { case Some({ct:CTPath(t), pos:p}): to_dyn(p, t); case _: tdyn;},
-					f_args: fd.f_args.map(function (arg:core.Ast.FunArg) : core.Ast.FunArg {
+					f_args: List.map(function (arg:core.Ast.FunArg) : core.Ast.FunArg {
 						return {
 							name:arg.name,
 							opt:arg.opt,
-							meta:arg.meta.clone(),
+							meta:arg.meta,
 							type: switch (arg.type) {
 								case Some({ct:CTPath(t), pos:p}): to_dyn(p, t);
 								case _: tdyn;
 							},
 							value:None
 						};
-					} ),
+					}, fd.f_args),
 					f_expr: None
 				};
 			}
@@ -884,7 +829,7 @@ class ClassInitializer {
 				}
 				switch (fd.f_type) {
 					case None:
-					case Some({ct:CTPath({tpackage:pack, tname:"Void"})}) if (pack.length == 0):
+					case Some({ct:CTPath({tpackage:[], tname:"Void"})}):
 					case _:
 						core.Error.error("A class constructor can't have a return value", p);
 
@@ -897,67 +842,61 @@ class ClassInitializer {
 			core.Error.error(f.cff_name.pack+": You can't have both 'inline' and 'dynamic'", p);
 		}
 		ctx.type_params = switch (cctx._abstract) {
-			case Some(a) if (fctx.is_abstract_member): params.concat(a.a_params);
-			case _: (fctx.is_static) ? params: params.concat(ctx.type_params);
+			case Some(a) if (fctx.is_abstract_member): List.concat(params, a.a_params);
+			case _: (fctx.is_static) ? params: List.concat(params, ctx.type_params);
 		}
 		// TODO is_lib: avoid forcing the return type to be typed
 		var ret = (fctx.field_kind == FKConstructor) ? ctx.t.tvoid : type_opt(ctx, cctx, p, fd.f_type);
-		function loop (args:Array<core.Ast.FunArg>) {
-			if (args.length == 0) { return []; }
-			else {
-				var _tmp = args[0];
-				var name = _tmp.name.pack; var p = _tmp.name.pos;
-				var opt = _tmp.opt; var m = _tmp.meta; var t = _tmp.type;
-				var ct = _tmp.value;
-				// TODO is_lib: avoid forcing the field to be typed
-				var __t = typing.Typeload.type_function_arg(ctx, type_opt(ctx, cctx, p, t), ct, opt, p);
-				context.Typecore.delay(ctx, PTypeField, function() {
-					switch (core.Type.follow(__t.fst)) {
-						case TAbstract({a_path:path}, _) if (path.equals(new core.Path(["haxe", "extern"], "Rest"))):
-							if (!c.cl_extern) {
-								core.Error.error("Rest argument are only supported for extern methods", p);
-							}
-							if (opt) {
-								core.Error.error("Rest argument cannot be optional", p);
-							}
-							switch (ct) {
-								case None:
-								case Some({pos:p}): core.Error.error("Rest argument cannot have default value", p);
-							}
-							if (args.length > 0) {
-								core.Error.error("Rest should only be used for the last function argument", p);
-							}
-						case _:
-					}
-				});
-				var _res = loop(args.slice(1));
-				_res.unshift({name:name, opt:__t.snd, t:__t.fst});
-				return _res;
+		function loop (args:ImmutableList<core.Ast.FunArg>) : ImmutableList<{name:String, opt:Option<core.Ast.Expr>, t:core.Type.T}> {
+			return switch (args) {
+				case {name:{pack:name, pos:p}, opt:opt, meta:m, type:t, value:ct}::args:
+					// TODO is_lib: avoid forcing the field to be typed
+					var _tmp = typing.Typeload.type_function_arg(ctx, type_opt(ctx, cctx, p, t), ct, opt, p);
+					var t = _tmp.fst; var ct = _tmp.snd;
+					context.Typecore.delay(ctx, PTypeField, function() {
+						switch (core.Type.follow(t)) {
+							case TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, _):
+								if (!c.cl_extern) {
+									core.Error.error("Rest argument are only supported for extern methods", p);
+								}
+								if (opt) {
+									core.Error.error("Rest argument cannot be optional", p);
+								}
+								switch (ct) {
+									case None:
+									case Some({pos:p}): core.Error.error("Rest argument cannot have default value", p);
+								}
+								if (args != Tl) { // != []
+									core.Error.error("Rest should only be used for the last function argument", p);
+								}
+							case _:
+						}
+					});
+					{name:name, opt:ct, t:t} :: loop(args);
+				case []: [];
 			}
 		}
 		var args = loop(fd.f_args);
 		var t:core.Type.T = TFun({args:core.Type.fun_args(args), ret:ret});
 		var cf = core.Type.mk_field(f.cff_name.pack, t, f.cff_pos, f.cff_name.pos);
-		cf.cf_doc = f.cff_doc.clone();
-		cf.cf_meta = f.cff_meta.clone();
-		if (fctx.is_final && !core.Meta.has(Final, f.cff_meta)) {
-			cf.cf_meta.unshift({name:Final, params:[], pos:core.Globals.null_pos});
+		cf.cf_doc = f.cff_doc;
+		cf.cf_meta = if (fctx.is_final && !core.Meta.has(Final, f.cff_meta)) {
+			cf.cf_meta = ({name:Final, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f.cff_meta;
+		}
+		else {
+			f.cff_meta;
 		}
 		cf.cf_kind = Method((fctx.is_macro) ? MethMacro : ((fctx.is_inline) ? MethInline : ((_dynamic) ? MethDynamic : MethNormal)));
 		cf.cf_public = is_public(ctx, cctx, f.cff_access, parent);
-		cf.cf_params = params.clone();
-		cf.cf_meta = cf.cf_meta.map(function (meta) {
-			var m = meta.name; var el = meta.params; var p = meta.pos;
-			if (m == AstSource && el.length == 0) {
-				return {name:m, params: switch (fd.f_expr) {
-					case None: [];
-					case Some(e): [e];
-				}, pos:p};
+		cf.cf_params = params;
+		cf.cf_meta = List.map(function (meta:core.Ast.MetadataEntry) : core.Ast.MetadataEntry {
+			return switch (meta) {
+				case {name:AstSource, params:[]}:
+					{name:meta.name, params:switch (fd.f_expr) {case None: []; case Some(e): [e];}, pos:meta.pos};
+				case _:
+					meta;
 			}
-			else {
-				return meta.clone();
-			}
-		});
+		}, cf.cf_meta);
 		typing.Typeload.generate_value_meta(ctx.com, Some(c), cf, fd.f_args);
 		check_abstract(ctx, cctx, fctx, c, cf, fd, t, ret, p);
 		typing.Typeload.init_meta_overloads(ctx, Some(c), cf);
@@ -972,14 +911,10 @@ class ClassInitializer {
 				}
 				var fmode:context.Typecore.CurrentFun = switch (cctx._abstract) {
 					case Some(_):
-						if (args.length > 0 && args[0].name == "this") {
-							FunMemberAbstract;
-						}
-						else if (f.cff_name.pack == "_new") {
-							FunMemberAbstract;
-						}
-						else {
-							FunStatic;
+						switch (args) {
+							case {name:"this"}::_: FunMemberAbstract;
+							case _ if (f.cff_name.pack == "_new"): FunMemberAbstract;
+							case _: FunStatic;
 						}
 					case None:
 						if (fctx.field_kind == FKConstructor) {
@@ -1018,10 +953,7 @@ class ClassInitializer {
 						};
 						if (fctx.field_kind == FKInit) {
 							switch (e.eexpr) {
-								case TConst(_):
-								case TBlock(l) if (l.length == 0):
-								case TBlock(l) if (l.length == 1 && switch (l[0].eexpr) { case TConst(_): true; case _:false;}):
-								case TObjectDecl(l) if (l.length == 0):
+								case TBlock([]), TBlock([{eexpr:TConst(_)}]), TConst(_), TObjectDecl([]):
 								case _: c.cl_init = Some(e);
 							}
 						}
@@ -1049,20 +981,20 @@ class ClassInitializer {
 		var c = cctx.tclass;
 		var name = f.cff_name.pack;
 		typing.Typeload.check_global_metadata(ctx, f.cff_meta, function (m) {
-			f.cff_meta.unshift(m);
+			f.cff_meta = m :: f.cff_meta;
 		}, c.cl_module.m_path, c.cl_path, Some(name));
 		var p = f.cff_pos;
 		if (name.charAt(0) == "$") {
 			context.Typecore.display_error(ctx, "Field names starting with a dollar are not allowed", p);
 		}
-		for (acc in f.cff_access) {
+		List.iter( function(acc:core.Ast.Access) {
 			switch ({fst:acc, snd:f.cff_kind}) {
 				case {fst:APublic}, {fst:APrivate}, {fst:AStatic}, {fst:AFinal}:
 				case {fst:ADynamic, snd:FFun(_)}, {fst:AOverride, snd:FFun(_)}, {fst:AMacro, snd:FFun(_)}, {fst:AInline, snd:FFun(_)}, {fst:AInline, snd:FVar(_)}:
 				case {snd:FVar(_)}: core.Error.error("Invalid accessor '"+core.Ast.s_access(acc)+"' for variable "+name, p);
 				case {snd:FProp(_)}: core.Error.error("Invalid accessor '"+core.Ast.s_access(acc)+"' for property "+name, p);
 			}
-		}
+		}, f.cff_access);
 		if (fctx.is_override) {
 			switch (c.cl_super) {
 				case None: core.Error.error("Invalid override on field '" + name + "': class has no super class", p);
@@ -1082,24 +1014,23 @@ class ClassInitializer {
 
 	public static function check_overloads (ctx:context.Typecore.Typer, c:core.Type.TClass) : Void {
 		// check if field with same signature was declared more than once
-		for (f in c.cl_ordered_fields.concat(c.cl_ordered_statics)) {
+		List.iter(function(f:core.Type.TClassField) {
 			if (!core.Meta.has(Overload, f.cf_meta)) {
-				var arr = [f].concat(f.cf_overloads);
-				for (f2 in arr) {
+				List.iter(function (f2) {
 					try {
-						ocaml.List.find(function (f3) {
+						List.find(function (f3) {
 							return f3 != f2 && codegen.Overloads.same_overload_args(None, f2.cf_type, f3.cf_type, f2, f3);
-						}, arr);
+						}, f::f.cf_overloads);
 						context.Typecore.display_error(ctx, "Another overloaded field of same signature was already declared : " + f2.cf_name, f2.cf_pos);
 					}
 					catch (_:ocaml.Not_found) {
 					}
-				}
+				}, f::f.cf_overloads);
 			}
-		}
+		}, List.concat(c.cl_ordered_fields, c.cl_ordered_statics));
 	}
 
-	public static function init_class (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, context_init:Void->Void, herits:Array<core.Ast.ClassFlag>, fields:Array<core.Ast.ClassField>) {
+	public static function init_class (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, context_init:Void->Void, herits:ImmutableList<core.Ast.ClassFlag>, fields:ImmutableList<core.Ast.ClassField>) {
 		var _tmp = create_class_context(ctx, c, context_init, p);
 		var ctx = _tmp.fst; var cctx = _tmp.snd;
 		if (cctx.is_class_debug) {
@@ -1122,63 +1053,57 @@ class ClassInitializer {
 			return switch (s) {
 				case None: false;
 				case Some({c:c}):
-					ocaml.PMap.exists(f, c.cl_fields) || has_field(f, c.cl_super) || ocaml.List.exists(function (i) { return has_field(f, Some(i)); }, c.cl_implements);
+					PMap.exists(f, c.cl_fields) || has_field(f, c.cl_super) || ocaml.List.exists(function (i) { return has_field(f, Some(i)); }, c.cl_implements);
 			}
 		}
 		function check_require (metas:core.Ast.Metadata) {
-			if (metas.length == 0) {
-				return None;
-			}
-			var l = metas.slice(1);
-			return switch (metas[0]) {
-				case {name:Require, params:conds}:
-					function loop (arr:Array<core.Ast.Expr>) {
-						if (arr.length == 0) {
-							return check_require(l);
-						}
-						var _l = arr.slice(1);
-						var e = arr[0];
-						var sc = switch (e.expr) {
-							case EConst(CIdent(s)): s;
-							case EBinop(op=(OpEq|OpNotEq|OpGt|OpGte|OpLt|OpLte), {expr:EConst(CIdent(s))}, {expr:EConst(c=(CInt(_)|CFloat(_)|CString(_)))}): 
-								s + core.Ast.s_binop(op) + core.Ast.s_constant(c);
-							case _: "";
-						}
-						if (!syntax.ParserEntry.is_true(syntax.ParserEntry.eval(ctx.com.defines, e))) {
-							var _tmp = None;
-							if (_l.length > 0) {
-								switch (_l[_l.length - 1].expr) {
-									case EConst(CString(msg)):
-										_tmp = Some(msg);
-									case _: None;
+			return switch (metas) {
+				case []: None;
+				case {name:Require, params:conds}::l:
+					function loop (arr:ImmutableList<core.Ast.Expr>) {
+						return switch (arr) {
+							case []: check_require(l);
+							case e::l:
+								var sc = switch (e.expr) {
+									case EConst(CIdent(s)): s;
+									case EBinop(op=(OpEq|OpNotEq|OpGt|OpGte|OpLt|OpLte), {expr:EConst(CIdent(s))}, {expr:EConst(c=(CInt(_)|CFloat(_)|CString(_)))}): 
+										s + core.Ast.s_binop(op) + core.Ast.s_constant(c);
+									case _: "";
 								}
-							}
-							return Some({fst:sc, snd:_tmp});
-						}
-						else {
-							return loop(_l);
-						}
+								if (!syntax.ParserEntry.is_true(syntax.ParserEntry.eval(ctx.com.defines, e))) {
+									var _tmp = switch (List.rev(l)) {
+										case {expr:EConst(CString(msg))}::_: Some(msg);
+										case _: None;
+									}
+									Some({fst:sc, snd:_tmp});
+								}
+								else {
+									return loop(l);
+								}
+						};
 					}
 					loop(conds);
-				case _: check_require(l);
+				case _::l: check_require(l);
 			}
 		}
-		function check_if_feature (metas:core.Ast.Metadata) : Array<String> {
-			if (metas.length == 0) { return []; }
-			return switch (metas[0]) {
-				case {name:IfFeature, params:el}:
-					el.map(function (expr) {
-						return switch (expr.expr) {
+		function check_if_feature (metas:core.Ast.Metadata) : ImmutableList<String> {
+			return switch (metas) {
+				case []: [];
+				case {name:IfFeature, params:el}::_:
+					List.map(function (expr:core.Ast.Expr) {
+						var e = expr.expr; var p = expr.pos;
+						return switch (e) {
 							case EConst(CString(s)): s;
 							case _: core.Error.error("String expected", p);
-					}});
-				case _:
-					check_if_feature(metas.slice(1));
+						}
+					}, el);
+				case _::l:
+					check_if_feature(l);
 			}
 		}
 		var cl_if_feature = check_if_feature(c.cl_meta);
 		var cl_req = check_require(c.cl_meta);
-		for (f in fields) {
+		List.iter(function(f) {
 			var p = f.cff_pos;
 			try {
 				var _tmp = create_field_context(ctx, cctx, c, f);
@@ -1194,10 +1119,10 @@ class ClassInitializer {
 					core.Error.error("You can't declare static fields in interfaces", p);
 				}
 				function set_feature (s) {
-					ctx.m.curmod.m_extra.m_if_feature.unshift({s:s,c:c,cf:cf,b:fctx.is_static});
+					ctx.m.curmod.m_extra.m_if_feature = ({s:s,c:c,cf:cf,b:fctx.is_static}) :: ctx.m.curmod.m_extra.m_if_feature;
 				}
-				ocaml.List.iter(set_feature, cl_if_feature);
-				ocaml.List.iter(set_feature, check_if_feature(cf.cf_meta));
+				List.iter(set_feature, cl_if_feature);
+				List.iter(set_feature, check_if_feature(cf.cf_meta));
 				var req = check_require(f.cff_meta);
 				req = switch (req) {
 					case None:
@@ -1215,7 +1140,7 @@ class ClassInitializer {
 							case None: c.cl_constructor = Some(cf);
 							case Some(ctor) if (ctx.com.config.pf_overload):
 								if (core.Meta.has(Overload, cf.cf_meta) && core.Meta.has(Overload, ctor.cf_meta)) {
-									ctor.cf_overloads.unshift(cf);
+									ctor.cf_overloads = cf :: ctor.cf_overloads;
 								}
 								else {
 									context.Typecore.display_error(ctx, "If using overloaded constructors, all constructors must be declared with @:overload", (core.Meta.has(Overload, cf.cf_meta)) ? ctor.cf_pos : cf.cf_pos);
@@ -1226,16 +1151,16 @@ class ClassInitializer {
 					case FKInit:
 					case FKNormal:
 						var dup = if (fctx.is_static) {
-							ocaml.PMap.exists(cf.cf_name, c.cl_fields) || has_field(cf.cf_name, c.cl_super);
+							PMap.exists(cf.cf_name, c.cl_fields) || has_field(cf.cf_name, c.cl_super);
 						}
 						else {
-							ocaml.PMap.exists(cf.cf_name, c.cl_statics);
+							PMap.exists(cf.cf_name, c.cl_statics);
 						}
 						if (!cctx.is_native && !c.cl_extern && dup) {
 							core.Error.error("Same field name can't be use for both static and instance : " + cf.cf_name, p);
 						}
 						if (fctx.is_override) {
-							c.cl_overrides.unshift(cf);
+							c.cl_overrides = cf :: c.cl_overrides;
 						}
 						function is_var (f:Any) : Bool { // TODO : might bug
 							return switch (cf.cf_kind) { // or switch (f.cf_kind) {
@@ -1243,16 +1168,16 @@ class ClassInitializer {
 								case _: false;
 							}
 						}
-						if (ocaml.PMap.mem(cf.cf_name, (fctx.is_static) ? c.cl_statics : c.cl_fields)) {
+						if (PMap.mem(cf.cf_name, (fctx.is_static) ? c.cl_statics : c.cl_fields)) {
 							if (ctx.com.config.pf_overload && core.Meta.has(Overload, cf.cf_meta) && !is_var(f)) {
-								var mainf = ocaml.PMap.find(cf.cf_name, (fctx.is_static) ? c.cl_statics : c.cl_fields);
+								var mainf = PMap.find(cf.cf_name, (fctx.is_static) ? c.cl_statics : c.cl_fields);
 								if (is_var(mainf)) {
 									context.Typecore.display_error(ctx, "Cannot declare a variable with same name as a method", mainf.cf_pos);
 								}
 								if (!core.Meta.has(Overload, mainf.cf_meta)) {
 									context.Typecore.display_error(ctx, "Overloaded methods must have @:overload metadata", mainf.cf_pos);
 								}
-								mainf.cf_overloads.unshift(cf);
+								mainf.cf_overloads = cf :: mainf.cf_overloads;
 							}
 							else {
 								context.Typecore.display_error(ctx, "Duplicate class field declaration : " + cf.cf_name, p);
@@ -1272,18 +1197,18 @@ class ClassInitializer {
 					case _: throw err;
 				}
 			}
-		}
+		}, fields);
 		switch (cctx._abstract) {
 			case Some(a):
-				a.a_to_field.reverse();
-				a.a_from_field.reverse();
-				a.a_ops.reverse();
-				a.a_unops.reverse();
-				a.a_array.reverse();
+				a.a_to_field = List.rev(a.a_to_field);
+				a.a_from_field = List.rev(a.a_from_field);
+				a.a_ops = List.rev(a.a_ops);
+				a.a_unops = List.rev(a.a_unops);
+				a.a_array = List.rev(a.a_array);
 			case None:
 		}
-		c.cl_ordered_statics.reverse();
-		c.cl_ordered_fields.reverse();
+		c.cl_ordered_statics = List.rev(c.cl_ordered_statics);
+		c.cl_ordered_fields = List.rev(c.cl_ordered_fields);
 		// make sure a default contructor with same access as super one will be added to the class structure at some point.
 		switch (cctx.uninitialized_final) {
 			case Some(pf) if (c.cl_constructor == None):
@@ -1303,23 +1228,22 @@ class ClassInitializer {
 			switch (c.cl_constructor) {
 				case Some(ctor):
 					context.Typecore.delay(ctx, PTypeField, function() {
-						var _tmpArray = [ctor].concat(ctor.cf_overloads);
-						for (f in _tmpArray) {
+						List.iter(function(f:core.Type.TClassField) {
 							try {
 								// TODO: consider making a broader check, and treat some types, like TAnon and type parameters as Dynamic
-								ocaml.List.find(function (f2) {
+								List.find(function (f2:core.Type.TClassField) {
 									return !f.equals(f2) && codegen.Overloads.same_overload_args(f.cf_type, f2.cf_type, f, f2);
-								}, _tmpArray);
+								}, ctor::ctor.cf_overloads);
 								context.Typecore.display_error(ctx, "Another overloaded field of same signature was already declared : " + f.cf_name, f.cf_pos);
 							}
 							catch (_:ocaml.Not_found) {}
-						}
+						}, ctor::ctor.cf_overloads);
 					});
 				case _:
 			}
 		}
 		// push delays in reverse order so they will be run in correct order
-		for (de in cctx.delayed_expr) {
+		List.iter(function (de) {
 			var ctx = de.typer; var r = de.olazy;
 			context.Typecore.init_class_done(ctx);
 			switch (r) {
@@ -1329,6 +1253,6 @@ class ClassInitializer {
 						core.Type.lazy_type(r);
 					});
 			}
-		}
+		},  cctx.delayed_expr);
 	}
 }

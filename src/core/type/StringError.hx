@@ -1,5 +1,8 @@
 package core.type;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
+
 class StringError {
 	// Source: http://en.wikibooks.org/wiki/Algorithm_implementation/Strings/Levenshtein_distance
 	public static function levenshtein(s1:String, s2:String) : Int {
@@ -28,45 +31,41 @@ class StringError {
 		
 	}
 
-	public static function filter_similar<T>(f:{fst:T, snd:Int}->Bool, cl:Array<{fst:T, snd:Int}>) : Array<T> {
-		var r:Array<T> = [];
-		for (e in cl) {
-			if (f(e)) {
-				r.push(e.fst);
+	public static function filter_similar<T>(f:T->Int->Bool, cl:ImmutableList<{fst:T, snd:Int}>) : ImmutableList<T> {
+		function loop(sl:ImmutableList<{fst:T, snd:Int}>) : ImmutableList<T> {
+			return switch (sl) {
+				case {fst:x, snd:i}::sl if (f(x, i)):
+					x::loop(sl);
+				case _: [];
 			}
 		}
-		return r;
+		return loop(cl);
 	}
 
-	public static function get_similar(s:String, sl:Array<String>) : Array<String> {
-		if (sl.length == 0) {
-			return [];
-		}
-		var cl = [for (el in sl) {fst:el, snd:levenshtein(s, el)}];
-		cl.sort(function (c1:{fst:String, snd:Int}, c2:{fst:String, snd:Int}) {
-			if (c1.snd == c2.snd) { return 0; }
-			return (c1.snd > c2.snd) ? 1 : -1;
-		});
-		return filter_similar(function(el:{fst:String, snd:Int}) {
-			return el.snd <= Std.int(Math.min(s.length, el.fst.length) /3);
+	public static function get_similar(s:String, sl:ImmutableList<String>) : ImmutableList<String> {
+		if (sl == Tl) { return []; }
+		var cl = List.map(function (s2) { return {fst:s2, snd:levenshtein(s, s2)};}, sl);
+		cl = List.sort(function (e1:{fst:String, snd:Int}, e2:{fst:String, snd:Int}) {
+			var c1 = e1.snd; var c2 = e2.snd;
+			if (c1 == c2) { return 0; }
+			return (c1 > c2) ? 1 : -1;
+		}, cl);
+		return filter_similar(function(s2:String, i:Int) {
+			return i <= Std.int(Math.min(s.length, s2.length) /3);
 		}, cl);
 	}
 
-	public static function string_error_raise(s:String, sl:Array<String>, msg:String) : String {
-		if (sl.length == 0) {
-			return msg;
-		}
-		else {
-			var cl = get_similar(s, sl);
-			if (cl.length == 0) {
-				throw ocaml.Not_found.instance;
-			}
-
-			return msg + " (Suggestions: "+sl.join(", ") + ")";
+	public static function string_error_raise(s:String, sl:ImmutableList<String>, msg:String) : String {
+		if (sl == Tl) { return msg; }
+		var cl = get_similar(s, sl);
+		return switch (cl) {
+			case []: throw ocaml.Not_found.instance;
+			case [s]: '${msg} (Suggestion: ${s})';
+			case sl: '${msg} (Suggestion: ${List.join(", ", sl)})';
 		}
 	}
 
-	public static function string_error(s:String, sl:Array<String>, msg:String) : String {
+	public static function string_error(s:String, sl:ImmutableList<String>, msg:String) : String {
 		try {
 			return string_error_raise(s, sl, msg);
 		}

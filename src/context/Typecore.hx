@@ -2,6 +2,7 @@ package context;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.DynArray;
 import ocaml.List;
 import ocaml.Ref;
 using ocaml.Cloner;
@@ -13,9 +14,9 @@ using haxe.EnumTools.EnumValueTools;
 
 class Forbid_package {
 	public var a:{pack:String,m:core.Path, p:core.Globals.Pos};
-	public var pl:Array<core.Globals.Pos>;
+	public var pl:ImmutableList<core.Globals.Pos>;
 	public var pf:String;
-	public function new (a:{pack:String,m:core.Path, p:core.Globals.Pos}, pl:Array<core.Globals.Pos>, pf:String) {
+	public function new (a:{pack:String,m:core.Path, p:core.Globals.Pos}, pl:ImmutableList<core.Globals.Pos>, pf:String) {
 		this.a = a;
 		this.pl = pl;
 		this.pf = pf;
@@ -90,8 +91,8 @@ class TyperGlobals {
 	public var type_patches : Map<core.Path, {map:Map<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>;
 	public var global_metadata : ImmutableList<{l:ImmutableList<String>, me:core.Ast.MetadataEntry, bs:{a:Bool, b:Bool, c:Bool}}>;
 	public var module_check_policies : ImmutableList<{l:ImmutableList<String>, mcps:ImmutableList<core.Type.ModuleCheckPolicy>, b:Bool}>;
-	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:ImmutableList<core.Type.T>, cfs: Array<core.Ast.ClassField>}>;
-	public var delayed_macros : Array<Void->Void>; // is real array: DynArray
+	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:ImmutableList<core.Type.T>, cfs: ImmutableList<core.Ast.ClassField>}>;
+	public var delayed_macros : DynArray<Void->Void>;
 	public var global_using : ImmutableList<{a:core.Type.TClass, pos:core.Globals.Pos}>;
 	// api
 	public var do_inherit : Typer->core.Type.TClass->core.Globals.Pos->{is_extends:Bool, tp:core.Ast.PlacedTypePath}->Bool;
@@ -158,7 +159,7 @@ class Typecore {
 		return type_expr_ref.get()(ctx, e, with_type);
 	}
 
-	public static function raise_or_display (ctx:Typer, l:Array<core.Type.UnifyError>, p:core.Globals.Pos) {
+	public static function raise_or_display (ctx:Typer, l:ImmutableList<core.Type.UnifyError>, p:core.Globals.Pos) {
 		if (ctx.untyped_) {}
 		else if (ctx.in_call_args) {
 			throw new WithTypeError(Unify(l), p);

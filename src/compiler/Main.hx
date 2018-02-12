@@ -1,8 +1,10 @@
 package compiler;
 
 import ocaml.Arg;
+import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
+import ocaml.Ref;
 import context.Common;
 import core.Define;
 
@@ -164,7 +166,7 @@ class Main {
 		ctx.messages = msg :: ctx.messages;
 	}
 
-	public static var deprecated : Array<{a:String, b:String}>= [];
+	public static var deprecated : ImmutableList<{fst:String, snd:String}>= [];
 
 	public static function limit_string (s:String, offset:Int) : String {
 		var rest = 80 - offset;
@@ -189,15 +191,10 @@ class Main {
 	}
 	
 	public static function error(ctx:Server.Context, msg:String, p:core.Globals.Pos) {
-		try {
-			for (d in deprecated) {
-				if (d.a == msg) {
-					msg = d.b;
-					break;
-				}
-			}
+		var msg =try {
+			List.assoc(msg, deprecated);
 		}
-		catch (_:Dynamic) {}
+		catch (_:ocaml.Not_found) { msg; }
 		message(ctx, CMError(msg,p));
 		ctx.has_error = true;
 	}
@@ -242,7 +239,7 @@ class Main {
 		// ) path
 	}
 
-	public static function add_libs (com:context.Common.Context, libs:Array<String>) : Array<String> {
+	public static function add_libs (com:context.Common.Context, libs:ImmutableList<String>) : ImmutableList<String> {
 		return [];
 		// let call_haxelib() =
 		// 	let t = Timer.timer ["haxelib"] in
@@ -396,23 +393,23 @@ class Main {
 	}
 
 	public static function process_params(create:ImmutableList<String>->compiler.Server.Context, pl:ImmutableList<String>) {
-		var each_params:ImmutableList<String> = [];
+		var each_params = new Ref<ImmutableList<String>>([]);
 		function loop (acc:ImmutableList<String>, l:ImmutableList<String>) : Void {
 			switch (l) {
 				case []: 
-					var ctx = create(List.concat(each_params, List.rev(acc)));
+					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
 					init(ctx);
 					ctx.flush();
 				case "--next"::l if (acc == []): // skip empty --next
 					loop([], l);
 				case "--next"::l:
-					var ctx = create(List.concat(each_params, List.rev(acc)));
+					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
 					ctx.has_next = true;
 					init(ctx);
 					ctx.flush();
 					loop([], l);
 				case "--each"::l:
-					each_params = List.rev(acc);
+					each_params.set(List.rev(acc));
 					loop([], l);
 				case "--cwd"::(dir::l):
 					// we need to change it immediately since it will affect hxml loading
@@ -450,7 +447,7 @@ class Main {
 					}
 				case "--run"::(cl::args):
 					var acc = List.concat([cl, "--main", "--interp"], acc);
-					var ctx = create(List.concat(each_params, List.rev(acc)));
+					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
 					ctx.com.sys_args = args;
 					init(ctx);
 					ctx.flush();
@@ -493,8 +490,8 @@ class Main {
 			var swf_header = None;
 			var cmds = [];
 			var config_macros: ImmutableList<String> = [];
-			var cp_libs : Array<String> = [];
-			var added_libs = new Map<String, Dynamic>();
+			var cp_libs = new Ref<ImmutableList<String>>([]);
+			var added_libs = new Map<String, Bool>();
 			var no_output = false;
 			var did_something = false;
 			var force_typing = false;
@@ -509,7 +506,6 @@ class Main {
 				message(ctx, CMWarning(msg, p));
 			};
 			com.error = error.bind(ctx);
-
 			if (context.common.CompilationServer.runs()) {
 				com.run_command = run_command.bind(ctx);
 			}
@@ -522,28 +518,25 @@ class Main {
 			com.std_path = List.filter(function (p:String) : Bool {
 					return p.endsWith("std/") || p.endsWith("std\\");
 			}, com.class_path);
-
 			var define = function (f:core.Define.StrictDefined) : Void->Void {
 				// Arg.Unit (fun () -> context.Common.define(com, f) in
 				return function () { context.Common.define(com, f); };
 			}
-
-			var process_ref : Array<String>->Void;
+			var process_ref = new Ref<ImmutableList<String>->Void>(function (args) {});
 			var process_libs = function () {
-				var libs = cp_libs.filter( function (l:String) {
-					return !(added_libs.exists(l));
-				});
-				cp_libs = [];
-				for (l in libs) {
-					added_libs.set(l, null);
-				}
+				var libs = List.filter( function (l:String) {
+					return !Hashtbl.mem(added_libs,l);
+				}, List.rev(cp_libs.get()));
+				cp_libs.set([]);
+				List.iter(function (l) {
+					Hashtbl.add(added_libs, l, true);
+				}, libs);
 				// immediately process the arguments to insert them at the place -lib was defined
-				var args = add_libs(com, libs);
-				if (args.length > 0) {
-					process_ref(args);
+				switch (add_libs(com, libs)) {
+					case []:
+					case args: process_ref.get()(args);
 				}
 			};
-
 			var arg_delays: Array<Void->Void> = [];
 			var basic_args_spec : Array<{arg:String, spec:ocaml.Arg.Spec, doc:String}>;
 			basic_args_spec = [
@@ -570,11 +563,11 @@ class Main {
 					context.Common.define(com,Cppia);
 				}), doc:"<file> : generate Cppia code into target file"},
 				{arg:"-cs", spec:S_String(function(dir:String) {
-					cp_libs.unshift("hxcs");
+					cp_libs.set("hxcs" :: cp_libs.get());
 					Initialize.set_platform(com,Cs,dir);
 				}), doc:"<directory> : generate C# code into target directory"},
 				{arg:"-java", spec:S_String(function(dir:String) {
-					cp_libs.unshift("hxjava");
+					cp_libs.set("hxjava"::cp_libs.get());
 					Initialize.set_platform(com,Java,dir);
 				}), doc:"<directory> : generate Java code into target directory"},
 				{arg:"-python", spec:S_String( Initialize.set_platform.bind(com).bind(Python)), doc:"<file> : generate Python code as target file"},
@@ -593,7 +586,7 @@ class Main {
 					classes = cpath :: classes;
 				}), doc:"<class> : select startup class"},
 				{arg:"-lib", spec:S_String( function(l:String) {
-					cp_libs.unshift(l);
+					cp_libs.set(l::cp_libs.get());
 					Common.raw_define(com, l);
 				}), doc:"<library[:version]> : use a haxelib library"},
 				{arg:"-D", spec:S_String( function(v:String) {
@@ -870,15 +863,12 @@ class Main {
 
 
 			var all_args_spec = basic_args_spec.concat(adv_args_spec);
-			var process = function (args:Array<String>) {
+			var process = function (args:ImmutableList<String>) {
 				var current = 0;
 				try {
-					var argv = [for (a in args) expand_env(a)];
-					argv.unshift("");
+					var argv = ""::List.map(function (a:String) { return expand_env(a); }, args);
 					current = Arg.parse_argv(current, argv, all_args_spec, args_callback, usage);
-					for (ad in arg_delays) {
-						ad();
-					}
+					List.iter(function (fn) { fn(); }, arg_delays);
 				}
 				catch (exc:ocaml.Arg.Bad) {
 					var r = ~/unknown option `([-A-Za-z]+)'/;
@@ -895,7 +885,7 @@ class Main {
 				}
 				arg_delays = [];
 			};
-			process_ref = process;
+			process_ref.set(process);
 			process(ctx.com.args);
 			process_libs();
 			if (com.display.dms_display) {
@@ -953,14 +943,14 @@ class Main {
 			else {
 				ctx.setup();
 				context.Common.log(com, "Classpath : " + List.join(";",com.class_path));
-				// PMap.foldi (fun k v acc -> (match v with "1" -> k | _ -> k ^ "=" ^ v) :: acc) com.defines.Define.values [])));
-				var acc : Array<String> = [
-					for (k in com.defines.values.keys()) {
-						var v  = com.defines.values.get(k); 
-						(v == "1") ? k : k + "=" + v;
+				var _tmp = PMap.foldi(function (k:String, v:String, acc:ImmutableList<String>) {
+					var value = switch(v) {
+						case "1":k;
+						case _: k+"="+v;
 					}
-				];
-				context.Common.log(com, "Defines : " + acc.join(";"));
+					return value::acc;
+				}, com.defines.values, Tl);
+				context.Common.log(com, "Defines : " + List.join(";",_tmp));
 				var t = core.Timer.timer(["typing"]);
 				context.Typecore.type_expr_ref.set(function (ctx, e, with_type) {
 					return typing.Typer.type_expr(ctx, e, with_type);
@@ -981,9 +971,7 @@ class Main {
 				}
 
 				var t = core.Timer.timer(["filters"]);
-				trace("pre generated");
 				var generated = typing.Typer.generate(tctx);
-				trace("post generated");
 				com.main = generated.main;
 				com.types = generated.types;
 				com.modules = generated.modules;
@@ -1069,25 +1057,23 @@ class Main {
 				ctx.messages = [];
 			}
 			else {
-				var pack = e.a.pack;
-				var m = e.a.m;
-				var p = e.a.p;
-				var string_value = "You cannot access the "+pack+ " package while "+ ( (e.pf == "macro") ? "in a macro" : "targeting " + e.pf) + " (for "+core.Globals.s_type_path(m)+")";
+				var pack = e.a.pack; var m = e.a.m; var p = e.a.p; var pl = e.pl; var pf = e.pf;
+				var string_value = "You cannot access the "+pack+ " package while "+ ( (pf == "macro") ? "in a macro" : "targeting " + pf) + " (for "+core.Globals.s_type_path(m)+")";
 				error(ctx, string_value, p);
-				var lp = e.pl.copy();
-				lp.reverse();
-				for (element in lp) {
-					error(ctx, "    referenced here", element);
-				}
+				List.iter(error.bind(ctx, "    referenced here"), List.rev(pl));
 			}
 		}
 		catch (e:macros.hlmacro.Error) {
-			var p = e.p[0];
-			message(ctx, CMError(e.s, p));
-			for (index in 1...e.p.length) {
-				message(ctx, CMError("Called from", e.p[index]));
+			var msg = e.s;
+			switch (e.p) {
+				case p::l:
+					message(ctx, CMError(msg, p));
+					List.iter(function (p) {
+						message(ctx, CMError("Called from", p));
+					}, l);
+					error(ctx, "Aborted", core.Globals.null_pos);
+				case _: throw e;
 			}
-			error(ctx, "Aborted", core.Globals.null_pos);
 		}
 		catch (e:typing.Typeload.GenericException) {
 			error(ctx, e.s, e.p);
@@ -1196,6 +1182,7 @@ class Main {
 		catch (e:String) { throw e; }
 		catch (e:Bool) { throw e; }
 		catch (e:Dynamic) {
+			trace("Exception  Dynamic");
 			var orp = std.Sys.getEnv("OCAMLRUNPARAM");
 			if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
 				error(ctx, ""+e, core.Globals.null_pos);

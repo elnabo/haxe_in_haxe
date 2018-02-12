@@ -1,12 +1,13 @@
 package context.common;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
 typedef Cache = {
-	c_haxelib : Map<Array<String>, Array<String>>,
+	c_haxelib : Map<ImmutableList<String>, ImmutableList<String>>,
 	c_files : Map<{file:String, sign:String}, {f:Float, data:core.Ast.Package}>,
 	c_modules : Map<{path:core.Path, s:String}, core.Type.ModuleDef>,
-	c_directories : Map<String, Array<{s:String, e:{s:String, f:Float}}>>
+	c_directories : Map<String, ImmutableList<{s:String, e:{s:String, f:Float}}>>
 }
 
 
@@ -23,15 +24,15 @@ class CompilationServer {
 
 	public static function create_cache () : Cache {
 		return {
-			c_haxelib : new Map<Array<String>, Array<String>>(),
+			c_haxelib : new Map<ImmutableList<String>, ImmutableList<String>>(),
 			c_files : new Map<{file:String, sign:String}, {f:Float, data:core.Ast.Package}>(),
 			c_modules : new Map<{path:core.Path, s:String}, core.Type.ModuleDef>(),
-			c_directories : new Map<String, Array<{s:String, e:{s:String, f:Float}}>>()
+			c_directories : new Map<String, ImmutableList<{s:String, e:{s:String, f:Float}}>>()
 		}
 	}
 
 	public static function create () : context.common.compilationserver.T {
-		var cs = {
+		var cs:context.common.compilationserver.T = {
 			cache : create_cache(),
 			signs : []
 		};

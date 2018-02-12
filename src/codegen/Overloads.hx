@@ -1,6 +1,7 @@
 package codegen;
 
 import haxe.ds.Option;
+import ocaml.List;
 
 class Overloads {
 	public static function same_overload_args (?get_vmtype:Option<core.Type.T->core.Type.T>, t1:core.Type.T, t2:core.Type.T, f1:core.Type.TClassField, f2:core.Type.TClassField) : Bool {
@@ -8,7 +9,7 @@ class Overloads {
 			case None: function (f) { return f; };
 			case Some(f): f;
 		}
-		if (f1.cf_params.length != f2.cf_params.length) {
+		if (List.length(f1.cf_params) != List.length(f2.cf_params)) {
 			return false;
 		}
 		function follow_skip_null (t:core.Type.T) : core.Type.T {
@@ -20,8 +21,8 @@ class Overloads {
 					}
 				case TLazy(f):
 					follow_skip_null(core.Type.lazy_type(f));
-				case TAbstract(a={a_path:path}, arr) if (path.a.length==0 && path.b == "Null" && arr.length == 1):
-					TAbstract(a, [core.Type.follow(arr[0])]);
+				case TAbstract(a={a_path:{a:[], b:"Null"}}, [p]):
+					TAbstract(a, [core.Type.follow(p)]);
 				case TType (t, tl):
 					follow_skip_null(core.Type.apply_params(t.t_params, tl, t.t_type));
 				case _: t;
@@ -38,11 +39,11 @@ class Overloads {
 			}
 		}
 		
-		var _tmp = core.Type.follow(core.Type.apply_params(f1.cf_params, f2.cf_params.map(function (a) { return a.t; }), t1));
+		var _tmp = core.Type.follow(core.Type.apply_params(f1.cf_params, List.map(function (a) { return a.t; }, f2.cf_params), t1));
 		return switch ({fst:_tmp, snd:core.Type.follow(t2)}) {
 			case {fst:TFun(f1), snd:TFun(f2)}:
 				try {
-					ocaml.List.for_all2(function (arg1, arg2) {
+					List.for_all2(function (arg1, arg2) {
 						return same_arg(arg1.t, arg2.t);
 					}, f1.args, f2.args);
 				}

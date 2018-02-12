@@ -1,6 +1,8 @@
 package syntax;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.List;
 
 enum DeclFlag {
 	DPrivate;
@@ -89,20 +91,13 @@ class Parser {
 	}
 
 
-	public static function type_path(sl:Array<String>, in_import:Bool) : Dynamic {
-		if (sl.length > 0) {
-			var n = sl[0];
-			var c = n.charCodeAt(0);
-
-			if (c >= "A".code && c <= "Z".code){
-				var l = sl.slice(1);
-				l.reverse();
-				throw new syntax.parser.TypePath(l, Some({c:n, cur_package:false}), in_import);
-			}
+	public static function type_path(sl:ImmutableList<String>, in_import:Bool) : Dynamic {
+		return switch (sl) {
+			case n::l if (n.charCodeAt(0) >= "A".code && n.charCodeAt(0)<="Z".code):
+				throw new syntax.parser.TypePath(List.rev(l), Some({c:n, cur_package:false}), in_import);
+			case _:
+				throw new syntax.parser.TypePath(List.rev(sl),None,in_import);
 		}
-		var l = sl.copy();
-		l.reverse();
-		throw new syntax.parser.TypePath(l,None,in_import);
 	}
 
 	public static inline function is_resuming_file (file:String) {
