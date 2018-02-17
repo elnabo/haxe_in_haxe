@@ -10,7 +10,7 @@ using ocaml.Cloner;
 using haxe.EnumTools.EnumValueTools;
 // import haxe.EnumTools.EnumValueTools;
 
-// using equals.Equal;
+using equals.Equal;
 
 class Forbid_package {
 	public var a:{pack:String,m:core.Path, p:core.Globals.Pos};
@@ -233,8 +233,9 @@ class Typecore {
 						{fst:p2, snd:l}::loop(rest);
 					}
 					else {
-						var _tmp:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = [{fst:p, snd:[f]}, {fst:p2, snd:l}];
-						List.concat(_tmp,rest);
+						var _tmp1:{fst:TyperPass, snd:ImmutableList<Void->Void>} = {fst:p, snd:[f]};
+						var _tmp2:{fst:TyperPass, snd:ImmutableList<Void->Void>} = {fst:p2, snd:l};
+						_tmp1 :: _tmp2 :: rest;
 					}
 			}
 		}
@@ -251,8 +252,9 @@ class Typecore {
 						{fst:p2, snd:l}::loop(rest);
 					}
 					else {
-						var _tmp:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = [{fst:p, snd:[f]}, {fst:p2, snd:l}];
-						List.concat(_tmp,rest);
+						var _tmp1:{fst:TyperPass, snd:ImmutableList<Void->Void>} = {fst:p, snd:[f]};
+						var _tmp2:{fst:TyperPass, snd:ImmutableList<Void->Void>} = {fst:p2, snd:l};
+						_tmp1 :: _tmp2 :: rest;
 					}
 			}
 		}
@@ -303,7 +305,7 @@ class Typecore {
 	}
 
 	static function compareTyperPass (a:TyperPass, b:TyperPass) : Int {
-		if (a == b) { return 0; }
+		if (a.equals(b)) { return 0; }
 		return (typerPassToInt(a) > typerPassToInt(b)) ? 1 : -1;
 	}
 

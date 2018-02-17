@@ -5,11 +5,18 @@ import haxe.ds.ImmutableList;
 using equals.Equal;
 
 class List {
-	public static function concat<T> (a : ImmutableList<T>, b : ImmutableList<T> ) : ImmutableList<T> {
+	public static function append<T> (a : ImmutableList<T>, b : ImmutableList<T> ) : ImmutableList<T> {
 		return switch (a) {
 			case Tl: b;
 			case Hd(v, tl):
-				v::concat(tl, b);
+				v::append(tl, b);
+		}
+	}
+
+	public static function concat<T>(l:ImmutableList<ImmutableList<T>>) : ImmutableList<T> {
+		return switch (l) {
+			case Tl: Tl;
+			case Hd(v, tl): append(v, concat(tl));
 		}
 	}
 

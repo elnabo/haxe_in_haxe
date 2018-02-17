@@ -592,7 +592,7 @@ class ClassInitializer {
 							}
 							function resolve_m (args) {
 								try {
-									context.Typecore.unify_raise(ctx, t, core.Type.tfun([tthis].concat(args), m), cf.cf_pos);
+									context.Typecore.unify_raise(ctx, t, core.Type.tfun(tthis ::args, m), cf.cf_pos);
 								}
 								catch (err:core.Error) {
 									switch (err.msg) {
@@ -842,8 +842,8 @@ class ClassInitializer {
 			core.Error.error(f.cff_name.pack+": You can't have both 'inline' and 'dynamic'", p);
 		}
 		ctx.type_params = switch (cctx._abstract) {
-			case Some(a) if (fctx.is_abstract_member): List.concat(params, a.a_params);
-			case _: (fctx.is_static) ? params: List.concat(params, ctx.type_params);
+			case Some(a) if (fctx.is_abstract_member): List.append(params, a.a_params);
+			case _: (fctx.is_static) ? params: List.append(params, ctx.type_params);
 		}
 		// TODO is_lib: avoid forcing the return type to be typed
 		var ret = (fctx.field_kind == FKConstructor) ? ctx.t.tvoid : type_opt(ctx, cctx, p, fd.f_type);
@@ -977,6 +977,215 @@ class ClassInitializer {
 		return cf;
 	}
 
+	public static function create_property (ctx:context.Typecore.Typer, cctx:Class_init_ctx, fctx:Field_init_ctx, c:core.Type.TClass, f:core.Ast.ClassField, get:core.Ast.PlacedName, set:core.Ast.PlacedName, t:Option<core.Ast.TypeHint>, eo:Option<core.Ast.Expr>, p:core.Globals.Pos) : core.Type.TClassField {
+		var name = f.cff_name.pack;
+		switch (cctx._abstract) {
+			case Some(a) if (fctx.is_abstract_member):
+				ctx.type_params = a.a_params;
+			case _:
+		}
+		// TODO is_lib: lazify load_complex_type
+		var ret = switch {f:t, s:eo} {
+			case {f:None, s:None}: core.Error.error(name +": Property must either define a type or a default value", p);
+			case {f:None}: core.Type.mk_mono();
+			case {f:Some(t)}: typing.Typeload.load_complex_type(ctx, true, p, t);
+		}
+		var _tmp = switch (cctx._abstract) {
+			case Some(a) if (fctx.is_abstract_member):
+				if (core.Meta.has(IsVar, f.cff_meta)) {
+					core.Error.error(name + ": Abstract properties cannot be real variables", f.cff_pos);
+				}
+				var ta = core.Type.apply_params(a.a_params, List.map(function (p) { return p.t; }, a.a_params), a.a_this);
+				{fst:core.Type.tfun([ta], ret), snd:core.Type.tfun([ta, ret], ret)};
+			case _:
+				{fst:core.Type.tfun([], ret), snd:core.Type.T.TFun({args:[{name:"value", opt:false, t:ret}], ret:ret})}
+		}
+		var t_get = _tmp.fst; var t_set = _tmp.snd;
+		function find_accessor(m:String) {
+			// on pf_overload platforms, the getter/setter may have been defined as an overloaded function; get all overloads
+			return if (ctx.com.config.pf_overload) {
+				if (fctx.is_static) {
+					var f = PMap.find(m, c.cl_statics);
+					{fst:f.cf_type, snd:f} :: List.map(function (f:core.Type.TClassField) {return {fst:f.cf_type, snd:f}; }, f.cf_overloads);
+				}
+				else {
+					codegen.Overloads.get_overloads(c, m);
+				}
+			}
+			else {
+				if (fctx.is_static) {
+					var f = PMap.find(m, c.cl_statics);
+					[{fst:f.cf_type, snd:f}];
+				}
+				else {
+					switch (core.Type.class_field(c, List.map(function (p) {return p.t;}, c.cl_params), m)) {
+						case {snd:t, trd:f}: [{fst:t, snd:f}];
+					}
+				}
+			}
+		}
+		function check_method (m:String, t:core.Type.T, req_name:Option<String>) : Void {
+			if (ctx.com.display.dms_error_policy == EPIgnore) {
+				try {
+					var overloads = find_accessor(m);
+					// choose the correct overload if and only if there is more than one overload found
+					function get_overload (overl:ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}>) {
+						return switch (overl) {
+							case [tf] : tf;
+							case {fst:t2, snd:f2}::overl:
+								if (core.Type.type_iseq(t, t2)) {
+									{fst:t2, snd:f2};
+								}
+								else {
+									get_overload(overl);
+								}
+							case []:
+								if (c.cl_interface) {
+									throw ocaml.Not_found.instance;
+								}
+								else {
+									throw new core.Error(Custom('No overloaded method named ${m} was compatible with the property ${name} with expected type ${core.Type.s_type(core.Type.print_context(), t)}'), p);
+								}
+						}
+						var _tmp = get_overload(overloads);
+						var t2 = _tmp.fst; var f2 = _tmp.snd;
+						// accessors must be public on As3 (issue #1872)
+						if (context.Common.defined(ctx.com, As3)) {
+							f2.cf_meta = ({name:Public, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f2.cf_meta;
+						}
+						switch (f2.cf_kind) {
+							case Method(MethMacro):
+								context.Typecore.display_error(ctx, f2.cf_name + ": Macro methods cannot be used as property accessor", p);
+								context.Typecore.display_error(ctx, f2.cf_name + ": Accessor method is here", f2.cf_pos);
+							case _:
+						}
+						context.Typecore.unify_raise(ctx, t2, t, f2.cf_pos);
+						if ((fctx.is_abstract_member && !core.Meta.has(Impl, f2.cf_meta)) || (core.Meta.has(Impl, f2.cf_meta) && !fctx.is_abstract_member)) {
+							context.Typecore.display_error(ctx, "Mixing abstract implementation and static properties/accessors is not allowed", f2.cf_pos);
+						}
+						switch (req_name) {
+							case None:
+							case Some(n):
+								context.Typecore.display_error(ctx, "Please use " + n + " to name your property access method", f2.cf_pos);
+						}
+						f2.cf_meta = List.fold_left(function (acc:core.Ast.Metadata, meta:core.Ast.MetadataEntry) {
+							var m = meta.name;
+							return switch (m) {
+								case Deprecated: meta::acc;
+								case _: acc;
+							}
+						}, f2.cf_meta, f.cff_meta);
+					}
+				}
+				catch (err:core.Error) {
+					switch (err.msg) {
+						case Unify(l): throw new core.Error(Stack(Custom("In method " + m + " required by property " + name), Unify(l)), p);
+						case _: throw err;
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					if (req_name != None) {
+						context.Typecore.display_error(ctx, name + ": Custom property accessor is no longer supported, please use get/set", p);
+					}
+					else {
+						if (c.cl_interface) {
+							var cf = core.Type.mk_field(m, t, p, core.Globals.null_pos);
+							cf.cf_meta = [{name:CompilerGenerated, params:[], pos:core.Globals.null_pos}];
+							cf.cf_kind = Method(MethNormal);
+							c.cl_fields = PMap.add(cf.cf_name, cf, c.cl_fields);
+							c.cl_ordered_fields = cf :: c.cl_ordered_fields;
+						}
+						else if (!c.cl_extern) {
+							try {
+								var _tmp = if (!fctx.is_static) {
+									var f = PMap.find(m, c.cl_statics);
+									{fst:None, snd:f.cf_type, trd:f};
+								}
+								else {
+									core.Type.class_field(c, List.map(function(p) {return p.t;}, c.cl_params), m);
+								}
+								var f2 = _tmp.trd;
+								context.Typecore.display_error(ctx, 'Method ${m} is no valid accessor for ${name} because it is ${(fctx.is_static) ? "not " : ""}static', f2.cf_pos);
+							}
+							catch (_:ocaml.Not_found) {
+								context.Typecore.display_error(ctx, "Method " + m + " required by property " + name + " is missing", p);
+							}
+						}
+					}
+				}
+			}
+		}
+		
+		function display_accessor (m:String, p:core.Globals.Pos) {
+			try {
+				var cf = switch (find_accessor(m)) {
+					case [{snd:cf}]: cf;
+					case _: throw ocaml.Not_found.instance;
+				}
+				context.display.DisplayEmitter.display_field(ctx.com.display, cf, p);
+			}
+			catch (_:ocaml.Not_found) {}
+		}
+		var delay_check = (c.cl_interface) ? context.Typecore.delay_late.bind(ctx, PBuildClass) : context.Typecore.delay.bind(ctx, PTypeField);
+		var get:core.Type.VarAccess = switch (get) {
+			case {pack:"null"}: AccNo;
+			case {pack:"dynamic"}: AccCall;
+			case {pack:"never"}: AccNever;
+			case {pack:"default"}: AccNormal;
+			case {pack:get, pos:pget}:
+				var get = (get == "get") ? "get_"+name : get;
+				if (fctx.is_display_field && context.Display.is_display_position(pget)) {
+					context.Typecore.delay(ctx, PTypeField, function () {
+						display_accessor(get, pget);
+					});
+					if (!cctx.is_lib) {
+						delay_check(function () {
+							check_method(get, t_get, (get != "get" && get != ("get_" + name)) ? Some("get_" + name) : None);
+						});
+					}
+				}
+				AccCall;
+		};
+		var set:core.Type.VarAccess = switch (set) {
+			case {pack:"null"}: 
+				//standard flash library read-only variables can't be accessed for writing, even in subclasses
+				var flag = switch (c.cl_path) { case {a:"flash"::_}: true; case _: false;};
+				if (c.cl_extern && flag && ctx.com.platform == Flash) {
+					AccNever;
+				}
+				else {
+					AccNo;
+				}
+			case {pack:"never"}: AccNever;
+			case {pack:"dynamic"}: AccCall;
+			case {pack:"default"}: AccNormal;
+			case {pack:set, pos:pset}:
+				var set = (set == "set") ? "set_"+name : set;
+				if (fctx.is_display_field && context.Display.is_display_position(pset)) {
+					context.Typecore.delay(ctx, PTypeField, function () {
+						display_accessor(set, pset);
+					});
+					if (!cctx.is_lib) {
+						delay_check(function () {
+							check_method(set, t_set, (set != "set" && set != ("set_" + name)) ? Some("set_" + name) : None);
+						});
+					}
+				}
+				AccCall;
+		};
+		if (set == AccNormal && switch (get) { case AccCall: true; case _: false;}) {
+			core.Error.error(name + ": Unsupported property combination", p);
+		}
+		var cf:core.Type.TClassField = core.Type.mk_field(name, ret, f.cff_pos, f.cff_name.pos);
+		cf.cf_doc = f.cff_doc;
+		cf.cf_meta = f.cff_meta;
+		cf.cf_kind = Var({v_read:get, v_write:set});
+		cf.cf_public = is_public(ctx, cctx, f.cff_access, None);
+		ctx.curfield = cf;
+		bind_var(ctx, cctx, fctx, cf, eo);
+		return cf;
+	}
+
 	public static function init_field (ctx:context.Typecore.Typer, cctx:Class_init_ctx, fctx:Field_init_ctx, f:core.Ast.ClassField) : core.Type.TClassField {
 		var c = cctx.tclass;
 		var name = f.cff_name.pack;
@@ -1007,8 +1216,7 @@ class ClassInitializer {
 			case FFun(fd):
 				create_method(ctx, cctx, fctx, c, f, fd, p);
 			case FProp(get, set, t, eo):
-				// create_property(ctx, cctx, fctx, c, f, , p);
-				trace("ClassInitializer.init_field: todo"); throw false;
+				create_property(ctx, cctx, fctx, c, f, get, set, t, eo, p);
 		}
 	}
 
@@ -1027,7 +1235,7 @@ class ClassInitializer {
 					}
 				}, f::f.cf_overloads);
 			}
-		}, List.concat(c.cl_ordered_fields, c.cl_ordered_statics));
+		}, List.append(c.cl_ordered_fields, c.cl_ordered_statics));
 	}
 
 	public static function init_class (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, context_init:Void->Void, herits:ImmutableList<core.Ast.ClassFlag>, fields:ImmutableList<core.Ast.ClassField>) {

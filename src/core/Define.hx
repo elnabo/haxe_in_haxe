@@ -449,7 +449,7 @@ class Define {
 				switch (f) {
 					case HasParam(s): // TODO
 					case Platform (p): pfs = p :: pfs;
-					case Platforms(pl): pfs = List.concat(pl,pfs);
+					case Platforms(pl): pfs = List.append(pl,pfs);
 				}
 				var pfs_string = core.Globals.platform_list_help(List.rev(pfs));
 				if (t.length > m) {

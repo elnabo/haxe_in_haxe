@@ -1,7 +1,9 @@
 package codegen;
 
+import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.List;
+import ocaml.PMap;
 
 class Overloads {
 	public static function same_overload_args (?get_vmtype:Option<core.Type.T->core.Type.T>, t1:core.Type.T, t2:core.Type.T, f1:core.Type.TClassField, f2:core.Type.TClassField) : Bool {
@@ -52,5 +54,47 @@ class Overloads {
 				}
 			case _: throw false;
 		}
+	}
+
+	// retrieves all overloads from class c and field i, as (Type.t * tclass_field) list
+	public static function get_overloads (c:core.Type.TClass, i:String) : ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}> {
+		var ret:ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}> = try {
+			var f = PMap.find(i, c.cl_fields);
+			switch (f.cf_kind) {
+				case Var(_):
+					// @:libType may generate classes that have a variable field in a superclass of an overloaded method
+					[];
+				case Method(_):
+					{fst:f.cf_type, snd:f} :: List.map(function (f:core.Type.TClassField) { return {fst:f.cf_type , snd:f}; }, f.cf_overloads);
+			}
+		}
+		catch (_:ocaml.Not_found) { 
+			Tl; // [];
+		}
+		var rsup = switch (c.cl_super) {
+			case None if (c.cl_interface):
+				var ifaces = List.concat(List.map(function (p1:{c:core.Type.TClass, params:core.Type.TParams}) {
+					var c = p1.c; var tl = p1.params;
+					return List.map(function (p2) {
+						var t = p2.fst; var f = p2.snd;
+						return {fst:core.Type.apply_params(c.cl_params, tl, t), snd:f};
+					}, get_overloads(c, i));
+				}, c.cl_implements));
+				List.append(ret, ifaces);
+			case None: ret;
+			case Some({c:c, params:tl}):
+				List.append(ret, List.map(function (p) {
+					var t = p.fst; var f = p.snd;
+					return {fst:core.Type.apply_params(c.cl_params, tl, t), snd:f};
+				}, get_overloads(c, i)));
+		}
+
+		return List.append(ret, List.filter(function (p:{fst:core.Type.T, snd:core.Type.TClassField}) {
+				var t = p.fst; var f = p.snd;
+				return !List.exists(function (p2:{fst:core.Type.T, snd:core.Type.TClassField}) {
+					var t2 = p2.fst; var f2 = p2.snd;
+					return same_overload_args(None, t, t2, f, f2);
+				}, ret);
+			}, rsup));
 	}
 }

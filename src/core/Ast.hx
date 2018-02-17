@@ -5,6 +5,7 @@ import core.Meta.StrictMeta;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.List;
+import ocaml.PMap;
 
 using equals.Equal;
 
@@ -476,6 +477,24 @@ class Ast {
 		return null;
 	}
 
+	public static function get_value_meta (meta:core.Ast.Metadata) : Map<String, Expr> {
+		return try {
+			switch (core.Meta.get(Value, meta)) {
+				case {params:[{expr:EObjectDecl(values)}]}:
+					List.fold_left(function (acc:Map<String, Expr>, a:ObjectField) {
+						var s = a.name; var e = a.expr;
+						return PMap.add(s, e, acc);
+					}, new Map<String, Expr>(), values);
+				case _: throw ocaml.Not_found.instance;
+			}
+		}
+		catch (_:ocaml.Not_found) {
+			new Map<String, Expr>();
+		}
+	}
+
+	// Type path related functions
+
 	public static function s_escape (?hex:Bool=true, s:String) : String {
 		var b = new StringBuf();
 		for (i in 0...s.length) {
@@ -701,10 +720,10 @@ class Ast {
 
 	public static function full_dot_path(mpath:core.Path, tpath:core.Path) : ImmutableList<String> {
 		if (mpath.equals(tpath)) {
-			return List.concat(tpath.a, [tpath.b]);
+			return List.append(tpath.a, [tpath.b]);
 		}
 		else {
-			return List.concat(tpath.a, [mpath.b, tpath.b]);
+			return List.append(tpath.a, [mpath.b, tpath.b]);
 		}
 	}
 }

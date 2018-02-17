@@ -97,7 +97,7 @@ class Typer {
 		if (List.length(fl) > 0) {
 			function loop(handled_types:ImmutableList<core.Type.ModuleType>) {
 				var all_types = Hashtbl.fold(function (_, m, acc:ImmutableList<core.Type.ModuleType>) {
-					return List.concat(m.m_types, acc);
+					return List.append(m.m_types, acc);
 				}, ctx.g.modules, []);
 				switch (List.filter(function (mt:core.Type.ModuleType){ return !List.memq(mt, handled_types);}, all_types)) {
 					case []:
@@ -328,7 +328,7 @@ class Typer {
 		}
 		catch (e:core.Error) {
 			switch (e.msg) {
-				case Module_not_found(p) if (p == new core.Path([], "StdTypes")): 
+				case Module_not_found(p) if (p.equals(new core.Path([], "StdTypes"))): 
 					core.Error.error("Standard library not found", core.Globals.null_pos);
 				default: throw e;
 			}

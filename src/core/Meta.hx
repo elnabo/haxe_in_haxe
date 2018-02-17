@@ -758,9 +758,9 @@ class Meta {
 				switch (value) {
 					case HasParam(s): params.set(s::params.get());
 					case Platform(f): pfs.set(f::pfs.get());
-					case Platforms(fl): pfs.set(List.concat(fl,pfs.get()));
+					case Platforms(fl): pfs.set(List.append(fl,pfs.get()));
 					case UsedOn(u): used.set(u::used.get());
-					case UsedOnEither(ul): used.set(List.concat(ul,used.get()));
+					case UsedOnEither(ul): used.set(List.append(ul,used.get()));
 					case UsedInternally: throw false;
 				}
 			}, flags);

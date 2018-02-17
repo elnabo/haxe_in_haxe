@@ -3,6 +3,8 @@ package compiler;
 import haxe.ds.ImmutableList;
 import ocaml.List;
 
+using equals.Equal;
+
 enum DOException {
 	Completion(s:String);
 }
@@ -95,7 +97,8 @@ class DisplayOutput {
 		trace("TODO finish compiler.DisplayOutput.print_type");
 		var b = new StringBuf();
 		var null_pos = core.Globals.null_pos;
-		if (p.pfile == null_pos.pfile && p.pmin == null_pos.pmin && p.pmax == null_pos.pmax) {
+		// if (p.pfile == null_pos.pfile && p.pmin == null_pos.pmin && p.pmax == null_pos.pmax) {
+		if (p.equals(null_pos)) {
 			b.add("<type");
 		}
 		else {

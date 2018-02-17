@@ -3,7 +3,7 @@ package core;
 import haxe.ds.ImmutableList;
 
 using equals.Equal;
-using ocaml.List;
+// using ocaml.List;
 
 class Path {
 
@@ -15,20 +15,8 @@ class Path {
 		this.b = b;
 	}
 
-	@:op(A == B) static inline function equals (a:Path, b:Path) : Bool {
-		return a.equals(b);
-	}
-
-	@:op(A != B) static inline function diff (a:Path, b:Path) : Bool {
-		return !a.equals(b);
-	}
-
-	public static inline function compare (a:Path, b:Path) : Int {
-		return gt(a, b);
-	}
-
-	@:op(A > B) static function gt (a:Path, b:Path) : Int {
-		if (a == b) { return 0; }
+	public static function compare (a:Path, b:Path) : Int {
+		if (a.equals(b)) { return 0; }
 
 		var _a:Array<String> = a.a;
 		var _b:Array<String> = b.a;
@@ -48,10 +36,6 @@ class Path {
 		if (a.b > b.b) { return 1; }
 		if (a.b < b.b) { return -1; }
 		return 0;
-	}
-
-	@:op(A < B) static function lt (a:Path, b:Path) : Int {
-		return -1*gt(a,b);
 	}
 
 	/*

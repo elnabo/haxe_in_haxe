@@ -1,7 +1,7 @@
 package context;
 
 import core.Globals;
-// import core.Define.StrictDefined;
+using equals.Equal;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
@@ -239,9 +239,7 @@ class Common {
 				str = "Warning : " + s;
 				pos = p;
 		}
-		if (pos.pfile == core.Globals.null_pos.pfile &&
-			pos.pmax == core.Globals.null_pos.pmax &&
-			pos.pmin == core.Globals.null_pos.pmin) {
+		if (pos.equals(core.Globals.null_pos)) {
 			return str;
 		}
 		else {

@@ -12,6 +12,7 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import sys.io.Process;
 
+using equals.Equal;
 // using ocaml.List;
 
 using StringTools;
@@ -49,7 +50,7 @@ class Initialize {
 		function add_std(dir:String) : Void {
 			var p1 = List.filter(function(s:String) { return !List.mem(s,com.std_path); }, com.class_path);
 			var p2 = List.map(function (p) { return p + dir + "/_std/"; }, com.std_path);
-			com.class_path = List.concat(p1, List.concat(p2,com.std_path));
+			com.class_path = List.append(p1, List.append(p2,com.std_path));
 		}
 		return switch (com.platform) {
 			case Cross:
@@ -397,13 +398,13 @@ class Main {
 		function loop (acc:ImmutableList<String>, l:ImmutableList<String>) : Void {
 			switch (l) {
 				case []: 
-					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
+					var ctx = create(List.append(each_params.get(), List.rev(acc)));
 					init(ctx);
 					ctx.flush();
 				case "--next"::l if (acc == []): // skip empty --next
 					loop([], l);
 				case "--next"::l:
-					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
+					var ctx = create(List.append(each_params.get(), List.rev(acc)));
 					ctx.has_next = true;
 					init(ctx);
 					ctx.flush();
@@ -440,14 +441,14 @@ class Main {
 							catch (_:Dynamic) {
 								throw new ocaml.Arg.Bad("Invalid port");
 							}
-							compiler.Server.do_connect(host, port, List.concat(acc, List.rev(l)));
+							compiler.Server.do_connect(host, port, List.append(acc, List.rev(l)));
 						case Some(_):
 							// already connected : skip
 							loop(acc, l);
 					}
 				case "--run"::(cl::args):
-					var acc = List.concat([cl, "--main", "--interp"], acc);
-					var ctx = create(List.concat(each_params.get(), List.rev(acc)));
+					var acc = List.append([cl, "--main", "--interp"], acc);
+					var ctx = create(List.append(each_params.get(), List.rev(acc)));
 					ctx.com.sys_args = args;
 					init(ctx);
 					ctx.flush();
@@ -458,7 +459,7 @@ class Main {
 							var acc = acc;
 							var l:ImmutableList<String> = l;
 							try {
-								l = List.concat(compiler.Server.parse_hxml(arg), l);
+								l = List.append(compiler.Server.parse_hxml(arg), l);
 							}
 							catch (_:ocaml.Not_found) {
 								acc = (arg + " (file not found)")::acc;
@@ -927,7 +928,8 @@ class Main {
 			}
 			com.config = context.Common.get_config(com); // make sure to adapt all flags changes defined after platform
 			List.iter(function (f) { f(); }, List.rev(pre_compilation));
-			if (classes.equals(Hd(new core.Path([], "Std"), Tl)) && !force_typing) {
+			var _tmp:ImmutableList<core.Path> = new core.Path([], "Std")::[];
+			if (classes.equals(_tmp) && !force_typing) {
 				var empty_func = S_Unit(function () {});
 				var help_spec = basic_args_spec.concat([
 					{arg:"-help", spec: empty_func, doc:": show extended help information"},
@@ -1109,7 +1111,7 @@ class Main {
 					}, fields);
 					fields = if (Server.measure_times) {
 						core.Timer.close_times();
-						List.concat(List.map(function (element) {
+						List.append(List.map(function (element) {
 							return {
 								name: "@TIME "+element.a,
 								kind: context.Display.DisplayFieldKind.FKTimer(element.b),
@@ -1139,7 +1141,7 @@ class Main {
 				case DisplayToplevel(il):
 					var il = if (Server.measure_times) {
 						core.Timer.close_times();
-						List.concat(List.map(function (element) {
+						List.append(List.map(function (element) {
 							return context.common.identifiertype.T.ITTimer("@TIME "+element.a + ": "+element.b);
 						}, DisplayOutput.get_timer_fields(Server.start_time)), il);
 					}

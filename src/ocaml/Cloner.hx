@@ -9,6 +9,7 @@ import haxe.io.Bytes;
 class Cloner {
 
 	static function _clone<T> (v:T, existing:ObjectMap<Dynamic,Dynamic>) : T {
+		return v; // ?
 		var base:Dynamic = null;
 		switch (Type.typeof(v)) {
 			case TNull, TInt, TFloat, TBool, TFunction: // immutable
@@ -21,6 +22,7 @@ class Cloner {
 				return EnumTools.createByIndex(e, index, params);
 			case TClass(_):
 				if (Std.is(v, String)) { return v; }
+				if (Std.is(v, haxe.ds.ImmutableList)) { return v; }
 				if (Std.is(v, Array)) { return cast [ for (e in cast(v, Array<Dynamic>)) _clone(e, existing) ]; }
 				if (Std.is(v, Date)) { return cast Date.fromTime(cast(v, Date).getTime()); }
 				if (Std.is(v, Bytes)) { return cast Bytes.ofData(cast clone(cast (v, Bytes).getData())); }

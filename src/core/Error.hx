@@ -82,10 +82,10 @@ class Error {
 				switch ({fst:a, snd:b}) {
 					case {fst:Var(va), snd:Var(vb)}:
 						var name:String; var stra:String; var strb:String;
-						if (va.v_read == vb.v_read) {
+						if (va.v_read.equals(vb.v_read)) {
 							name = "setter"; stra = core.Type.s_access(false, va.v_write); strb = core.Type.s_access(false, vb.v_write);
 						}
-						else if (va.v_write == vb.v_write) {
+						else if (va.v_write.equals(vb.v_write)) {
 							name = "getter"; stra = core.Type.s_access(true, va.v_read); strb = core.Type.s_access(true, vb.v_read);
 						}
 						else {

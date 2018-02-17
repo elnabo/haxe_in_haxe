@@ -5,6 +5,8 @@ import haxe.ds.Option;
 import ocaml.List;
 import ocaml.PMap;
 
+using equals.Equal;
+
 class Codegen {
 
 	/*
@@ -18,7 +20,7 @@ class Codegen {
 				case None:
 					throw ocaml.Not_found.instance;
 				case Some(v):
-					if (v.c.cl_path == new core.Path(["cpp"], "FastIterator")) {
+					if (v.c.cl_path.equals(new core.Path(["cpp"], "FastIterator"))) {
 						throw ocaml.Not_found.instance; // This is a strongly typed 'extern' and the usual rules don't apply
 					}
 					find_field(com, v.c, f);
@@ -143,7 +145,7 @@ class Codegen {
 				if (c.cl_interface) {
 					c.cl_ordered_fields = List.filter(function (f:core.Type.TClassField) {
 						try {
-							if (find_field(com, c, f) == f) { throw ocaml.Not_found.instance; }
+							if (find_field(com, c, f).equals(f)) { throw ocaml.Not_found.instance; }
 							c.cl_fields = PMap.remove(f.cf_name, c.cl_fields);
 							return false;
 						}

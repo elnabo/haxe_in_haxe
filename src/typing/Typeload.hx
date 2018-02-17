@@ -53,7 +53,7 @@ class Typeload {
 			var policy = mcp.mcps;
 			var recursive = mcp.b;
 			if (core.Ast.match_path(recursive, sl1, sl2)) {
-				return List.concat(policy, acc);
+				return List.append(policy, acc);
 			}
 			else {
 				return acc;
@@ -85,7 +85,7 @@ class Typeload {
 				core.Error.error("Type name " + name + " is already defined in this module", loadp);
 			}
 			if (priv) {
-				return new core.Path(List.concat(m.m_path.a,["_"+m.m_path.b]), name);
+				return new core.Path(List.append(m.m_path.a,["_"+m.m_path.b]), name);
 			}
 			else {
 				return new core.Path(m.m_path.a, name);
@@ -382,7 +382,7 @@ class Typeload {
 			}
 			function path_matches (t2:core.Type.ModuleType) {
 				var tp = core.Type.t_path(t2);
-				return  (tp == new core.Path(t.tpackage, tname)) || (no_pack && tp.b == tname);
+				return tp.equals(new core.Path(t.tpackage, tname)) || (no_pack && tp.b == tname);
 			}
 			try {
 				List.find(path_matches, ctx.m.curmod.m_types);
@@ -403,7 +403,7 @@ class Typeload {
 				}
 				catch (err:core.Error) {
 					switch (err.msg) {
-						case Module_not_found(_) if (p == err.pos) :
+						case Module_not_found(_) if (p.equals(err.pos)) :
 							switch (t.tpackage) {
 								case "std"::l:
 									t = {
@@ -814,7 +814,7 @@ class Typeload {
 					}
 					var pub = new Ref(true);
 					var dyn = new Ref(false);
-					var params = new Ref([]);
+					var params = new Ref<core.Type.TypeParams>([]);
 					var final_ = new Ref(false);
 					List.iter(function (a:core.Ast.Access) {
 						switch (a) {
@@ -846,7 +846,7 @@ class Typeload {
 							params.set(type_function_params_rec.get()(ctx, fd, f.cff_name.pack, p));
 							no_expr(fd.f_expr);
 							var old = ctx.type_params;
-							ctx.type_params = params.get().concat(old);
+							ctx.type_params = List.append(params.get(),old);
 							var args = List.map(function (farg) {
 								no_expr(farg.value);
 								return {name:farg.name.pack, opt:farg.opt, t:topt(farg.type)};
@@ -945,7 +945,7 @@ class Typeload {
 							ctx.type_params = List.filter( function(t) { return !ocaml.List.mem(t, cf.cf_params); }, ctx.type_params);
 					}
 					var params = type_function_params_rec.get()(ctx, f, cf.cf_name, p);
-					ctx.type_params = List.concat(params, ctx.type_params);
+					ctx.type_params = List.append(params, ctx.type_params);
 					function topt (t) {
 						return switch (t) {
 							case None: core.Error.error("Explicit type required", p);
@@ -1059,7 +1059,7 @@ class Typeload {
 	// Structure check
 
 	public static function check_overriding (ctx:context.Typecore.Typer, c:core.Type.TClass, f:core.Type.TClassField) : Void {
-		trace("Typeload.check_overriding");
+		trace("TODO: Typeload.check_overriding");
 		throw false;
 	}
 
@@ -1205,7 +1205,99 @@ class Typeload {
 	// end of strict meta handling
 
 	public static function add_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, force_constructor:Bool, p:core.Globals.Pos) : Void {
-		trace("TODO: typing.Typeload.add_constructor");
+		switch ({f:c.cl_constructor, s:c.cl_super}) {
+			case {f:None, s:Some({c:csup={cl_constructor:Some(cfsup)}, params:cparams})} if (!c.cl_extern):
+				var cf:core.Type.TClassField = cfsup.clone();
+				cf.cf_pos = p;
+				cf.cf_meta = List.filter(function (meta:core.Ast.MetadataEntry) { return meta.name == CompilerGenerated;}, cfsup.cf_meta);
+				cf.cf_doc = None;
+				cf.cf_expr = None;
+				var r = context.Typecore.exc_protect(ctx, function (r) {
+					var t = core.Type.mk_mono();
+					r.set(core.Type.lazy_processing(function () { return t; }));
+					var ctx = ctx.clone();
+					ctx.curfield = cf;
+					ctx.pass = PTypeField;
+					core.Type.follow(cfsup.cf_type); // make sure it's typed
+					if (ctx.com.config.pf_overload) {
+						List.iter(function (cf)  { core.Type.follow(cf.cf_type); }, cf.cf_overloads);
+					}
+					function map_arg (a:{v:core.Type.TVar, c:Option<core.Type.TConstant>}) : {fst:core.Type.TVar, snd:Option<core.Type.TConstant>} {
+						var v = a.v; var def = a.c;
+						/*
+							let's optimize a bit the output by not always copying the default value
+							into the inherited constructor when it's not necessary for the platform
+						*/
+						return switch ({f:ctx.com.platform, s:def}) {
+							case {s:Some(_)} if (!ctx.com.config.pf_static):
+								{fst:v, snd:Some(TNull)};
+							case {f:Flash, s:Some(TString(_))}:
+								{fst:v, snd:Some(TNull)};
+							case {f:Cpp, s:Some(TString(_))}:
+								{fst:v, snd:def};
+							case {f:Cpp, s:Some(_)}:
+								var _v = v.clone();
+								_v.v_type = ctx.t.tnull(v.v_type);
+								{fst:_v, snd:Some(TNull)};
+							case _:
+								{fst:v, snd:def};
+						}
+					}
+					var args = switch (cfsup.cf_expr) {
+						case Some({eexpr:TFunction(f)}):
+							List.map(map_arg, f.tf_args);
+						case _:
+							var values = core.Ast.get_value_meta(cfsup.cf_meta);
+							switch (core.Type.follow(cfsup.cf_type)) {
+								case TFun({args:args}):
+									List.map(function (a:core.Type.TSignatureArg) {
+										var n = a.name; var o = a.opt; var t = a.t;
+										var def:Option<core.Type.TConstant> = try {
+											type_function_arg_value(ctx, t, Some(PMap.find(n, values)), false); 
+										}
+										catch (_:ocaml.Not_found) {
+											(o) ? Some(TNull) : None;
+										}
+										return map_arg({v:core.Type.alloc_var(n, (o) ? ctx.t.tnull(t) : t, p), c:def}); // TODO: var pos
+									}, args);
+								case _: throw false;
+							}
+					}
+					var p = c.cl_pos;
+					var vars = List.map(function(p:{fst:core.Type.TVar, snd:Option<core.Type.TConstant>}) {
+						var v = p.fst; var def = p.snd;
+						return {v:core.Type.alloc_var(v.v_name, core.Type.apply_params(csup.cl_params, cparams, v.v_type), v.v_pos), c:def};
+					}, args);
+					var super_call = core.Type.mk(TCall(
+						core.Type.mk(TConst(TSuper), TInst(csup, cparams), p),
+						List.map(function (_tmp) {
+							var v = _tmp.v;
+							return core.Type.mk(TLocal(v), v.v_type, p);
+						}, vars)
+					), ctx.t.tvoid, p);
+					var constr = core.Type.mk(TFunction({tf_args:vars, tf_type:ctx.t.tvoid, tf_expr:super_call})
+						, TFun({args:List.map(function (_tmp) {
+								var v = _tmp.v; var c = _tmp.c;
+								return {name:v.v_name, opt:c!=None, t:v.v_type};
+						}, vars), ret:ctx.t.tvoid}), p);
+					cf.cf_expr = Some(constr);
+					cf.cf_type = t;
+					context.Typecore.unify(ctx, t, constr.etype, p);
+					return t;
+				}, "add_constructor");
+				cf.cf_type = TLazy(r);
+				c.cl_constructor = Some(cf);
+			case {f:None} if (force_constructor):
+				var constr = core.Type.mk(TFunction({tf_args:Tl, tf_type:ctx.t.tvoid, tf_expr:core.Type.mk(TBlock([]), ctx.t.tvoid, p)}),
+					core.Type.tfun([], ctx.t.tvoid), p);
+				var cf = core.Type.mk_field("new", constr.etype, p, core.Globals.null_pos);
+				cf.cf_expr = Some(constr);
+				cf.cf_type = constr.etype;
+				cf.cf_meta = [{name:CompilerGenerated, params:[], pos:core.Globals.null_pos}];
+				cf.cf_kind = Method(MethNormal);
+				c.cl_constructor = Some(cf);
+			case _: // nothing to do
+		}
 	}
 
 	public static function check_struct_init_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos) : Void {
@@ -1248,7 +1340,7 @@ class Typeload {
 
 	public static function type_type_param (?enum_constructor:Bool=false, ctx:context.Typecore.Typer, path:core.Path, get_params:Void->core.Type.TypeParams, p:core.Globals.Pos, tp:core.Ast.TypeParam) : {name:String, t:core.Type.T} {
 		var n = tp.tp_name.pack;
-		var c = core.Type.mk_class(ctx.m.curmod, new core.Path(List.concat(path.a, [path.b]), n), tp.tp_name.pos, tp.tp_name.pos); 
+		var c = core.Type.mk_class(ctx.m.curmod, new core.Path(List.append(path.a, [path.b]), n), tp.tp_name.pos, tp.tp_name.pos); 
 		c.cl_params = type_type_params(ctx, c.cl_path, get_params, p, tp.tp_params);
 		c.cl_kind = KTypeParameter([]);
 		c.cl_meta = tp.tp_meta.clone();
@@ -1267,7 +1359,7 @@ class Typeload {
 					r.set(core.Type.lazy_processing(function() { return t;}));
 					var _ctx = ctx.clone();
 					_ctx.g = ctx.g;
-					_ctx.type_params = List.concat(ctx.type_params, get_params());
+					_ctx.type_params = List.append(ctx.type_params, get_params());
 					var constr = List.map( function (e) { return load_complex_type(_ctx, true, p, e);}, tp.tp_constraints);
 					// check against direct recursion
 					function loop (t) {
@@ -1498,7 +1590,7 @@ class Typeload {
 				switch (e.eexpr) {
 					case TBlock(l):
 						var _e = e.clone();
-						_e.eexpr = TBlock([ev].concat(l));
+						_e.eexpr = TBlock(ev :: l);
 						_e;
 					case _: core.Type.mk(TBlock([ev, e]), e.etype, p);
 				}
@@ -1657,7 +1749,7 @@ class Typeload {
 			case None:
 				false;
 			case Some(s):
-				List.concat(sl1, [s]);
+				List.append(sl1, [s]);
 				true;
 		}
 		List.iter(function (gm) {
@@ -1678,7 +1770,7 @@ class Typeload {
 			case _: c.cl_path;
 		}
 		var h = try {
-			Some(ocaml.Hashtbl.find(ctx.g.type_patches, path));
+			Some(Hashtbl.find(ctx.g.type_patches, path));
 		}
 		catch (_:ocaml.Not_found) {
 			None;
@@ -1687,7 +1779,7 @@ class Typeload {
 			case None: fields;
 			case Some(v):
 				var h = v.map; var hcl = v.tp;
-				c.cl_meta = List.concat(c.cl_meta, hcl.tp_meta);
+				c.cl_meta = List.append(c.cl_meta, hcl.tp_meta);
 				function loop (acc:ImmutableList<core.Ast.ClassField>, l:ImmutableList<core.Ast.ClassField>) {
 					return switch(l) {
 						case []: acc;
@@ -1698,10 +1790,10 @@ class Typeload {
 									function param (p:core.Ast.FunArg) : core.Ast.FunArg {
 										try {
 											var t2 = try {
-												ocaml.Hashtbl.find(h, {s:"$"+f.cff_name.pack+ "__"+p.name.pack, b:false});
+												Hashtbl.find(h, {s:"$"+f.cff_name.pack+ "__"+p.name.pack, b:false});
 											}
 											catch (_:ocaml.Not_found) {
-												ocaml.Hashtbl.find(h, {s:"$"+p.name.pack, b:false});
+												Hashtbl.find(h, {s:"$"+p.name.pack, b:false});
 											}
 											return {name:p.name.clone(), opt:p.opt, meta:p.meta, type:switch (t2.tp_type) { case None: None; case Some(t): Some({ct:t, pos:core.Globals.null_pos});}, value:p.value};
 										}
@@ -1717,14 +1809,14 @@ class Typeload {
 							// other patches
 							var match = try {
 								var _tmp:core.Ast.Access = AStatic;
-								Some(ocaml.Hashtbl.find(h, {s:f.cff_name.pack, b:ocaml.List.mem(_tmp, f.cff_access)}));
+								Some(Hashtbl.find(h, {s:f.cff_name.pack, b:List.mem(_tmp, f.cff_access)}));
 							}
 							catch (_:ocaml.Not_found) { None; }
 							return switch (match) {
-								case None: loop([f].concat(acc), l);
+								case None: loop(f :: acc, l);
 								case Some({tp_remove:true}): loop(acc, l);
 								case Some(p):
-									f.cff_meta = List.concat(f.cff_meta, p.tp_meta);
+									f.cff_meta = List.append(f.cff_meta, p.tp_meta);
 									switch (p.tp_type) {
 										case None:
 										case Some(t):
@@ -1737,7 +1829,7 @@ class Typeload {
 													FFun(_f);
 											}
 									}
-									loop([f].concat(acc), l);
+									loop(f ::acc, l);
 							}
 					}
 				}
@@ -1990,7 +2082,7 @@ class Typeload {
 							var f = ctx.g.do_build_instance(ctx, t, p_type).f;
 							// create a temp private typedef, does not register it in module
 							return TTypeDecl({
-								t_path: new core.Path(List.concat(md.m_path.a,["_"+md.m_path.b]), name),
+								t_path: new core.Path(List.append(md.m_path.a,["_"+md.m_path.b]), name),
 								t_module: md,
 								t_pos: p,
 								t_name_pos: core.Globals.null_pos,
@@ -2024,7 +2116,7 @@ class Typeload {
 									case []:
 										switch (name) {
 											case None:
-												ctx.m.module_types = List.filter(no_private, List.concat(List.map(function (t) { return {mt:t, pos:p}; }, types), ctx.m.module_types));
+												ctx.m.module_types = List.filter(no_private, List.append(List.map(function (t) { return {mt:t, pos:p}; }, types), ctx.m.module_types));
 											case Some(newname):
 												ctx.m.module_types = {mt:rebind(get_type(tname), newname), pos:p} :: ctx.m.module_types;
 										}
@@ -2140,7 +2232,7 @@ class Typeload {
 					case None:
 						var md = ctx.g.do_load_module(ctx, new core.Path(t.tpackage, t.tname), p);
 						var types = List.filter(function (t) { return !core.Type.t_infos(t).mt_private; }, md.m_types);
-						ctx.m.module_types = List.concat(List.map(function (t) { return {mt:t, pos:p}; }, types),ctx.m.module_types);
+						ctx.m.module_types = List.append(List.map(function (t) { return {mt:t, pos:p}; }, types),ctx.m.module_types);
 						types;
 					case Some(_):
 						var t = load_type_def(ctx, p, t);
@@ -2164,7 +2256,7 @@ class Typeload {
 					return loop([], types);
 				}
 				context_init.set(function () {
-					ctx.m.module_using = List.concat(filter_classes(types), ctx.m.module_using);
+					ctx.m.module_using = List.append(filter_classes(types), ctx.m.module_using);
 				}::context_init.get());
 			case EClass(d):
 				var c = switch (get_type(d.d_name.pack)) { case TClassDecl(c): c; case _: throw false;};
@@ -2230,11 +2322,11 @@ class Typeload {
 					context.Typecore.delay(ctx, PTypeField, function () {
 						var metas = check_strict_meta(ctx, c.cl_meta);
 						if (metas != Tl) { // metas != []
-							c.cl_meta = List.concat(metas, c.cl_meta);
+							c.cl_meta = List.append(metas, c.cl_meta);
 						}
 						function run_field(cf:core.Type.TClassField) {
 							var metas = check_strict_meta(ctx, cf.cf_meta);
-							if (metas != Tl) { cf.cf_meta = List.concat(metas, cf.cf_meta); }
+							if (metas != Tl) { cf.cf_meta = List.append(metas, cf.cf_meta); }
 							List.iter(run_field, cf.cf_overloads);
 						}
 						List.iter(run_field, c.cl_ordered_statics);
@@ -2265,7 +2357,7 @@ class Typeload {
 					case None:
 					case Some({map:h, tp:hcl}):
 						Hashtbl.iter(function(_,_) { core.Error.error("Field type patch not supported for enums", e.e_pos);}, h);
-						e.e_meta = List.concat(e.e_meta, hcl.tp_meta);
+						e.e_meta = List.append(e.e_meta, hcl.tp_meta);
 				}
 				var constructs = new Ref(d.d_data);
 				function get_constructs() {
@@ -2346,7 +2438,7 @@ class Typeload {
 					params.set(type_type_params(true, ctx, new core.Path([], c.ec_name.pack) ,function () { return params.get(); }, c.ec_pos, c.ec_params));
 					var _ctx = ctx.clone(); _ctx.g = ctx.g;
 					var ctx = _ctx;
-					ctx.type_params = List.concat(params.get(), ctx.type_params);
+					ctx.type_params = List.append(params.get(), ctx.type_params);
 					var rt = switch (c.ec_type) {
 						case None: et;
 						case Some(_t):
@@ -2414,11 +2506,11 @@ class Typeload {
 				if ((ctx.com.platform == Java || ctx.com.platform == Cs) && !e.e_extern) {
 					context.Typecore.delay(ctx, PTypeField, function () {
 						var metas = check_strict_meta(ctx, e.e_meta);
-						e.e_meta = List.concat(metas, e.e_meta);
+						e.e_meta = List.append(metas, e.e_meta);
 						PMap.iter(function (_, ef) {
 							var metas = check_strict_meta(ctx, ef.ef_meta);
 							if (metas != Tl) {
-								ef.ef_meta = List.concat(metas, ef.ef_meta);
+								ef.ef_meta = List.append(metas, ef.ef_meta);
 							}
 						}, e.e_constrs);
 					});
@@ -2492,7 +2584,7 @@ class Typeload {
 					context.Typecore.delay(ctx, PTypeField, function () {
 						var metas = check_strict_meta(ctx, t.t_meta);
 						if (metas != Tl) {
-							t.t_meta = List.concat(metas, t.t_meta);
+							t.t_meta = List.append(metas, t.t_meta);
 						}
 					});
 				}
@@ -2602,7 +2694,7 @@ class Typeload {
 							}
 							c.cl_kind = KGenericBuild(d.d_data);
 						}
-						if (c.cl_path == new core.Path(["haxe", "macro"], "MacroType")) {
+						if (c.cl_path.equals(new core.Path(["haxe", "macro"], "MacroType"))) {
 							c.cl_kind = KMacroType;
 						}
 				case {fst:TEnumDecl(e), snd:{decl:EEnum(d), pos:p}} :
@@ -2635,7 +2727,7 @@ class Typeload {
 		List.iter(function (t) {
 			check_module_types(ctx, m, p, t);
 		}, types);
-		m.m_types = List.concat(m.m_types, types);
+		m.m_types = List.append(m.m_types, types);
 		// define the per-module context for the next pass
 		var ctx:context.Typecore.Typer = {
 			com: ctx.com,
@@ -2741,7 +2833,7 @@ class Typeload {
 					r;
 				}
 			}
-			return List.concat(decls, acc);
+			return List.append(decls, acc);
 		}
 		return List.fold_left(f, decls, candidates);
 	}
@@ -2796,7 +2888,6 @@ class Typeload {
 		catch (_:ocaml.Not_found) {
 			context.Common.find_file(com, compose_path(true));
 		}
-
 		file = switch (m.b.toLowerCase()) {
 			case "con", "aux", "prn", "nul", "com1", "com2", "com3", "lpt1", "lpt2", "lpt3":
 				// these names are reserved by the OS - old DOS legacy, such files cannot be easily created but are reported as visible
@@ -2856,12 +2947,11 @@ class Typeload {
 		var ph = parse_hook.get()(ctx.com, file, p);
 		var pack = ph.pack;
 		var decls = ph.decls;
-		
 		if (!pack.equals(remap.get())) {
 			function spack(m:ImmutableList<String>) : String {
 				return (m == Tl) ? "<empty>" : List.join(".", m);
 			}
-			if (p == core.Globals.null_pos) {
+			if (p.equals(core.Globals.null_pos)) {
 				context.Typecore.display_error(ctx, "Invalid commandline class : "+core.Globals.s_type_path(m) + " should be " + core.Globals.s_type_path(new core.Path(pack, m.b)), p);
 			}
 			else {
@@ -2873,7 +2963,7 @@ class Typeload {
 			// build typedefs to redirect to real package
 			var _tmp : ImmutableList<core.Ast.TypeDecl> = [
 				{decl:core.Ast.TypeDef.EImport(
-					{pns:List.map(function (s:String) {return {pack:s, pos:core.Globals.null_pos}; }, List.concat(remap.get(),[m.b])) ,
+					{pns:List.map(function (s:String) {return {pack:s, pos:core.Globals.null_pos}; }, List.append(remap.get(),[m.b])) ,
 				 	mode:INormal}
 				), pos:core.Globals.null_pos}
 			];
@@ -2962,7 +3052,7 @@ class Typeload {
 						type_module(ctx, m, file, decls, p);
 					}
 					catch (err:context.Typecore.Forbid_package) {
-						if (p == core.Globals.null_pos) { throw err; }
+						if (p.equals(core.Globals.null_pos)) { throw err; }
 						else {
 							var inf = err.a; var pl = err.pl; var pf = err.pf;
 							throw new context.Typecore.Forbid_package(inf, p::pl, pf);
@@ -3214,7 +3304,7 @@ class Typeload {
 							}, {fst:[], snd:[]}, cf_old.cf_params);
 							var param_subst = _tmp.fst; var params = _tmp.snd;
 							var gctx = gctx.clone();
-							gctx.subst = List.concat(param_subst, gctx.subst);
+							gctx.subst = List.append(param_subst, gctx.subst);
 							var cf_new = cf_old.clone();
 							cf_new.cf_pos = cf_old.cf_pos.clone(); // copy; // wtf ?
 							// Type parameter constraints are substituted here.
@@ -3331,7 +3421,7 @@ class Typeload {
 	public static function get_macro_path (ctx:context.Typecore.Typer, e:core.Ast.Expr, args:ImmutableList<core.Ast.Expr>, p:core.Globals.Pos) {
 		function loop (e:core.Ast.Expr) : ImmutableList<String> {
 			return switch (e.expr) {
-				case EField(e, f): [f].concat(loop(e));
+				case EField(e, f): f :: loop(e);
 				case EConst(CIdent(i)): [i];
 				case _: core.Error.error("Invalid macro call", p);
 			}

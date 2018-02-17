@@ -12,14 +12,6 @@ class Pos {
 		this.pmin = pmin;
 		this.pmax = pmax;
 	}
-
-	@:op(A == B) static function equals (a:Pos, b:Pos) : Bool {
-		return a.pmin == b.pmin && a.pmax == b.pmax && a.pfile == b.pfile;
-	}
-
-	@:op(A != B) static function diff (a:Pos, b:Pos) : Bool {
-		return a.pmin != b.pmin || a.pmax != b.pmax || a.pfile != b.pfile;
-	}
 }
 
 enum Platform {

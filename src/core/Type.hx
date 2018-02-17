@@ -413,12 +413,6 @@ class Type {
 	static var mid:Int = 0;
 	static var uid:Int = 0;
 
-	public static function equalsModuleDef (a:ModuleDef, b:ModuleDef) : Bool {
-		if (a == null || b == null) { return a ==b; }
-		if ((a.m_id != b.m_id) || (a.m_path != b.m_path)) { return false; }
-		return true;
-	}
-
 	public static function alloc_var (n:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TVar {
 		uid++;
 		return {
@@ -562,14 +556,18 @@ class Type {
 		};
 	}
 
+	static var _null_module:ModuleDef = null;
 	public static var null_module(get, never): ModuleDef;
 	static function get_null_module() : ModuleDef {
-		return {
-			m_id: alloc_mid(),
-			m_path: new core.Path([], ""),
-			m_types: [],
-			m_extra: module_extra("", "", 0.0, MFake, [])
-		};
+		if (_null_module == null) { 
+			_null_module = {
+				m_id: alloc_mid(),
+				m_path: new core.Path([], ""),
+				m_types: [],
+				m_extra: module_extra("", "", 0.0, MFake, [])
+			};
+		}
+		return _null_module;
 	}
 
 	public static function null_class () {
@@ -956,8 +954,8 @@ class Type {
 
 	public static function concat (e1:TExpr, e2:TExpr) : TExpr {
 		var e = switch ({fst:e1.eexpr, snd:e2.eexpr}) {
-			case {fst:TBlock(el1), snd:TBlock(el2)}: TBlock(List.concat(el1,el2));
-			case {fst:TBlock(el1)}: TBlock(List.concat(el1,[e2]));
+			case {fst:TBlock(el1), snd:TBlock(el2)}: TBlock(List.append(el1,el2));
+			case {fst:TBlock(el1)}: TBlock(List.append(el1,[e2]));
 			case {snd:TBlock(el2)}: TBlock(e1::el2);
 			case _: TBlock([e1, e2]);
 		}
