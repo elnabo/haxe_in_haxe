@@ -4,6 +4,7 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.DynArray;
 import ocaml.List;
+import ocaml.PMap;
 import ocaml.Ref;
 using ocaml.Cloner;
 
@@ -145,6 +146,7 @@ typedef Typer = {
 
 class Typecore {
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { throw false; });
+	public static var match_expr_ref = new Ref(typing.matcher.Match.match_expr);
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(function (_, _, _, _) { throw false; });
 	public static var analyser_run_on_expr_ref = new Ref<context.Common.Context-> core.Type.TExpr -> core.Type.TExpr>(function (_, _) { throw false; });
 
@@ -157,6 +159,10 @@ class Typecore {
 
 	public static function type_expr (ctx:Typer, e:core.Ast.Expr, with_type:WithType) : core.Type.TExpr {
 		return type_expr_ref.get()(ctx, e, with_type);
+	}
+
+	public static function match_expr (ctx:Typer, e:core.Ast.Expr, cases:ImmutableList<core.Ast.Case>, def:Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>, with_type:WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		return match_expr_ref.get()(ctx, e, cases, def, with_type, p);
 	}
 
 	public static function raise_or_display (ctx:Typer, l:ImmutableList<core.Type.UnifyError>, p:core.Globals.Pos) {
@@ -206,7 +212,7 @@ class Typecore {
 		return function() { ctx.locals = locals; }
 	}
 
-	public static function add_local (ctx:Typer, n:String, t:core.Type.T, p:core.Globals.Pos) {
+	public static function add_local (ctx:Typer, n:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TVar {
 		var v = core.Type.alloc_var(n, t, p);
 		if (core.Define.defined(ctx.com.defines, WarnVarShadowing)) {
 			try {
@@ -218,6 +224,22 @@ class Typecore {
 		}
 		ctx.locals.set(n, v);
 		return v;
+	}
+
+	public static final gen_local_prefix = "`";
+
+	public static function gen_local (ctx:Typer, t:core.Type.T, p:core.Globals.Pos) : core.Type.TVar {
+		// ensure that our generated local does not mask an existing one
+		function loop (n:Int) : String {
+			var nv = (n == 0) ? gen_local_prefix : gen_local_prefix + n;
+			if (PMap.mem(nv, ctx.locals)) {
+				return loop(n+1);
+			}
+			else {
+				return nv;
+			}
+		}
+		return add_local(ctx, loop(0), t, p);
 	}
 
 	public static function delay (ctx:Typer, p:TyperPass, f:Void->Void) : Void {

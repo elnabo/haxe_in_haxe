@@ -170,7 +170,7 @@ enum TExprExpr {
 	TContinue;
 	TThrow (e:TExpr);
 	TCast (e:TExpr, t:Option<ModuleType>);
-	TMeta (s:Ast.MetadataEntry, e:TExpr);
+	TMeta (s:core.Ast.MetadataEntry, e:TExpr);
 	TEnumParameter (e:TExpr, f:TEnumField, o:Int);
 	TEnumIndex (e:TExpr);
 	TIdent (s:String);
@@ -413,6 +413,8 @@ class Type {
 	static var mid:Int = 0;
 	static var uid:Int = 0;
 
+	// ======= General utility =======
+
 	public static function alloc_var (n:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TVar {
 		uid++;
 		return {
@@ -634,7 +636,6 @@ class Type {
 				};
 		}
 	}
-
 
 	public static function t_path(t:ModuleType) : core.Path {
 		return t_infos(t).mt_path;

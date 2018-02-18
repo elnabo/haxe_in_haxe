@@ -17,9 +17,10 @@ class Cloner {
 			case TUnknown: // ??
 				return v;
 			case TEnum(e):
-				var index = EnumValueTools.getIndex(cast v);
-				var params = [ for (p in EnumValueTools.getParameters(cast v)) _clone(p, existing) ];
-				return EnumTools.createByIndex(e, index, params);
+				return v;
+				// var index = EnumValueTools.getIndex(cast v);
+				// var params = [ for (p in EnumValueTools.getParameters(cast v)) _clone(p, existing) ];
+				// return EnumTools.createByIndex(e, index, params);
 			case TClass(_):
 				if (Std.is(v, String)) { return v; }
 				if (Std.is(v, haxe.ds.ImmutableList)) { return v; }

@@ -24,6 +24,18 @@ class Optimizer {
 	}
 
 	// ----------------------------------------------------------------------
+	// LOOPS
+	public static function optimize_for_loop (ctx:context.Typecore.Typer, i:String, pi:core.Globals.Pos, e1:core.Type.TExpr, e2:core.Ast.Expr, p:core.Globals.Pos) : Option<core.Type.TExpr> {
+		trace("Optimizer.optimize_for_loop");
+		throw false;
+	}
+
+	public static function optimize_for_loop_iterator (ctx:context.Typecore.Typer, v:core.Type.TVar, e1:core.Type.TExpr, e2:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("Optimizer.optimize_for_loop_iterator");
+		throw false;
+	}
+
+	// ----------------------------------------------------------------------
 	// SANITIZE
 
 	/*

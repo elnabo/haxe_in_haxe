@@ -1026,6 +1026,21 @@ class Typeload {
 		
 	}
 
+	public static function t_iterator (ctx:context.Typecore.Typer) : {fst:core.Type.T, snd:core.Type.T} {
+		var show = hide_params(ctx);
+		switch (load_type_def(ctx, core.Globals.null_pos, {tpackage:[], tname:"Iterator", tparams:[], tsub:None})) {
+			case TTypeDecl(t):
+				show();
+				core.Type.add_dependency(ctx.m.curmod, t.t_module);
+				if (List.length(t.t_params) != 1) {
+					throw false;
+				}
+				var pt = core.Type.mk_mono();
+				return {fst:core.Type.apply_params(t.t_params, [pt], t.t_type), snd:pt};
+			case _: throw false;
+		}
+	}
+
 	/*
 	 * load either a tye t or Null<Unknown> if not defined
 	 */

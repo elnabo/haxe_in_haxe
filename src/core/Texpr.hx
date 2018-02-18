@@ -87,4 +87,33 @@ class Texpr {
 			case _: e;
 		}
 	}
+
+	public static function type_constant (basic:core.Type.BasicTypes, c:core.Ast.Constant, p:core.Globals.Pos) : core.Type.TExpr {
+		return switch (c) {
+			case CInt(s):
+				if (s.length > 10 && s.substr(0, 2) == "0x") {
+					core.Error.error("Invalid hexadecimal integer", p);
+				}
+				try {
+					core.Type.mk(TConst(TInt(Std.parseInt(s))), basic.tint, p);
+				}
+				catch (_:Any) {
+					core.Type.mk(TConst(TFloat(s)), basic.tfloat, p);
+				}
+			case CFloat(f):
+				core.Type.mk(TConst(TFloat(f)), basic.tfloat, p);
+			case CString(s):
+				core.Type.mk(TConst(TString(s)), basic.tstring, p);
+			case CIdent("true"):
+				core.Type.mk(TConst(TBool(true)), basic.tbool, p);
+			case CIdent("false"):
+				core.Type.mk(TConst(TBool(false)), basic.tbool, p);
+			case CIdent("null"):
+				core.Type.mk(TConst(TNull), basic.tbool, p);
+			case CIdent(t):
+				core.Error.error("Invalid constant : "+t, p);
+			case CRegexp(_, _):
+				core.Error.error("Invalid constant", p);
+		}
+	}
 }

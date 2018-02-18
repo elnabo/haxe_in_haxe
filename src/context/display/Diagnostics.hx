@@ -8,4 +8,12 @@ class Diagnostics {
 			case _: false;
 		};
 	}
+	public static function secure_generated_code (ctx:context.Typecore.Typer, e:core.Type.TExpr) : core.Type.TExpr {
+		return if (is_diagnostics_run(ctx)) {
+			core.Type.mk(TMeta({name:Extern, params:[], pos:e.epos}, e), e.etype, e.epos);
+		}
+		else {
+			e;
+		}
+	}
 }

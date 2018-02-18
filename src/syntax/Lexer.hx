@@ -5,6 +5,8 @@ import core.Ast;
 import core.Type;
 import haxe.ds.ImmutableList;
 import ocaml.DynArray;
+import ocaml.Hashtbl;
+import ocaml.List;
 
 typedef LexerFile = {
 	lfile : String,
@@ -174,7 +176,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 				// token.pos.pmin = pmin.pmin;
 				// token.pos.pmax = pmax;
 				token.pos = new core.Globals.Pos(token.pos.pfile, pmin.pmin, pmax);
-				fast_add_fmt_string(new hxparse.Position(cur.lfile, pmin.pmin, pmax));
+				fast_add_fmt_string(new core.Globals.Pos(cur.lfile, pmin.pmin, pmax));
 				token;
 			}
 			catch (e:core.Ast.Invalid_escape_sequence) {
@@ -293,7 +295,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 			var pmin = lexer.curPos();
 			var pmax = try lexer.token(string2) catch (e:haxe.io.Eof) throw syntax.lexer.Error.of(Unterminated_string, pmin);
 			buf.addChar("'".code);
-			fast_add_fmt_string(new hxparse.Position(cur.lfile, pmin.pmin, pmax));
+			fast_add_fmt_string(new core.Globals.Pos(cur.lfile, pmin.pmin, pmax));
 			lexer.token(codeString);
 		},
 		'/\\*' => {
@@ -448,17 +450,27 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 		cur.llines = {a:lexbuf.curPos().pmax, b:cur.lline} :: cur.llines;
 	}
 
-	public static function fmt_pos (p:hxparse.Position) : Int {
+	public static function fmt_pos (p:core.Globals.Pos) : Int {
 		return p.pmin + (p.pmax - p.pmin) * 1000000;
 	}
 
-	public static function fast_add_fmt_string(p:hxparse.Position) {
+	public static function fast_add_fmt_string(p:core.Globals.Pos) {
 		cur.lstrings = fmt_pos(p) :: cur.lstrings;
 	}
 
 	public static function error_msg (m:syntax.lexer.ErrorMsg) : String {
 		trace("TODO: syntax.Lexer.error_msg");
 		return null;
+	}
+
+	public static function is_fmt_string (p:core.Globals.Pos) : Bool {
+		return try {
+			var file = Hashtbl.find(all_files, p.pfile);
+			List.mem(fmt_pos(p), file.lstrings);
+		}
+		catch (_:ocaml.Not_found) {
+			false;
+		}
 	}
 
 	public static function find_line (p:Int, f:LexerFile) : {fst:Int, snd:Int} {

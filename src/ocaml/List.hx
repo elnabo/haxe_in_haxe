@@ -5,6 +5,13 @@ import haxe.ds.ImmutableList;
 using equals.Equal;
 
 class List {
+	public static function hd<T> (l:ImmutableList<T>) : T {
+		return switch (l) {
+			case Tl: throw ocaml.Failure.instance;
+			case Hd(v, _): v;
+		}
+	}
+
 	public static function append<T> (a : ImmutableList<T>, b : ImmutableList<T> ) : ImmutableList<T> {
 		return switch (a) {
 			case Tl: b;

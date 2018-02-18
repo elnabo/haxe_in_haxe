@@ -522,6 +522,19 @@ class Common {
 		raw_define(com, name);
 	}
 
+	public static function has_dce (com:Context) : Bool {
+		try {
+			return defined_value(com, Dce) != "no";
+		}
+		catch (_:ocaml.Not_found) {
+			return false;
+		}
+	}
+
+	public static function platform (ctx:Context, p:Platform) : Bool {
+		return ctx.platform == p;
+	}
+
 	public static function find_file (ctx:Context, f:String) : String {
 		return try {
 			var v = Hashtbl.find(ctx.file_lookup_cache,f);
