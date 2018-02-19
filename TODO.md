@@ -1,0 +1,3 @@
+- replace switch (smth) { case ? : true; case _: false } by smth.match(?)
+- replace switch ({f:..., s:...}) by switch [..., ...]
+- ensure var old = ... doesn't require cloning

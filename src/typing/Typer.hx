@@ -100,6 +100,25 @@ class Typer {
 			case _: context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
 		}
 	}
+
+	public static function get_abstract_froms (a:core.Type.TAbstract, pl:core.Type.TParams) : ImmutableList<core.Type.T> {
+		var l = List.map(core.Type.apply_params.bind(a.a_params, pl), a.a_from);
+		return List.fold_left(function (acc:ImmutableList<core.Type.T>, other:{t:core.Type.T, cf:core.Type.TClassField}) {
+			var t = other.t; var f = other.cf;
+			return switch (core.Type.follow(core.Type.field_type(f))) {
+				case TFun({args:[{t:v}], ret:t}):
+					try {
+						core.Type.type_eq(EqStrict, t, TAbstract(a, List.map(core.Type.dup, pl))); // unify fields monomorphs
+						v::acc;
+					}
+					catch (_:core.Type.Unify_error) {
+						acc;
+					}
+				case _:
+					acc;
+			}
+		}, l, a.a_from_field);
+	}
 	// ----------------------------------------------------------------------
 	// PASS 3 : type expression & check structure
 
@@ -128,14 +147,37 @@ class Typer {
 		throw false;
 	}
 
+	public static function type_module_type (ctx:context.Typecore.Typer, t:core.Type.ModuleType, tparams:Option<Dynamic>, p:core.Globals.Pos) : Dynamic {
+		trace("TODO: typing.Typer.type_module_type");
+		throw false;
+		// return type_module_type ctx (Typeload.load_type_def ctx p { tpackage = fst tpath; tname = snd tpath; tparams = []; tsub = None }) None p
+	}
+
 	public static function type_type (ctx:context.Typecore.Typer, tpath:core.Path, p:core.Globals.Pos) : Dynamic {
 		trace("TODO: typing.Typer.type_type");
 		throw false;
 		// return type_module_type ctx (Typeload.load_type_def ctx p { tpackage = fst tpath; tname = snd tpath; tparams = []; tsub = None }) None p
 	}
 
+	public static function make_call (ctx:context.Typecore.Typer, e:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: typing.Typer.make_call");
+		throw false;
+	}
+
 	public static function get_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, params:core.Type.TParams, p:core.Globals.Pos) : {fst:core.Type.T, snd:core.Type.TClassField} {
 		trace("TODO: typing.Typer.get_constructor");
+		throw false;
+	}
+
+	public static function mk_array_get_call(ctx:context.Typecore.Typer, other: {cf:core.Type.TClassField, tf:core.Type.T, r:core.Type.T, e1:core.Type.TExpr, e2o:Option<core.Type.TExpr>}, c, ebase, p:core.Globals.Pos) : core.Type.TExpr {
+		var cf = other.cf; var tf = other.tf; var r = other.r; var e1 = other.e1; var e2o = other.e2o;
+		trace("TODO: typing.Typer.mk_array_get_call");
+		throw false;
+	}
+
+	public static function mk_array_set_call(ctx:context.Typecore.Typer, other: {cf:core.Type.TClassField, tf:core.Type.T, r:core.Type.T, e1:core.Type.TExpr, e2o:Option<core.Type.TExpr>}, c, ebase, p:core.Globals.Pos) : core.Type.TExpr {
+		var cf = other.cf; var tf = other.tf; var r = other.r; var e1 = other.e1; var e2o = other.e2o;
+		trace("TODO: typing.Typer.mk_array_set_call");
 		throw false;
 	}
 
@@ -175,9 +217,123 @@ class Typer {
 	
 	// MORDOR
 
-	public static function type_access (ctx:context.Typecore.Typer, e:core.Ast.ExprDef, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
-		trace("TODO: typing.Typer.type_access");
+	public static function handle_efield (ctx:context.Typecore.Typer, e:core.Ast.ExprDef, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
+		trace("TODO: typing.Typer.handle_efield");
 		throw false;
+	}
+
+	public static function type_access (ctx:context.Typecore.Typer, e:core.Ast.ExprDef, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
+		return switch (e) {
+			case EConst(CIdent(s)):
+				type_ident(ctx, s, p, mode);
+			case EField(e1, "new"):
+				var e1 = type_expr(ctx, e1, Value);
+				switch (e1.eexpr) {
+					case TTypeExpr(TClassDecl(c)):
+						if (mode == MSet) { core.Error.error("Cannot set constructor", p); }
+						if (mode == MCall) { core.Error.error("Cannot call constructor like this, use 'new " + core.Globals.s_type_path(c.cl_path) + "()' instead", p); }
+						var monos = List.map(function (_) { return core.Type.mk_mono(); }, c.cl_params);
+						var _tmp = get_constructor(ctx, c, monos, p);
+						var ct = _tmp.fst; var cf = _tmp.snd;
+						var args = switch (core.Type.follow(ct)) {
+							case TFun({args:args, ret:ret}): args;
+							case _: throw false;
+						}
+						var vl = List.map(function (a:core.Type.TSignatureArg) {
+							var n = a.name; var t = a.t;
+							return core.Type.alloc_var(n, t, c.cl_pos);
+						}, args);
+						function vexpr(v:core.Type.TVar) {
+							return core.Type.mk(TLocal(v), v.v_type, p);
+						}
+						var el = List.map(vexpr, vl);
+						var _tmp = switch (c.cl_kind) {
+							case KAbstractImpl(a):
+								var e = type_module_type(ctx, TClassDecl(c), None, p);
+								e = core.Type.mk(TField(e, FStatic(c, cf)), ct, p);
+								var t:core.Type.T = TAbstract(a, monos);
+								{fst:make_call(ctx, e, el, t, p), snd:t};
+							case _:
+								var t:core.Type.T = TInst(c, monos);
+								{fst:core.Type.mk(TNew(c, monos, el), t, p), snd:t};
+						}
+						var ec = _tmp.fst; var t = _tmp.snd;
+						AccessKind.AKExpr(core.Type.mk(TFunction(
+							{
+								tf_args: List.map(function (v:core.Type.TVar) { return {v:v, c:None}; }, vl),
+								tf_type: t,
+								tf_expr: core.Type.mk(TReturn(Some(ec)), t, p)
+							}
+						), TFun(
+							{args:List.map(function (v:core.Type.TVar) {
+								return {name:v.v_name, opt:false, t:v.v_type};
+							}, vl), ret:t}
+						), p));
+					case _:
+						core.Error.error("Binding new is only allowed on class types", p);
+				}
+			case EField(_, _):
+				handle_efield(ctx, e, p, mode);
+			case EArray(e1, e2):
+				var e1 = type_expr(ctx, e1, Value);
+				var e2 = type_expr(ctx, e2, Value);
+				var has_abstract_array_access = new Ref(false);
+				try {
+					switch (core.Type.follow(e1.etype)) {
+						case TAbstract(a={a_impl:Some(c)}, pl) if (a.a_array != []):
+							switch (mode) {
+								case MSet:
+									// resolve later
+									AKAccess(a, pl, c, e1, e2);
+								case _:
+									has_abstract_array_access.set(true);
+									var e = mk_array_get_call(ctx, context.typecore.AbstractCast.find_array_access(ctx, a, pl, e2, None, p), c, e1, p);
+									AKExpr(e);
+							}
+						case _: throw ocaml.Not_found.instance;
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					context.Typecore.unify(ctx, e2.etype, ctx.t.tint, e2.epos);
+					function loop (et:core.Type.T) : core.Type.T {
+						return switch (core.Type.follow(et)) {
+							case TInst({cl_array_access:Some(t), cl_params:pl}, tl):
+								core.Type.apply_params(pl, tl, t);
+							case TInst({cl_super:Some({c:c, params:stl}), cl_params:pl}, tl):
+								core.Type.apply_params(pl, tl, loop(TInst(c, stl)));
+							case TInst({cl_path:{a:[], b:"ArrayAccess"}}, [t]):
+								t;
+							case TInst({cl_path:{a:[], b:"Array"}}, [t]) if ( t == core.Type.t_dynamic ):
+								core.Type.t_dynamic;
+							case TAbstract(a, tl) if (core.Meta.has(ArrayAccess, a.a_meta)):
+								loop(core.Type.apply_params(a.a_params, tl, a.a_this));
+							case _:
+								var pt = core.Type.mk_mono();
+								var t = ctx.t.tarray(pt);
+								try {
+									context.Typecore.unify_raise(ctx, et, t, p);
+								}
+								catch (err:core.Error) {
+									switch (err.msg) {
+										case Unify(_) if (!ctx.untyped_):
+											if (has_abstract_array_access.get()) {
+												core.Error.error("No @:arrayAccess function accepts an argument of " + core.Type.s_type(core.Type.print_context(), e2.etype), e1.epos);
+											}
+											else {
+												core.Error.error("Array access is not allowed on " + core.Type.s_type(core.Type.print_context(), e1.etype), e1.epos);
+											}
+										case _: throw err;
+									}
+								}
+								pt;
+						}
+					}
+					var pt = loop(e1.etype);
+					AKExpr(core.Type.mk(TArray(e1, e2), pt, p));
+				}
+			case _:
+				AKExpr(type_expr(ctx, {expr:e, pos:p}, Value));
+		};
 	}
 
 	public static function type_vars (ctx:context.Typecore.Typer, vl:ImmutableList<core.Ast.Var>, p:core.Globals.Pos) : core.Type.TExpr {
@@ -491,8 +647,76 @@ class Typer {
 	}
 
 	public static function maybe_type_against_enum (ctx:context.Typecore.Typer, f:Void->AccessKind, with_type:context.Typecore.WithType, iscall:Bool, p:core.Globals.Pos) : AccessKind {
-		trace("TODO: typing.Typer.maybe_type_against_enum");
-		throw false;
+		return try {
+			switch (with_type) {
+				case WithType(t):
+					function loop (stack, t:core.Type.T) : {fst:core.Path, snd:ImmutableList<String>, trd:core.Type.ModuleType} {
+						return switch (core.Type.follow(t)) {
+							case TEnum(en, _):
+								{fst:en.e_path, snd:en.e_names, trd:TEnumDecl(en)};
+							case TAbstract(a={a_impl:Some(c)}, _) if (core.Type.has_meta(Enum, a.a_meta)):
+								var fields = List.filter_map(function (cf:core.Type.TClassField) {
+									return (core.Meta.has(Enum, cf.cf_meta)) ? Some(cf.cf_name) : None;
+								}, c.cl_ordered_statics);
+								{fst:a.a_path, snd:fields, trd:TAbstractDecl(a)};
+							case TAbstract(a, pl) if (!core.Meta.has(CoreType, a.a_meta)):
+								switch (get_abstract_froms(a, pl)) {
+									case [t2]:
+										if (List.exists(core.Type.fast_eq.bind(t), stack)) {
+											throw ocaml.Exit.instance;
+										}
+										loop(t::stack, t2);
+									case _: throw ocaml.Exit;
+								}
+							case _: throw ocaml.Exit.instance;
+						}
+					}
+					var _tmp = loop([], t);
+					var path = _tmp.fst; var fields = _tmp.snd; var mt = _tmp.trd;
+					var old = ctx.m.curmod.m_types;
+					function restore() { ctx.m.curmod.m_types = old; }
+					ctx.m.curmod.m_types = List.append(ctx.m.curmod.m_types, [mt]);
+					var e:AccessKind = try {
+						f();
+					}
+					catch (exc:core.Error) {
+						switch (exc.msg) {
+							case Unknown_ident(n):
+								restore();
+								context.Typecore.raise_or_display_message(ctx, core.type.StringError.string_error(n, fields, "Identifier '"+n+"' is not part of " + core.Globals.s_type_path(path)), p);
+								AKExpr(core.Type.mk(TConst(TNull), core.Type.mk_mono(), p));
+							case _:
+								restore();
+								throw exc;
+						}
+					}
+					catch (exc:Any) {
+						restore();
+						throw exc;
+					}
+					restore();
+					switch (e) {
+						case AKExpr(e):
+							switch (core.Type.follow(e.etype)) {
+								case TFun({args:_, ret:t_}):
+									context.Typecore.unify(ctx, t_, t, e.epos);
+									AKExpr(e);
+								case _:
+									if (iscall) {
+										AKExpr(e);
+									}
+									else {
+										AKExpr(context.typecore.AbstractCast.cast_or_unify_raise(ctx, t, e, e.epos));
+									}
+							}
+						case _: e; // ???
+					}
+				case _: throw ocaml.Exit.instance;
+			}
+		}
+		catch (_:ocaml.Exit) {
+			f();
+		}
 	}
 
 	public static function type_call (ctx:context.Typecore.Typer, e:core.Ast.Expr, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {

@@ -728,6 +728,26 @@ class Type {
 		}
 	}
 
+	public static function dup (t:T) : T {
+		var monos:ImmutableList<{fst:T, snd:T}> = [];
+		function loop (t:T) {
+			return switch(t) {
+				case TMono(r) if (r.get()==None):
+					try {
+						List.assq(t, monos);
+					}
+					catch (_:ocaml.Not_found) {
+						var m = mk_mono();
+						monos = {fst:t, snd:m} :: monos;
+						m;
+					}
+				case _:
+					map(loop, t);
+			}
+		}
+		return loop(t);
+	}
+
 	/* substitute parameters with other types */
 	public static function apply_params (cparams:TypeParams, params:ImmutableList<T>, t:T) : T {
 		switch (cparams) { 
