@@ -2545,7 +2545,7 @@ class Typeload {
 				var ctx = _ctx;
 				ctx.type_params = t.t_params;
 				var tt = load_complex_type(ctx, true, p, d.d_data);
-				tt = switch (d.d_data.ct) {
+				var tt:core.Type.T = switch (d.d_data.ct) {
 					case CTExtend(_): tt;
 					case CTPath({tpackage:["haxe", "macro"], tname:"MacroType"}):
 						// we need to follow MacrotYpe immediately since it might define other module types that we will load afterwards
@@ -2573,13 +2573,13 @@ class Typeload {
 									case TType(td, tl):
 										if (td.equals(t)) {
 											core.Error.error("Recursive typedef is not allowed", p);
-											check_rec(core.Type.apply_params(td.t_params, tl, td.t_type));
 										}
+										check_rec(core.Type.apply_params(td.t_params, tl, td.t_type));
 									case _:
 								}
 							}
 							var r = context.Typecore.exc_protect(ctx, function (r) {
-								r.set(core.Type.lazy_processing(function () { return tt; }));
+								r.set(core.Type.lazy_processing(function () { trace(tt); return tt; }));
 								check_rec(tt);
 								return tt;
 							}, "typedef_rec_check");
@@ -2617,24 +2617,24 @@ class Typeload {
 				ctx.type_params = a.a_params;
 				var is_type = new Ref(false);
 				function load_type(t:core.Ast.TypeHint, from:Bool) {
-					var _t = load_complex_type(ctx, true, p, t);
-					_t = if (!core.Meta.has(CoreType, a.a_meta)) {
+					var t = load_complex_type(ctx, true, p, t);
+					var t:core.Type.T = if (!core.Meta.has(CoreType, a.a_meta)) {
 						if (is_type.get()) {
 							var r = context.Typecore.exc_protect(ctx, function (r) {
-								r.set(core.Type.lazy_processing( function() { return _t; }));
+								r.set(core.Type.lazy_processing( function() { return t; }));
 								var at = core.Type.monomorphs(a.a_params, a.a_this);
 								try {
 									if (from){
-										core.Type.unify(_t, at);
+										core.Type.unify(t, at);
 									}
 									else {
-										core.Type.unify(at, _t);
+										core.Type.unify(at, t);
 									}
 								}
 								catch (_:core.Type.Unify_error) {
 									core.Error.error("You can only declare from/to with compatible types", p);
 								}
-								return _t;
+								return t;
 							}, "constraint");
 							TLazy(r);
 						}
@@ -2646,9 +2646,9 @@ class Typeload {
 						if (core.Meta.has(Callable, a.a_meta)) {
 							core.Error.error("@:coreType abstracts cannot be @:callable", p);
 						}
-						_t;
+						t;
 					}
-					return _t;
+					return t;
 				}
 				List.iter(function(flag:core.Ast.AbstractFlag) {
 					switch (flag) {

@@ -656,7 +656,7 @@ class Type {
 	public static function lazy_type(f:ocaml.Ref<TLazy>) : core.Type.T {
 		return switch (f.get()) {
 			case LAvailable(t): t;
-			case LProcessing(t), LWait(t): t();
+			case LProcessing(f), LWait(f): f();
 		};
 	}
 

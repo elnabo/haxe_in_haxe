@@ -119,6 +119,32 @@ class Typer {
 			}
 		}, l, a.a_from_field);
 	}
+	
+	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:ImmutableList<core.Type.T>, tl_ef:ImmutableList<core.Type.T>, p:core.Globals.Pos) : core.Type.T {
+		trace("TODO: enum_field_type");
+		throw false;
+	}
+
+	public static function add_constraint_check (ctx:context.Typecore.Typer, ctypes:core.Type.TypeParams, pl:ImmutableList<core.Type.T>, f:core.Type.TClassField, tl:ImmutableList<core.Type.T>, p:core.Globals.Pos) : Void{
+		trace("TODO: add_constraint_check");
+		throw false;
+	}
+
+	public static function field_type (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:ImmutableList<core.Type.T>, f:core.Type.TClassField, p:core.Globals.Pos) : core.Type.T {
+		return switch (f.cf_params) {
+			case []: f.cf_type;
+			case l:
+				var monos = List.map(function (_) { return core.Type.mk_mono(); }, l);
+				if (!core.Meta.has(Generic, f.cf_meta)) {
+					add_constraint_check(ctx, c.cl_params, pl, f, monos, p);
+				}
+				core.Type.apply_params(l, monos, f.cf_type);
+		}
+	}
+
+	public static function class_field (ctx:context.Typecore.Typer, c:core.Type.TClass, tl:ImmutableList<core.Type.T>, name:String, p:core.Globals.Pos) : {fst:Option<{c:core.Type.TClass, params:core.Type.TParams}>, snd:core.Type.T, trd:core.Type.TClassField} {
+		return core.Type.raw_class_field(function (f) { return field_type(ctx, c, tl, f, p); }, c, tl, name);
+	}
 	// ----------------------------------------------------------------------
 	// PASS 3 : type expression & check structure
 
@@ -186,6 +212,186 @@ class Typer {
 		throw false;
 	}
 
+	public static function get_this (ctx:context.Typecore.Typer, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: get_this");
+		throw false;
+	}
+
+	public static function field_access (ctx:context.Typecore.Typer, mode:AccessMode, f:core.Type.TClassField, fmode:core.Type.TFieldAccess, t:core.Type.T, e:core.Type.TExpr, p:core.Globals.Pos) : AccessKind {
+		trace("TODO: field_access");
+		throw false;
+	}
+
+	public static function using_field (ctx:context.Typecore.Typer, mode:AccessMode, e:core.Type.TExpr, i:String, p:core.Globals.Pos) : AccessKind {
+		trace("TODO using_field");
+		throw false;
+	}
+
+	public static function type_ident_raise (ctx:context.Typecore.Typer, i:String, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
+		return switch (i) {
+			case "true":
+				(mode == MGet) ? AKExpr(core.Type.mk(TConst(TBool(true)), ctx.t.tbool, p)) : AKNo(i);
+			case "false":
+				(mode == MGet) ? AKExpr(core.Type.mk(TConst(TBool(false)), ctx.t.tbool, p)) : AKNo(i);
+			case "this":
+				switch [mode, ctx.curclass.cl_kind] {
+					case [MSet, KAbstractImpl(_)]:
+						switch (ctx.curfield.cf_kind) {
+							case Method(MethInline):
+							case Method(_) if (ctx.curfield.cf_name == "_new"):
+							case _: core.Error.error("You can only modify 'this' inside an inline function", p);
+						}
+						AKExpr(get_this(ctx, p));
+					case [MCall, KAbstractImpl(_)], [MGet, _]:
+						AKExpr(get_this(ctx, p));
+					case _: AKNo(i);
+				}
+			case "super":
+				var t:core.Type.T = switch (ctx.curclass.cl_super) {
+					case None: core.Error.error("Current class does not have a superclass", p);
+					case Some({c:c, params:params}): TInst(c, params);
+				}
+				switch (ctx.curfun) {
+					case FunMember, FunConstructor:
+					case FunMemberAbstract: core.Error.error("Cannot access super inside an abstract function", p);
+					case FunStatic: core.Error.error("Cannot access super inside a static function", p);
+					case FunMemberClassLocal, FunMemberAbstractLocal: core.Error.error("Cannot access super inside a local function", p);
+				}
+				AKExpr(core.Type.mk(TConst(TSuper), t, p));
+			case "null":
+				(mode == MGet) ? AKExpr(core.Type.null_(core.Type.mk_mono(), p)) : AKNo(i);
+			case _:
+				try {
+					var v = PMap.find(i, ctx.locals);
+					switch (v.v_extra) {
+						case Some({params:params, expr:e}):
+							var t = core.Type.monomorphs(params, v.v_type);
+							switch (e) {
+								case Some(e={eexpr:TFunction(f)}) if (ctx.com.display.dms_full_typing):
+									switch (mode) {
+										case MSet: core.Error.error("Cannot set inline closure", p);
+										case MGet: core.Error.error("Cannot create closure on inline closure", p);
+										case MCall:
+											// create a fake class with a fake field to emulate inlining
+											var c = core.Type.mk_class(ctx.m.curmod, new core.Path(["local"], v.v_name), e.epos, core.Globals.null_pos);
+											var cf = core.Type.mk_field(v.v_name, v.v_type, e.epos, core.Globals.null_pos);
+											cf.cf_params = params; cf.cf_expr = Some(e); cf.cf_kind = Method(MethInline);
+											c.cl_extern = true;
+											c.cl_fields = PMap.add(cf.cf_name, cf, new Map<String, core.Type.TClassField>());
+											AKInline(core.Type.mk(TConst(TNull), TInst(c, []), p), cf, FInstance(c, [], cf), t);
+									}
+								case _:
+									AKExpr(core.Type.mk(TLocal(v), t, p));
+							}
+						case _:
+							AKExpr(core.Type.mk(TLocal(v), v.v_type, p));
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					try {
+						// member variable lookup
+						if (ctx.curfun == FunStatic) {
+							throw ocaml.Not_found.instance;
+						}
+						var _tmp = class_field(ctx, ctx.curclass, List.map(function (arg) { return arg.t; }, ctx.curclass.cl_params), i, p);
+						var c = _tmp.fst; var t = _tmp.snd; var f = _tmp.trd;
+						field_access(ctx, mode, f, switch (c) { case None: FAnon(f); case Some({c:c, params:tl}): FInstance(c, tl, f);}, t, get_this(ctx, p), p);
+					}
+					catch (_:ocaml.Not_found) {
+						try {
+							// lookup using on 'this'
+							if (ctx.curfun == FunStatic) { throw ocaml.Not_found.instance; }
+							switch (using_field(ctx, mode, core.Type.mk(TConst(TThis), ctx.tthis, p), i, p)) {
+								case AKUsing(et, c, f, _): AKUsing(et, c, f, get_this(ctx, p));
+								case _: throw false;
+							}
+						}
+						catch (_:ocaml.Not_found) {
+							try {
+								// static variable lookup
+								var f = PMap.find(i, ctx.curclass.cl_statics);
+								if (core.Meta.has(Impl, f.cf_meta) && !core.Meta.has(Impl, ctx.curfield.cf_meta) && !core.Meta.has(Enum, f.cf_meta)) {
+									core.Error.error('Cannot access non-static field ${f.cf_name} from static method', p);
+								}
+								var e = type_type(ctx, ctx.curclass.cl_path, p);
+								// check_locals_masking already done in type_type
+								field_access(ctx, mode, f, FStatic(ctx.curclass, f), field_type(ctx, ctx.curclass, [], f, p), e, p);
+							}
+							catch (_:ocaml.Not_found) {
+								try {
+									function wrap(e:core.Type.TExpr) : AccessKind {
+										return (mode == MSet) ? AKNo(i) : AKExpr(e);
+									}
+									// lookup imported enums
+									function loop (l:ImmutableList<{mt:core.Type.ModuleType, pos:core.Globals.Pos}>) {
+										return switch (l) {
+											case []: throw ocaml.Not_found.instance;
+											case {mt:t, pos:pt}::l:
+												switch (t) {
+													case TAbstractDecl(a={a_impl:Some(c)}) if (core.Meta.has(Enum, a.a_meta)):
+														try {
+															var cf = PMap.find(i, c.cl_statics);
+															if (!core.Meta.has(Enum, cf.cf_meta)) {
+																loop(l);
+															}
+															else {
+																var et = type_module_type(ctx, TClassDecl(c), None, p);
+																var fa:core.Type.TFieldAccess = FStatic(c, cf);
+																var t = core.Type.monomorphs(cf.cf_params, cf.cf_type);
+																context.display.ImportHandling.maybe_mark_import_position(ctx, pt);
+																switch (cf.cf_kind) {
+																	case Var({v_read:AccInline}): AKInline(et, cf, fa, t);
+																	case _: AKExpr(core.Type.mk(TField(et, fa), t, p));
+																}
+															}
+														}
+														catch (_:ocaml.Not_found) {
+															loop(l);
+														}
+													case TClassDecl(_), TAbstractDecl(_):
+														loop(l);
+													case TTypeDecl(t):
+														switch (core.Type.follow(t.t_type)) {
+															case TEnum(e, _): loop({mt:core.Type.ModuleType.TEnumDecl(e), pos:pt}::l);
+															case _: loop(l);
+														}
+													case TEnumDecl(e):
+														try {
+															var ef = PMap.find(i,e.e_constrs);
+															var et = type_module_type(ctx, t, None, p);
+															var monos = List.map(function (_) { return core.Type.mk_mono(); }, e.e_params);
+															var monos2 = List.map(function (_) { return core.Type.mk_mono(); }, ef.ef_params);
+															context.display.ImportHandling.maybe_mark_import_position(ctx, pt);
+															wrap(core.Type.mk(TField(et, FEnum(e, ef)), enum_field_type(ctx, e, ef, monos, monos2, p), p));
+														}
+														catch (_:ocaml.Not_found) {
+															loop(l);
+														}
+												}
+										}
+									}
+									try {
+										loop(List.rev_map(function (t:core.Type.ModuleType) { return {mt:t, pos:core.Globals.null_pos}; }, ctx.m.curmod.m_types));
+									}
+									catch (_:ocaml.Not_found) {
+										loop(ctx.m.module_types);
+									}
+								}
+								catch (_:ocaml.Not_found) {
+									// lookup imported globals
+									var _tmp = PMap.find(i, ctx.m.module_globals);
+									var t = _tmp.a; var name = _tmp.b; var pi = _tmp.pos;
+									context.display.ImportHandling.maybe_mark_import_position(ctx, pi);
+									var e = type_module_type(ctx, t, None, p);
+									type_field(ctx, e, name, p, mode);
+								}
+							}
+						}
+					}
+				}
+		}
+	}
+
 	public static function type_field (?resume:Bool=false, ctx:context.Typecore.Typer, e:core.Type.TExpr, i:String, p:core.Globals.Pos, mode:AccessMode) : Dynamic {
 		trace("TODO: type_field");
 		throw false;
@@ -218,8 +424,249 @@ class Typer {
 	// MORDOR
 
 	public static function handle_efield (ctx:context.Typecore.Typer, e:core.Ast.ExprDef, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
-		trace("TODO: typing.Typer.handle_efield");
-		throw false;
+		/*
+			given chain of fields as the `path` argument and an `access_mode->access_kind` getter for some starting expression as `e`,
+			return a new `access_mode->access_kind` getter for the whole field access chain.
+
+			if `resume` is true, `Not_found` will be raised if the first field in chain fails to resolve, in all other
+			cases, normal type errors will be raised if a field can't be accessed.
+		*/
+		function fields (?resume:Bool=false, path:ImmutableList<{fst:String, snd:Bool, trd:core.Globals.Pos}>, e:AccessMode->AccessKind) : AccessMode->AccessKind {
+			var resume = new Ref(resume);
+			var force = new Ref(false);
+			var e = List.fold_left(function (e:AccessMode->AccessKind, path:{fst:String, snd:Bool, trd:core.Globals.Pos}) {
+				var f = path.fst; var p = path.trd;
+				var e = acc_get(ctx, e(MGet), p);
+				var f = type_field.bind(resume.get(), ctx, e, f, p);
+				force.set(resume.get());
+				resume.set(false);
+				return f;
+			}, e, path);
+			if (force.get()) {
+				e(MCall); // not necessarily a call, but prevent #2602 among others
+			}
+			return e;
+		}
+		/*
+			given a chain of identifiers (dot-path) represented as a list of (ident,starts_uppercase,pos) tuples,
+			resolve it into an `access_mode->access_kind` getter for the resolved expression
+		*/
+		function type_path (path:ImmutableList<{fst:String, snd:Bool, trd:core.Globals.Pos}>) : AccessMode->AccessKind {
+			/*
+				this is an actual loop for processing a fully-qualified dot-path.
+				it relies on the fact that packages start with a lowercase letter, while modules and types
+				start with upper-case letters, so it processes path parts, accumulating lowercase package parts in `acc`,
+				until it encounters an upper-case part, which can mean either a module access or module's primary type access,
+				so it tries to figure out the type and and calls `fields` on it to resolve the rest of field access chain.
+			*/
+			function loop (acc:ImmutableList<{fst:String, snd:Bool, trd:core.Globals.Pos}>, path:ImmutableList<{fst:String, snd:Bool, trd:core.Globals.Pos}>) : AccessMode->AccessKind {
+				return switch (path) {
+					case (x={snd:false})::path:
+						// part starts with lowercase - it's a package part, add it the accumulator and proceed
+						loop(x::acc, path);
+					case (x={fst:name, snd:true, trd:p})::path:
+						// part starts with uppercase - it either points to a module or its main type
+						
+						// acc is contains all the package parts now, so extract package from them
+						var pack = List.rev_map(function (p) { var x = p.fst; return x; }, acc);
+						/* default behaviour: try loading module's primary type (with the same name as module)
+							and resolve the rest of the field chain against its statics, or the type itself
+							if the rest of chain is empty */
+						function def() {
+							return try {
+								var e = type_type(ctx, new core.Path(pack, name), p);
+								fields(path, function(_) { return AKExpr(e); });
+							}
+							catch (err:core.Error) {
+								switch (err.msg) {
+									case Module_not_found(m) if (m.equals(new core.Path(pack, name))):
+										/* if it's not a module path after all, it could be an untyped field access that looks like
+											a dot-path, e.g. `untyped __global__.String`, add the whole path to the accumulator and
+											proceed to the untyped identifier resolution */
+										loop(List.append(List.rev(path), x::acc), []);
+									case _: throw err;
+								}
+							}
+						}
+						switch (path) {
+							case {fst:sname, snd:true, trd:p}::path:
+								/* next part starts with uppercase, meaning it can be either a module sub-type access
+									or static field access for the primary module type, so we have to do some guessing here
+
+									In this block, `name` is the first first-uppercase part (possibly a module name),
+									and `sname` is the second first-uppsercase part (possibly a subtype name). */
+
+								// get static field by `sname` from a given type `t`, if `resume` is true - raise Not_found
+								function get_static (resume:Bool, t:core.Type.ModuleType) : AccessMode->AccessKind {
+									return fields(resume, {fst:sname, snd:true, trd:p}::path, function (_) { return AKExpr(type_module_type(ctx, t, None, p)); });
+								}
+								// try accessing subtype or main class static field by `sname` in given module with path `m`
+								function check_module (m:core.Path) : Option<AccessMode->AccessKind> {
+									return try {
+										var md = typing.Typeload.load_module(ctx, m, p);
+										// first look for existing subtype
+										try {
+											var t = List.find(function (t) { return !(core.Type.t_infos(t).mt_private) && core.Type.t_path(t).equals(new core.Path(m.a, sname)); }, md.m_types);
+											Some(fields(path, function(_) { return AKExpr(type_module_type(ctx, t, None, p)); }));
+										}
+										catch (_:ocaml.Not_found) {
+											try {
+												// then look for main type statics
+												if (m.a == []) {
+													throw ocaml.Not_found; // ensure that we use def() to resolve local types first
+												}
+												var t = List.find(function (t) { return !(core.Type.t_infos(t).mt_private) && core.Type.t_path(t).equals(m); }, md.m_types);
+												Some(get_static(false, t));
+											}
+											catch (_:ocaml.Not_found) {
+												None;
+											}
+										}
+									}
+									catch (exc:core.Error) {
+										switch (exc.msg) {
+											case Module_not_found(m2) if (m.equals(m2)):
+												None;
+											case _: throw exc;
+										}
+									}
+								}
+								switch (pack) {
+									case []:
+										// if there's no package specified...
+										try {
+											/* first try getting a type by `name` in current module types and current imports
+												and try accessing its static field by `sname` */
+											function path_match (t:core.Type.ModuleType) { return core.Type.t_infos(t).mt_path.b == name; }
+											var t = try {
+												List.find(path_match, ctx.m.curmod.m_types); // types in this modules
+											}
+											catch (_:ocaml.Not_found) {
+												var _tmp = List.find(function (arg:{mt:core.Type.ModuleType, pos:core.Globals.Pos}) { var t = arg.mt; return path_match(t); }, ctx.m.module_types);
+												var t = _tmp.mt; var p = _tmp.pos;
+												context.display.ImportHandling.maybe_mark_import_position(ctx, p);
+												t;
+											}
+											get_static(true, t);
+										}
+										catch (_:ocaml.Not_found) {
+											/* if the static field (or the type) wasn't not found, look for a subtype instead - #1916
+												look for subtypes/main-class-statics in modules of current package and its parent packages */
+											function loop (pack:ImmutableList<String>) : AccessMode->AccessKind {
+												return switch (check_module(new core.Path(pack, name))) {
+													case Some(r): r;
+													case None:
+														switch (List.rev(pack)) {
+															case []: def();
+															case _::l: loop(List.rev(l));
+														}
+												}
+											}
+											loop(ctx.m.curmod.m_path.a);
+										}
+									case _:
+										/* if package was specified, treat it as fully-qualified access to either
+											a module subtype or a static field of module's primary type*/
+										switch (check_module(new core.Path(pack, name))) {
+											case Some(r): r;
+											case None: def();
+										}
+								}
+							case _:
+								/* no more parts or next part starts with lowercase - it's surely not a type name,
+									so do the default thing: resolve fields against primary module type */
+								def();
+						}
+					case []:
+						/* If we get to here, it means that either there were no uppercase-first-letter parts,
+							or we couldn't find the specified module, so it's not a qualified dot-path after all.
+							And it's not a known identifier too, because otherwise `loop` wouldn't be called at all.
+							So this must be an untyped access (or a typo). Try resolving the first identifier with support
+							for untyped and resolve the rest of field chain against it.
+
+							TODO: extract this into a separate function
+						*/
+						switch (List.rev(acc)) {
+							case []: throw false;
+							case {fst:name, snd:flag, trd:p}::path:
+								try {
+									fields(path, type_ident.bind(ctx, name, p));
+								}
+								catch (e:core.Error) {
+									var p2 = e.pos;
+									switch (e.msg) {
+										case Unknown_ident(_) if (p.equals(p2)):
+											try {
+												// try raising a more sensible error if there was an uppercase-first (module name) part
+												var path = new Ref<ImmutableList<String>>([]);
+												var name = List.find(function (arg) {
+													var name = arg.fst; var flag = arg.snd;
+													if (flag) {
+														return true;
+													}
+													else {
+														path.set(name :: path.get());
+														return false;
+													}
+												}, List.rev(acc)).fst;
+												throw new core.Error(Module_not_found(new core.Path(List.rev(path.get()), name)), p);
+											}
+											catch (_:ocaml.Not_found) {
+												// if there was no module name part, last guess is that we're trying to get package completion
+												if (ctx.in_display) {
+													throw new syntax.parser.TypePath(List.map(function (path) {
+															var n = path.fst;
+															return n;
+														}, List.rev(acc)), None,false);
+												}
+												throw e;
+											}
+										case _: throw e;
+									}
+								}
+						}
+				}
+			}
+			return switch (path) {
+				case []: throw false;
+				case {fst:name, trd:p}::pnext:
+					try {
+						/*
+							first, try to resolve the first ident in the chain and access its fields.
+							this doesn't support untyped identifiers yet, because we want to check
+							fully-qualified dot paths first even in an untyped block.
+						*/
+						fields(pnext, function(_) { return type_ident_raise(ctx, name, p, MGet); });
+					}
+					catch (_:ocaml.Not_found) {
+						// first ident couldn't be resolved, it's probably a fully qualified path - resolve it
+						loop([], path);
+					}
+			}
+		}
+		/*
+			loop through the given EField expression and behave differently depending on whether it's a simple dot-path
+			or a more complex expression, accumulating field access parts in form of (ident,starts_uppercase,pos) tuples.
+
+			if it's a dot-path, then it might be either fully-qualified access (pack.Class.field) or normal field access of
+			a local/global/field identifier. we pass the accumulated path to `type_path` and let it figure out what it is.
+
+			if it's NOT a dot-path (anything other than indentifiers appears in EField chain), then we can be sure it's
+			normal field access, not fully-qualified access, so we pass the non-ident expr along with the accumulated
+			fields chain to the `fields` function and let it type the field access.
+		*/
+		function loop (acc:ImmutableList<{fst:String, snd:Bool, trd:core.Globals.Pos}>, expr:core.Ast.Expr) : AccessMode->AccessKind {
+			var e = expr.expr; var p = expr.pos;
+			return switch (e) {
+				case EField(e, s):
+					loop({fst:s, snd:!(core.Ast.is_lower_ident(s)), trd:p}::acc, e);
+				case EConst(CIdent(i)):
+					type_path({fst:i, snd:!(core.Ast.is_lower_ident(i)), trd:p}::acc);
+				case _:
+					fields(acc, type_access.bind(ctx, e, p));
+			}
+		}
+		return loop([], {expr:e, pos:p})(mode);
 	}
 
 	public static function type_access (ctx:context.Typecore.Typer, e:core.Ast.ExprDef, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
