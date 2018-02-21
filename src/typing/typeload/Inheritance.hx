@@ -11,7 +11,7 @@ class Inheritance {
 
 	public static function check_extends (ctx:context.Typecore.Typer, c:core.Type.TClass, t:core.Type.T, p:core.Globals.Pos) : {c:core.Type.TClass, params:core.Type.TParams} {
 		trace("TODO typeing.typeload.Inheritance.check_extends");
-		return null;
+		throw false;
 	}
 
 	public static function check_interfaces (ctx:context.Typecore.Typer, c:core.Type.TClass) {

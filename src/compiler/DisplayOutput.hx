@@ -41,9 +41,9 @@ class DisplayOutput {
 		var f = List.sort(function (a:DOField, b:DOField){
 			var av = context.Display.display_field_kind_index(a.kind);
 			var bv = context.Display.display_field_kind_index(b.kind);
-			if (av == bv) { 
+			if (av == bv) {
 				if (a.name == b.name) { return 0; }
-				return (a.name > b.name) ? 1 : -1; 
+				return (a.name > b.name) ? 1 : -1;
 			}
 			return (av > bv) ? 1 : -1;
 
@@ -52,7 +52,7 @@ class DisplayOutput {
 			var s_kind:String;
 			var t:String;
 			switch (element.kind) {
-				case FKVar(s) : 
+				case FKVar(s) :
 					s_kind = "var";
 					t = core.Type.s_type(core.Type.print_context(), s);
 				case FKMethod(s):
@@ -90,7 +90,7 @@ class DisplayOutput {
 
 	public static function print_toplevel (il:ImmutableList<context.common.identifiertype.T>) : String {
 		trace("TDOO: compiler.DisplayOutput.print_toplevel");
-		return null;
+		throw false;
 	}
 
 	public static function print_type (t:core.Type.T, p:core.Globals.Pos, doc:String) : String {
@@ -156,7 +156,7 @@ class DisplayOutput {
 
 	public static function print_signature (tl:ImmutableList<{sig:core.Type.TSignature, doc:core.Ast.Documentation}>, display_arg:Int) : String {
 		trace("TODO compiler.DisplayOutput.print_signature");
-		return null;
+		throw false;
 	}
 
 	public static function unquote(v:String) : String {
@@ -293,7 +293,7 @@ class DisplayOutput {
 
 	public static function find_doc (t:core.Type.T) : String {
 		trace("TODO: compiler.DisplayOutput.find_doc");
-		return null;
+		throw false;
 	}
 
 }

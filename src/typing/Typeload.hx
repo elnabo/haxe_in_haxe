@@ -42,8 +42,73 @@ class Typeload {
 	public static var build_count:Ref<Int> = new Ref(0);
 
 	public static function transform_abstract_field(com:context.Common.Context, this_t:core.Ast.TypeHint, a_t:core.Ast.TypeHint, a:core.Type.TAbstract, f:core.Ast.ClassField) : core.Ast.ClassField {
-		trace("TODO: typing.Typeload.transform_abstract_field");
-		return null;
+		var stat = List.mem(core.Ast.Access.AStatic, f.cff_access);
+		var p = f.cff_pos;
+		return switch (f.cff_kind) {
+			case FProp({pack:("get"|"never")}, {pack:("set"|"never")}, _, _) if (!stat):
+				// TODO: hack to avoid issues with abstract property generation on As3
+				if (context.Common.defined(com, As3)) {
+					f.cff_meta = ({name:Extern, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f.cff_meta;
+				}
+				var _f = f.clone();
+				_f.cff_access = core.Ast.Access.AStatic :: f.cff_access;
+				_f.cff_meta = ({name:Impl, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: _f.cff_meta;
+				_f;
+			case FProp(_) if (!stat):
+				core.Error.error("Member property accessors must be get/set or never", p);
+			case FFun(fu) if (f.cff_name.pack == "new" && !stat):
+				function init (p:core.Globals.Pos) : core.Ast.Expr {
+					return {expr:EVars([{name:{pack:"this", pos:core.Globals.null_pos}, type:Some(this_t), expr:None}]), pos:p};
+				}
+				function cast_ (e:core.Ast.Expr) : core.Ast.Expr {
+					return {expr:ECast(e, None), pos:e.pos};
+				}
+				function ret (p:core.Globals.Pos) : core.Ast.Expr {
+					return {expr:EReturn(Some(cast_({expr:EConst(CIdent("this")), pos:p}))), pos:p};
+				}
+				var meta = ({name:Impl, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f.cff_meta;
+				meta = if (core.Meta.has(MultiType, a.a_meta)) {
+					if (List.mem(core.Ast.Access.AInline, f.cff_access)) {
+						core.Error.error("MultiType constructors cannot be inline", f.cff_pos);
+					}
+					if (fu.f_expr != None) {
+						core.Error.error("MultiType constructors cannot have a body", f.cff_pos);
+					}
+					({name:Extern, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: meta;
+				}
+				else {
+					meta;
+				}
+				// We don't want the generated expression positions to shadow the real code.
+				var p = new core.Globals.Pos(p.pfile, p.pmin, p.pmin);
+				var _fu = fu.clone();
+				_fu.f_expr = switch (fu.f_expr) {
+					case None: (core.Meta.has(MultiType, a.a_meta)) ? Some({expr:EConst(CIdent("null")), pos:p}) : None;
+					case Some({expr:EBlock(el)}): Some({expr:EBlock(List.append(init(p)::el, [ret(p)])), pos:p});
+					case Some(e): Some({expr:EBlock([init(p), e, ret(p)]), pos:p});
+				}
+				_fu.f_type = Some(a_t);
+				var _f = f.clone();
+				_f.cff_name = {pack:"_new", pos:f.cff_name.pos};
+				_f.cff_access = core.Ast.Access.AStatic :: f.cff_access;
+				_f.cff_kind = FFun(_fu);
+				_f.cff_meta = meta;
+				_f;
+			case FFun(fu) if (!stat):
+				if (core.Meta.has(From, f.cff_meta)) {
+					core.Error.error("@:from cast functions must be static", f.cff_pos);
+				}
+				var _fu = fu;
+				var fu = fu.clone();
+				fu.f_args = (List.mem(core.Ast.Access.AMacro, f.cff_access)) ? _fu.f_args : {name:{pack:"this", pos:core.Globals.null_pos}, opt:false, meta:Tl, type:Some(this_t), value:None} :: _fu.f_args;
+				var _f = f;
+				var f = f.clone();
+				f.cff_kind = FFun(fu);
+				f.cff_access = core.Ast.Access.AStatic :: _f.cff_access;
+				f.cff_meta = ( {name:Impl, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: _f.cff_meta;
+				f;
+			case _: f;
+		}
 	}
 
 	public static function get_policy (ctx:context.Typecore.Typer, mpath:core.Path) {

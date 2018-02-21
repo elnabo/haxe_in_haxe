@@ -84,7 +84,7 @@ typedef TSignature = {
 typedef TParams = ImmutableList<T>;
 
 typedef TypeParams = ImmutableList<{
-	name : String, 
+	name : String,
 	t : T
 }>;
 
@@ -424,7 +424,7 @@ class Type {
 			v_capture: false,
 			v_extra: None,
 			v_meta: [],
-			v_pos: p 
+			v_pos: p
 		};
 	}
 	public static function alloc_mid () : Int {
@@ -561,7 +561,7 @@ class Type {
 	static var _null_module:ModuleDef = null;
 	public static var null_module(get, never): ModuleDef;
 	static function get_null_module() : ModuleDef {
-		if (_null_module == null) { 
+		if (_null_module == null) {
 			_null_module = {
 				m_id: alloc_mid(),
 				m_path: new core.Path([], ""),
@@ -601,7 +601,7 @@ class Type {
 					mt_meta : c.cl_meta,
 					mt_params : c.cl_params
 				};
-			case TEnumDecl(e): 
+			case TEnumDecl(e):
 				{
 					mt_path: e.e_path,
 					mt_module: e.e_module,
@@ -750,8 +750,8 @@ class Type {
 
 	/* substitute parameters with other types */
 	public static function apply_params (cparams:TypeParams, params:ImmutableList<T>, t:T) : T {
-		switch (cparams) { 
-			case []: return t; 
+		switch (cparams) {
+			case []: return t;
 			case _:
 		}
 
@@ -773,7 +773,7 @@ class Type {
 				List.assq(t, subst);
 			}
 			catch (_:ocaml.Not_found) {}
-			
+
 			return switch (t) {
 				case TMono(_.get()=>r):
 					switch (r) {
@@ -1196,14 +1196,21 @@ class Type {
 	// ======= Printing =======
 
 	/** not sure if ImmutableList<String> */
-	public static function print_context () : ImmutableList<String> {
-		return [];
+	public static function print_context () : Ref<ImmutableList<String>> {
+		return new Ref(Tl);
 	}
 
 	/** not sure if ctx is ImmutableList<String> */
-	public static function s_type (ctx:ImmutableList<String>, t:T) : String {
+	public static function s_type (ctx:Ref<ImmutableList<String>>, t:T) : String {
 		trace("TODO core.Type.s_type");
-		return null;
+		throw false;
+	}
+
+	public static function s_type_params (ctx:Ref<ImmutableList<String>>, arr:ImmutableList<T>) : String {
+		return switch (arr) {
+			case []: "";
+			case l : "<" + List.join(", ", List.map(s_type.bind(ctx), l)) + ">";
+		}
 	}
 
 	public static function s_access (is_read:Bool, access:VarAccess) : String {
@@ -1439,7 +1446,7 @@ class Type {
 	public static function rec_stack_bool (stack:Ref<ImmutableList<{fst:T, snd:T}>>, value:{fst:T, snd:T}, fcheck:{fst:T, snd:T}->Bool, frun:Void->Void) : Bool {
 		if (List.exists(fcheck, stack.get())) {
 			return false;
-		} 
+		}
 		else {
 			try {
 				stack.set(value::stack.get());
@@ -1499,7 +1506,7 @@ class Type {
 					rec_stack(eq_stack, {fst:a, snd:b},
 						function (e) { return fast_eq(a, e.fst) && fast_eq(b, e.snd); },
 						function () { type_eq(param, a, apply_params(t.t_params, tl, t.t_type)); },
-						function (l) { 
+						function (l) {
 							return error(cannot_unify(a,b) :: l);
 						}
 					);
@@ -1547,7 +1554,7 @@ class Type {
 								}
 								var a = f1.cf_type;
 								var b = f2.cf_type;
-								rec_stack(eq_stack, {fst:a, snd:b}, 
+								rec_stack(eq_stack, {fst:a, snd:b},
 									function (pair) { return fast_eq(a, pair.fst) && fast_eq(b, pair.snd); },
 									function () { type_eq(param, a, b); },
 									function (l) { error(invalid_field(n) :: l);}
@@ -1561,7 +1568,7 @@ class Type {
 									error([cannot_unify(a, b)]);
 								}
 								a2.a_fields.set(n, f1);
-								
+
 							}
 						}, a1.a_fields);
 						ocaml.PMap.iter(function (n, f2) {
@@ -1611,7 +1618,7 @@ class Type {
 
 	public static function unify (a:T, b:T) : Dynamic {
 		trace("TODO: core.Type.unify");
-		return null;
+		throw false;
 	}
 
 	// ======= Mapping and iterating =======
@@ -1893,6 +1900,20 @@ class Type {
 	// module TExprToExpr = struct ...
 	// module StringError = struct ...
 
+	public static function class_module_type (c:TClass) : TDef {
+		return {
+			t_path: new core.Path([], "Class<" + core.Globals.s_type_path(c.cl_path) + ">"),
+			t_module: c.cl_module,
+			t_doc: None,
+			t_pos: c.cl_pos,
+			t_name_pos: core.Globals.null_pos,
+			t_type: TAnon({a_fields:c.cl_statics, a_status:new Ref(Statics(c))}),
+			t_private: true,
+			t_params: [],
+			t_meta: no_meta
+		}
+	}
+
 	public static function enum_module_type (m:ModuleDef, path:core.Path, p:core.Globals.Pos) : TDef {
 		return {
 			t_path: new core.Path([], "Enum<" + core.Globals.s_type_path(path) + ">"),
@@ -1904,6 +1925,23 @@ class Type {
 			t_type: mk_mono(),
 			t_params: [],
 			t_meta: []
+		}
+	}
+
+	public static function abstract_module_type (a:TAbstract, tl:ImmutableList<T>) : TDef {
+		return {
+			t_path: new core.Path([], 'Abstract<${core.Globals.s_type_path(a.a_path)}${s_type_params(new Ref(Tl), tl)}>'),
+			t_module: a.a_module,
+			t_doc: None,
+			t_pos: a.a_pos,
+			t_name_pos: core.Globals.null_pos,
+			t_type: TAnon({
+				a_fields: new Map<String, TClassField>(),
+				a_status: new Ref(AbstractStatics(a))
+			}),
+			t_private: true,
+			t_params: [],
+			t_meta: no_meta
 		}
 	}
 }

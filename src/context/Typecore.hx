@@ -150,11 +150,12 @@ class Typecore {
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(function (_, _, _, _) { throw false; });
 	public static var analyser_run_on_expr_ref = new Ref<context.Common.Context-> core.Type.TExpr -> core.Type.TExpr>(function (_, _) { throw false; });
 
-	public static function display_error (ctx:Typer, msg:String, p:core.Globals.Pos) : Void {
+	public static function display_error (ctx:Typer, msg:String, p:core.Globals.Pos) : Dynamic {
 		switch (ctx.com.display.dms_error_policy) {
 			case EPShow, EPIgnore: ctx.on_error(ctx, msg, p);
 			case EPCollect: context.Common.add_diagnostics_message(ctx.com, msg, p, Error);
 		}
+		throw false; // for return type dynamic
 	}
 
 	public static function type_expr (ctx:Typer, e:core.Ast.Expr, with_type:WithType) : core.Type.TExpr {
@@ -174,7 +175,7 @@ class Typecore {
 			display_error(ctx, core.Error.error_msg(Unify(l)), p);
 		}
 	}
-	
+
 	public static function raise_or_display_message (ctx:Typer, msg:String, p:core.Globals.Pos) : Dynamic {
 		if (ctx.in_call_args) {
 			throw new WithTypeError(Custom(msg), p);
@@ -182,18 +183,17 @@ class Typecore {
 		else {
 			display_error(ctx, msg, p);
 		}
-		return null;
+		throw false; // for return type dynamic
 	}
-	
 
-	public static function unify (ctx:Typer, t1:core.Type.T, t2:core.Type.T, p:core.Globals.Pos) : Dynamic {
+
+	public static function unify (ctx:Typer, t1:core.Type.T, t2:core.Type.T, p:core.Globals.Pos) : Void {
 		try {
 			core.Type.unify(t1, t2);
 		}
 		catch(err:core.Type.Unify_error) {
 			raise_or_display(ctx, err.l, p);
 		}
-		return null;
 	}
 
 	public static function unify_raise (ctx:Typer, t1:core.Type.T, t2:core.Type.T, p:core.Globals.Pos) : Dynamic {
@@ -204,7 +204,7 @@ class Typecore {
 			// no untyped check
 			throw new core.Error(Unify(err.l),p);
 		}
-		return null;
+		throw false; // for return type dynamic
 	}
 
 	public static function save_locals (ctx:Typer) : Void->Void {
@@ -325,6 +325,15 @@ class Typecore {
 		}
 		return r;
 	}
+
+	/**
+	 * checks if we can access to a given class field using current context
+	 */
+	public static function can_access (ctx:context.Typecore.Typer, ?in_overload:Bool=false, c:core.Type.TClass, cf:core.Type.TClassField, stat:Bool) : Bool {
+		trace("TODO: context.Typecore.can_access");
+		throw false;
+	}
+
 
 	static function compareTyperPass (a:TyperPass, b:TyperPass) : Int {
 		if (a.equals(b)) { return 0; }

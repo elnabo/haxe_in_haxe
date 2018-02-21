@@ -148,7 +148,7 @@ typedef TypePath = {
 typedef PlacedTypePath = {
 	tp : TypePath,
 	pos: Pos
-} 
+}
 
 enum TypeParamOrConst {
 	TPType (hint:TypeHint);
@@ -371,7 +371,7 @@ class Ast {
 	}
 
 	public static inline function punion(p1:core.Globals.Pos, p2:core.Globals.Pos) {
-		return new core.Globals.Pos(p1.pfile, 
+		return new core.Globals.Pos(p1.pfile,
 			(p1.pmin < p2.pmin) ? p1.pmin : p2.pmin,
 			(p1.pmax > p2.pmax) ? p1.pmax : p2.pmax
 			);
@@ -469,12 +469,12 @@ class Ast {
 
 	public static function map_expr (loop:core.Ast.Expr->core.Ast.Expr, expr:core.Ast.Expr) : core.Ast.Expr {
 		trace("TODO: core.Ast.map_expr");
-		return null;
+		throw false;
 	}
 
 	public static function s_expr (e:core.Ast.Expr) : String {
 		trace("TODO: core.Ast.s_expr");
-		return null;
+		throw false;
 	}
 
 	public static function get_value_meta (meta:core.Ast.Metadata) : Map<String, Expr> {
@@ -632,7 +632,7 @@ class Ast {
 			default: null;
 		};
 	}
-	
+
 	public static function s_binop (op:core.Ast.Binop) : String {
 		return switch (op) {
 			case OpAdd: "+";

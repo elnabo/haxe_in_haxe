@@ -39,7 +39,7 @@ class Printer {
 	}
 
 	public static inline function s_pmap<K,V> (fk:K->String, fv:V->String, pm:Map<K, V>) : String {
-		return '{${List.join(", ", PMap.foldi(function (k, v, acc:ImmutableList<String>) : ImmutableList<String> { 
+		return '{${List.join(", ", PMap.foldi(function (k, v, acc:ImmutableList<String>) : ImmutableList<String> {
 			return ('${fk(k)} = ${fv(v)}') :: acc; }, pm, []))
 		}';
 	}
@@ -71,15 +71,15 @@ class Printer {
 
 	public static function s_tclass_field (tabs:String, cf:core.Type.TClassField) : String {
 		trace("TODO: core.type.Printer.s_tclass");
-		return null;
+		throw false;
 	}
 
 	public static function s_tclass (tabs:String, c:core.Type.TClass) : String {
 		trace("TODO: core.type.Printer.s_tclass");
-		return null;
+		throw false;
 	}
 	public static function s_tabstract (tabs:String, c:core.Type.TAbstract) : String {
 		trace("TODO: core.type.Printer.s_tabstract");
-		return null;
+		throw false;
 	}
 }

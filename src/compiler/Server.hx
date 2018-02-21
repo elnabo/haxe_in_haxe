@@ -28,7 +28,8 @@ class Server {
 	}
 
 	public static function parse_hxml (file:String) : ImmutableList<String> {
-		return null;
+		trace("TODO: Server.parse_hxml");
+		throw false;
 	}
 
 	public static function is_debug_run () : Bool {
@@ -53,7 +54,7 @@ class Server {
 	public static function default_flush (ctx:Context) {
 
 		var messages = List.rev(ctx.messages);
-		
+
 		List.iter(function(msg:context.CompilerMessage) {
 			switch (msg) {
 				case CMInfo(_):
@@ -95,12 +96,12 @@ class Server {
 
 	public static function wait_loop (process_params:Dynamic, verbose:Bool, accept:Dynamic) : Dynamic {
 		trace("TODO: Server.wait_loop");
-		return null;
+		throw false;
 	}
 
 	public static function init_wait_stdio () : Dynamic {
 		trace("TODO: Server.init_wait_stdio");
-		return null;
+		throw false;
 		// set_binary_mode_in stdin true;
 		// set_binary_mode_out stderr true;
 
@@ -125,7 +126,7 @@ class Server {
 
 	public static function init_wait_socket (verbose:Bool, host:String, port:Int) : Dynamic {
 		trace("TODO: Server.init_wait_socket");
-		return null;
+		throw false;
 		// let sock = Unix.socket Unix.PF_INET Unix.SOCK_STREAM 0 in
 		// (try Unix.setsockopt sock Unix.SO_REUSEADDR true with _ -> ());
 		// (try Unix.bind sock (Unix.ADDR_INET (Unix.inet_addr_of_string host,port)) with _ -> failwith ("Couldn't wait on " ^ host ^ ":" ^ string_of_int port));

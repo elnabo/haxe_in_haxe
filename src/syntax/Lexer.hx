@@ -55,7 +55,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	static var idtype = "_*[A-Z][a-zA-Z0-9_]*";
 
 	static var integer = "([1-9][0-9]*)|0";
-	// end from 
+	// end from
 	static function mk(lexer:hxparse.Lexer, td) : Token {
 			// return new Token(td, mkPos(lexer.curPos()));
 			return new Token(td, mkPos(lexer.curPos()));
@@ -190,7 +190,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 			var pmin = lexer.curPos();
 			var info = try lexer.token(regexp) catch (e:haxe.io.Eof) throw syntax.lexer.Error.of(Unterminated_regexp, pmin);
 			var token = mk(lexer, Const(CRegexp(contents(), info.opt)));
-			// token.pos.pmin = pmin.pmin; 
+			// token.pos.pmin = pmin.pmin;
 			token.pos = new core.Globals.Pos(token.pos.pfile, pmin.pmin, token.pos.pmax);
 			token;
 		},
@@ -314,7 +314,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	];
 
 	public static var regexp = @:rule [
-		"\n|\r" => { 
+		"\n|\r" => {
 			throw new haxe.io.Eof();
 		},
 		"\\\\/" => {
@@ -367,17 +367,17 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	];
 
 	public static var comment = @:rule [
-		"\n" => { 
+		"\n" => {
 			newline(lexer);
 			store(lexer);
 			lexer.token(comment);
 		},
-		"\r" => { 
+		"\r" => {
 			newline(lexer);
 			store(lexer);
 			lexer.token(comment);
 		},
-		"\r\n" => { 
+		"\r\n" => {
 			newline(lexer);
 			store(lexer);
 			lexer.token(comment);
@@ -427,7 +427,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	public static inline function store (lexbuf:hxparse.Lexer) {
 		buf.add(lexbuf.current);
 	}
-	
+
 	public static inline function save () : LexerFile {
 		return {
 			lfile : cur.lfile,
@@ -460,7 +460,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 
 	public static function error_msg (m:syntax.lexer.ErrorMsg) : String {
 		trace("TODO: syntax.Lexer.error_msg");
-		return null;
+		throw false;
 	}
 
 	public static function is_fmt_string (p:core.Globals.Pos) : Bool {
@@ -507,8 +507,8 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 			return loop(0, f.lalines.length);
 		}
 	}
-	
-	// resolve a position within a non-haxe file by counting newlines 
+
+	// resolve a position within a non-haxe file by counting newlines
 	public static function resolve_pos (file:String) : LexerFile {
 		if (!sys.FileSystem.exists(file)) { throw ocaml.Sys_error.instance; }
 		// var ch = sys.io.File.getBytes(file);

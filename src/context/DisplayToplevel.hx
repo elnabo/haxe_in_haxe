@@ -7,7 +7,7 @@ import ocaml.List;
 class DisplayToplevel {
 	public static function collect(ctx:context.Typecore.Typer, only_types:Bool) : ImmutableList<context.common.identifiertype.T> {
 		trace("TODO: context.DisplayToplevel.collect");
-		return null;
+		throw false;
 	}
 
 	public static function handle_unresolved_identifier (ctx:context.Typecore.Typer, i:String, p, only_types:Bool) {

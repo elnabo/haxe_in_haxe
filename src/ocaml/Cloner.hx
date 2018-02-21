@@ -9,7 +9,7 @@ import haxe.io.Bytes;
 class Cloner {
 
 	static function _clone<T> (v:T, existing:ObjectMap<Dynamic,Dynamic>) : T {
-		return v; // ?
+		// return v; // ?
 		var base:Dynamic = null;
 		switch (Type.typeof(v)) {
 			case TNull, TInt, TFloat, TBool, TFunction: // immutable

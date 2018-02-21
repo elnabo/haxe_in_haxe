@@ -11,7 +11,7 @@ class MacroContext {
 
 	public static function type_macro (ctx:context.Typecore.Typer, mode:context.Typecore.MacroMode, cpath:core.Path, f:String, els:ImmutableList<core.Ast.Expr>, p:core.Globals.Pos) : Option<core.Ast.Expr> {
 		trace("TODO typing.MacroContext.type_macro");
-		return null;
+		throw false;
 	}
 
 	public static function setup () : Void {
