@@ -1015,6 +1015,18 @@ class Type {
 		}
 	}
 
+	public static function tconst_to_const (c:core.Type.TConstant) : core.Ast.Constant {
+		return switch (c) {
+			case TInt(i): CInt(Std.string(i));
+			case TFloat(s): CFloat(s);
+			case TString(s): CString(s);
+			case TBool(b): CIdent((b) ? "true" : "false");
+			case TNull: CIdent("null");
+			case TThis: CIdent("this");
+			case TSuper: CIdent("super");
+		}
+	}
+
 	public static function has_ctor_constraint (c:TClass) : Bool {
 		return switch (c.cl_kind) {
 			case KTypeParameter(tl):

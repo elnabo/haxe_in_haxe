@@ -326,6 +326,17 @@ class Typecore {
 		return r;
 	}
 
+	public static function push_this (ctx:context.Typecore.Typer, e:core.Type.TExpr) : {fst:core.Ast.Expr, snd:Void->Void} {
+		return switch (e.eexpr) {
+			case TConst(ct=(TInt(_) | TFloat(_) | TString(_) | TBool(_))):
+				{fst: {expr:EConst(core.Type.tconst_to_const(ct)), pos:e.epos}, snd: function () {}};
+			case _:
+				ctx.this_stack = e::ctx.this_stack;
+				var er:core.Ast.Expr = {expr:EMeta({name:This, params:[], pos:e.epos}, {expr:EConst(CIdent("this")), pos:e.epos}), pos:e.epos};
+				{fst:er, snd:function() { ctx.this_stack = List.tl(ctx.this_stack); }};
+		}
+	}
+
 	/**
 	 * checks if we can access to a given class field using current context
 	 */
@@ -334,6 +345,37 @@ class Typecore {
 		throw false;
 	}
 
+	/*
+	 * removes the first argument of the class field's function type and all its overloads
+	 */
+	public static function prepare_using_field (cf:core.Type.TClassField) : core.Type.TClassField {
+		return switch (core.Type.follow(cf.cf_type)) {
+			case TFun({args:{t:tf}::args, ret:ret}):
+				function loop (acc, overloads:ImmutableList<core.Type.TClassField>) {
+					return switch (overloads) {
+						case (cfo={cf_type:TFun({args:{t:tfo}::args, ret:ret})})::l:
+							var tfo = core.Type.apply_params(cfo.cf_params, List.map(function (p) {return p.t; }, cfo.cf_params), tfo);
+							// ignore overloads which have a different first argument
+							if (core.Type.type_iseq(tf, tfo)) {
+								var _cfo = cfo.clone();
+								_cfo.cf_type = TFun({args:args, ret:ret});
+								loop(_cfo::acc, l);
+							}
+							else {
+								loop(acc, l);
+							}
+						case _::l:
+							loop(acc, l);
+						case []: acc;
+					}
+				}
+				var _cf = cf.clone();
+				_cf.cf_overloads = loop([], cf.cf_overloads);
+				_cf.cf_type = TFun({args:args, ret:ret});
+				_cf;
+			case _: cf;
+		}
+	}
 
 	static function compareTyperPass (a:TyperPass, b:TyperPass) : Int {
 		if (a.equals(b)) { return 0; }

@@ -8,6 +8,7 @@ import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
 
+using StringTools;
 using equals.Equal;
 using ocaml.Cloner;
 
@@ -168,7 +169,26 @@ class Typer {
 		}
 	}
 
-	public static function unify_field_call (ctx:context.Typecore.Typer, fa:core.Type.TFieldAccess, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, ret:core.Type.T, p:core.Globals.Pos, _inline:Bool) : {fst:Dynamic, snd:Dynamic, trd:ImmutableList<core.Type.TExpr>} {
+	public static function is_forced_inline (c:Option<core.Type.TClass>, cf:core.Type.TClassField) : Bool {
+		return switch (c) {
+			case Some({cl_extern:true}): true;
+			case Some({cl_kind:KAbstractImpl(_)}): true;
+			case _ if (core.Meta.has(Extern, cf.cf_meta)): true;
+			case _: false;
+		}
+	}
+
+	public static function unify_call_args_ (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, r:core.Type.T, p:core.Globals.Pos, inline_:Bool, force_inline:Bool) : {fst:ImmutableList<{fst:core.Type.TExpr, snd:Any}>, snd:core.Type.T} {
+		trace("TODO: unify_call_args_");
+		throw false;
+	}
+	public static function unify_call_args (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, r:core.Type.T, p:core.Globals.Pos, inline_:Bool, force_inline:Bool) : {fst:ImmutableList<core.Type.TExpr>, snd:core.Type.T} {
+		var _tmp = unify_call_args_(ctx, el, args, r, p, inline_, force_inline);
+		var el = _tmp.fst; var tf = _tmp.snd;
+		return {fst:List.map(function (e) { return e.fst; }, el), snd:tf};
+	}
+
+	public static function unify_field_call (ctx:context.Typecore.Typer, fa:core.Type.TFieldAccess, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, ret:core.Type.T, p:core.Globals.Pos, _inline:Bool) : {fst:ImmutableList<core.Type.TExpr>, snd:Dynamic, trd:core.Type.TExpr->core.Globals.Pos->core.Type.TExpr} {
 		trace("TODO: typing.Typer.unify_field_call");
 		throw false;
 	}
@@ -379,6 +399,29 @@ class Typer {
 		}
 	}
 
+	public static function error_require (r:String, p:core.Globals.Pos) : Dynamic {
+		return if (r == "") {
+			core.Error.error("This field is not available with the current compilation flags", p);
+		}
+		else {
+			var r = if (r == "sys") {
+				"a system platform (php,neko,cpp,etc.)";
+			}
+			else {
+				try {
+					if (r.substr(0, 5) == "flash") { throw ocaml.Exit.instance; }
+					var v = r.substr(5).replace("_", ".");
+					"flash version "+v+" (use -swf-version "+v+")";
+				}
+				catch (b:Bool) { throw b; }
+				catch (_:Any) {
+					"'"+r+"' to be enabled";
+				}
+			}
+			core.Error.error("Accessing this field requires "+r, p);
+		}
+	}
+
 	public static function get_this (ctx:context.Typecore.Typer, p:core.Globals.Pos) : core.Type.TExpr {
 		trace("TODO: get_this");
 		throw false;
@@ -491,12 +534,58 @@ class Typer {
 								case _: false;
 							}
 						}
-						trace("finish"); throw false;
-					case _: trace("finish"); throw false;
+						if (m.equals(ctx.curfield.cf_name) && switch (e.eexpr) { case TConst(TThis): true; case TLocal(v): ocaml.Option.map_default(function (vthis) { return v.equals(vthis); }, false, ctx.vthis); case TTypeExpr(TClassDecl(c)) if (c == ctx.curclass) : true; case _:false;}) {
+							var prefix = switch (ctx.com.platform) { case Flash if (context.Common.defined(ctx.com, As3)): "$"; case _: ""; };
+							switch (e.eexpr) {
+								case TLocal(_) if (context.Common.defined(ctx.com, Haxe3Compat)):
+									ctx.com.warning("Field set has changed here in Haxe 4: call setter explicitly to keep Haxe 3.x behaviour", p);
+								case _:
+							}
+							if (!core.Type.is_physical_field(f)) {
+								context.Typecore.display_error(ctx, "This field cannot be accessed because it is not a real variable", p);
+								context.Typecore.display_error(ctx, "Add @:isVar here to enable it", f.cf_pos);
+							}
+							AKExpr(core.Type.mk(TField(e, (prefix == "") ? fmode: FDynamic(prefix+f.cf_name)), t, p));
+						}
+						else if (is_abstract_this_access()) {
+							var this_ = get_this(ctx, p);
+							if (mode == MSet) {
+								var _tmp = switch (ctx.curclass) { case c={cl_kind:KAbstractImpl(a)}: {fst:c, snd:a}; case _: throw false;}
+								var c = _tmp.fst; var a = _tmp.snd;
+								var f = PMap.find(m, c.cl_statics);
+								// we don't have access to the type parameters here, right ?
+								// let t = apply_params a.a_params pl (field_type ctx c [] f p) i
+								var t = field_type(ctx, c, [], f, p);
+								var ef = core.Type.mk(TField(e, FStatic(c, f)), t, p);
+								AKUsing(ef, c, f, this_);
+							}
+							else {
+								AKExpr(make_call(ctx, core.Type.mk(TField(e, core.Type.quick_field_dynamic(e.etype, m)), core.Type.tfun([this_.etype], t), p), [this_], t, p));
+							}
+						}
+						else if (mode == MSet) {
+							AKSet(e, t, f);
+						}
+						else {
+							AKExpr(make_call(ctx, core.Type.mk(TField(e, core.Type.quick_field_dynamic(e.etype, m)), core.Type.tfun([], t), p), [], t, p));
+						}
+					case AccResolve:
+						var fstring = core.Type.mk(TConst(TString(f.cf_name)), ctx.t.tstring, p);
+						var tresolve = core.Type.tfun([ctx.t.tstring], t);
+						AKExpr(make_call(ctx, core.Type.mk(TField(e, FDynamic("resolve")), tresolve, p), [fstring], t, p));
+					case AccNever:
+						(ctx.untyped_) ? normal() : AKNo(f.cf_name);
+					case AccInline:
+						AKInline(e, f, fmode, t);
+					case AccCtor:
+						(ctx.curfun == FunConstructor) ? normal() : AKNo(f.cf_name);
+					case AccRequire(r, msg):
+						switch (msg) {
+							case None: error_require(r, p);
+							case Some(msg): core.Error.error(msg, p);
+						}
 				}
 		}
-		trace("TODO: field_access");
-		throw false;
 	}
 
 	public static function using_field (ctx:context.Typecore.Typer, mode:AccessMode, e:core.Type.TExpr, i:String, p:core.Globals.Pos) : AccessKind {
@@ -1002,6 +1091,13 @@ class Typer {
 	public static function type_bind (ctx:context.Typecore.Typer, e:core.Type.TExpr, sig:core.Type.TSignature, params, p:core.Globals.Pos) : core.Type.TExpr {
 		var args = sig.args; var ret = sig.ret;
 		trace("TODO: type_bind");
+		throw false;
+	}
+
+	public static function type_generic_function (ctx:context.Typecore.Typer, _efa:{fst:core.Type.TExpr, snd:core.Type.TFieldAccess}, el:ImmutableList<core.Ast.Expr>, ?using_param:Option<core.Type.TExpr>=null, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		if (using_param == null) { using_param = None; }
+		var e = _efa.fst; var fa = _efa.snd;
+		trace("TODO: typing.Typer.type_generic_function");
 		throw false;
 	}
 
@@ -1857,7 +1953,7 @@ class Typer {
 						}
 						var el = switch (core.Type.follow(ct)) {
 							case TFun({args:args, ret:r}):
-								var el = unify_field_call(ctx, FInstance(c, params, f), el, args, r, p, false).trd;
+								var el = unify_field_call(ctx, FInstance(c, params, f), el, args, r, p, false).fst;
 								el;
 							case _:
 								core.Error.error("Constructor is not a function", p);
@@ -1872,8 +1968,168 @@ class Typer {
 	}
 
 	public static function build_call (ctx:context.Typecore.Typer, acc, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: build_call");
-		throw false;
+		return switch (acc) {
+			case AKInline(ethis, f, fmode, t) if (core.Meta.has(Generic, f.cf_meta)):
+				type_generic_function(ctx, {fst:ethis, snd:fmode}, el, with_type, p);
+			case AKInline(ethis, f, fmode, t):
+				switch (core.Type.follow(t)) {
+					case TFun({args:args, ret:r}):
+						var mk_call = unify_field_call(ctx, fmode, el, args, r, p, true).trd;
+						mk_call(ethis, p);
+					case _:
+						core.Error.error(core.Type.s_type(core.Type.print_context(), t) + " cannot be called", p);
+				}
+			case AKUsing(et, cl, ef, eparam) if (core.Meta.has(Generic, ef.cf_meta)):
+				switch (et.eexpr) {
+					case TField(ec, fa):
+						type_generic_function(ctx, {fst:ec, snd:fa}, el, Some(eparam), with_type, p);
+					case _: throw false;
+				}
+			case AKUsing(et, cl, ef, eparam):
+				switch (ef.cf_kind) {
+					case Method(MethMacro):
+						var ethis = type_module_type(ctx, TClassDecl(cl), None, p);
+						var _tmp = context.Typecore.push_this(ctx, eparam);
+						var eparam = _tmp.fst; var f = _tmp.snd;
+						var e = build_call(ctx, AKMacro(ethis, ef), (eparam::el), with_type, p);
+						f();
+						e;
+					case _:
+						var t = core.Type.follow(field_type(ctx, cl, [], ef, p));
+						// for abstracts we have to apply their parameters to the static function
+						var _tmp = switch (core.Type.follow(eparam.etype)) {
+							case TAbstract(a, tl) if (core.Meta.has(Impl, ef.cf_meta)):
+								{fst:core.Type.apply_params(a.a_params, tl, t), snd:core.Type.apply_params(a.a_params, tl, a.a_this)};
+							case te: {fst:t, snd:te};
+						}
+						var t = _tmp.fst; var tthis = _tmp.snd;
+						var _tmp = switch (t) {
+							case TFun({args:{t:t1}::args, ret:r}):
+								context.Typecore.unify(ctx, tthis, t1, eparam.epos);
+								var ef = context.Typecore.prepare_using_field(ef);
+								switch (unify_call_args(ctx, el, args, r, p, (ef.cf_kind.equals(Method(MethInline))), is_forced_inline(Some(cl), ef))) {
+									case {fst:el, snd:TFun({args:args, ret:r})}: {fst:el, snd:args, trd:r, frth:eparam};
+									case _: throw false;
+								}
+							case _: throw false;
+						}
+						var params = _tmp.fst; var args = _tmp.snd; var r = _tmp.trd; var eparam = _tmp.frth;
+						make_call(ctx, et, (eparam::params), r, p);
+
+				}
+			case AKMacro(ethis, cf):
+				if (ctx.macro_depth > 300) {
+					core.Error.error("Stack overflow", p);
+				}
+				ctx.macro_depth++;
+				ctx.with_type_stack = with_type :: ctx.with_type_stack;
+				var ethis_f = new Ref<Void->Void>(function () {});
+				var f = switch (ethis.eexpr) {
+					case TTypeExpr(TClassDecl(c)):
+						switch (ctx.g.do_macro(ctx, MExpr, c.cl_path, cf.cf_name, el, p)) {
+							case None: function () { return type_expr(ctx, {expr:EConst(CIdent("null")), pos:p}, Value); };
+							case Some({expr:EMeta({name:MergeBlock}, {expr:EBlock(el)})}): function () {
+								var e = type_block(ctx, el, with_type, p);
+								return  core.Type.mk(TMeta({name:MergeBlock, params:[], pos:p}, e), e.etype, e.epos);
+							};
+							case Some(e): function () { return type_expr(ctx, e, with_type); };
+						}
+					case _: // member-macro call : since we will make a static call, let's found the actual class and not its subclass
+						switch (core.Type.follow(ethis.etype)) {
+							case TInst(c, _):
+								function loop (c:core.Type.TClass) {
+									if (PMap.mem(cf.cf_name, c.cl_fields)) {
+										var _tmp = context.Typecore.push_this(ctx, ethis);
+										var eparam = _tmp.fst; var f = _tmp.snd;
+										ethis_f.set(f);
+										var e = switch (ctx.g.do_macro(ctx, MExpr, c.cl_path, cf.cf_name, eparam::el, p)) {
+											case None: function () { return type_expr(ctx, {expr:EConst(CIdent("null")), pos:p}, Value); };
+											case Some(e): function () { return type_expr(ctx, e, Value); };
+										}
+										return e;
+									}
+									else {
+										return switch (c.cl_super) {
+											case None: throw false;
+											case Some({c:csup}): loop(csup);
+										}
+									}
+								}
+								loop(c);
+							case _: throw false;
+						}
+				}
+				ctx.macro_depth--;
+				ctx.with_type_stack = List.tl(ctx.with_type_stack);
+				var old = ctx.on_error.clone();
+				ctx.on_error = function (ctx, msg, ep) {
+					// display additional info in the case the error is not part of our original call
+					if (ep.pfile != p.pfile || ep.pmax < p.pmin || ep.pmin > p.pmax) {
+						typing.Typeload.locate_macro_error.set(false);
+						old(ctx, msg, ep);
+						typing.Typeload.locate_macro_error.set(true);
+						ctx.com.error("Called from macro here", p);
+					}
+					else {
+						old(ctx, msg, ep);
+					}
+				}
+				var e = try { f(); }
+				catch (exc:core.Error) {
+					var m =exc.msg; var p = exc.pos;
+					ctx.on_error = old;
+					ethis_f.get()();
+					throw new core.Error.Fatal_error(core.Error.error_msg(m), p);
+				}
+				var e = context.display.Diagnostics.secure_generated_code(ctx, e);
+				ctx.on_error = old;
+				ethis_f.get()();
+				e;
+			case AKNo(_), AKSet(_), AKAccess(_):
+				acc_get(ctx, acc, p);
+				throw false;
+			case AKExpr(e):
+				function loop (t:core.Type.T) {
+					return switch (core.Type.follow(t)) {
+						case TFun({args:args, ret:r}):
+							switch (e.eexpr) {
+								case TField(e1, fa) if (!fa.match(FEnum(_))):
+									switch (fa) {
+										case FInstance(_, _, cf), FStatic(_, cf) if (core.Meta.has(Generic, cf.cf_meta)):
+											type_generic_function(ctx, {fst:e1, snd:fa}, el, with_type, p);
+										case _:
+											var mk_call = unify_field_call(ctx, fa, el, args, r, p, false).trd;
+											mk_call(e1, e.epos);
+									}
+								case _:
+									var _tmp = unify_call_args(ctx, el, args, r, p, false, false);
+									var el = _tmp.fst; var tfunc = _tmp.snd;
+									var r = switch (tfunc) { case TFun({ret:r}): r; case _: throw false; };
+									core.Type.mk(TCall(e, el), r, p);
+							}
+						case TAbstract(a, tl) if (core.Meta.has(Callable, a.a_meta)):
+							loop(core.Abstract.get_underlying_type(a, tl));
+						case TMono(_):
+							var t = core.Type.mk_mono();
+							var el = List.map(function (e) { return type_expr(ctx, e, Value); }, el);
+							context.Typecore.unify(ctx, core.Type.tfun(List.map(function (e) { return e.etype; }, el), t), e.etype, e.epos);
+							core.Type.mk(TCall(e, el), t, p);
+						case t:
+							var el = List.map(function (e) { return type_expr(ctx, e, Value); }, el);
+							var t = if (t.equals(core.Type.t_dynamic)) {
+								core.Type.t_dynamic;
+							}
+							else if (ctx.untyped_) {
+								core.Type.mk_mono();
+							}
+							else {
+								core.Error.error(core.Type.s_type(core.Type.print_context(), e.etype)+" cannot be called", e.epos);
+							}
+							core.Type.mk(TCall(e, el), t, p);
+					}
+				}
+				loop(e.etype);
+		}
 	}
 	// ----------------------------------------------------------------------
 	// FINALIZATION
