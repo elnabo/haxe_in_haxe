@@ -3,7 +3,14 @@ package typing;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
+import ocaml.PMap;
+
 class MacroContext {
+
+	public static function get_stored_typed_expr (com:context.Common.Context, id:Int) : core.Type.TExpr {
+		var e = PMap.find(id, com.stored_typed_exprs);
+		return core.Texpr.duplicate_tvars(e);
+	}
 
 	public static function call_init_macro (ctx:context.Typecore.Typer, e:String) : Void {
 		trace("TODO: typing.MacroContext.call_init_macro");

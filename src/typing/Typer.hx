@@ -1113,6 +1113,15 @@ class Typer {
 		trace("TODO: typing.Typer.type_binop");
 		throw false;
 	}
+	public static function type_binop2 (ctx:context.Typecore.Typer, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Type.TExpr, is_assign_op:Bool, wt:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: typing.Typer.type_binop2");
+		throw false;
+	}
+
+	public static function type_unop (ctx:context.Typecore.Typer, op:core.Ast.Unop, flag:core.Ast.UnopFlag, e:core.Ast.Expr, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: typing.Typer.type_unop");
+		throw false;
+	}
 
 	public static function type_ident(ctx:context.Typecore.Typer, i:String, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
 		trace("TODO: typing.Typer.type_ident");
@@ -1487,8 +1496,45 @@ class Typer {
 	}
 
 	public static function type_block (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_block");
-		throw false;
+		function merge (e:core.Type.TExpr) : ImmutableList<core.Type.TExpr> {
+			return switch (e.eexpr) {
+				case TMeta({name:MergeBlock}, {eexpr:TBlock(el)}): el;
+				case _: [e];
+			}
+		}
+		function loop (l:ImmutableList<core.Ast.Expr>) : ImmutableList<core.Type.TExpr> {
+			return switch (l) {
+				case []: [];
+				case [e]:
+					try {
+						merge(type_expr(ctx, e, with_type));
+					}
+					catch (err:core.Error) {
+						var e = err.msg; var p = err.pos;
+						check_error(ctx, e, p);
+						Tl;
+					}
+				case e::l:
+					try {
+						var e = type_expr(ctx, e, NoValue);
+						List.append(merge(e), loop(l));
+					}
+					catch (err:core.Error) {
+						var e = err.msg; var p = err.pos;
+						check_error(ctx, e, p);
+						loop(l);
+					}
+			}
+		}
+		var l = loop(el);
+		function loop_(l:ImmutableList<core.Type.TExpr>) : core.Type.T {
+			return switch (l) {
+				case []: ctx.t.tvoid;
+				case [e]: e.etype;
+				case _::l: loop_(l);
+			}
+		}
+		return core.Type.mk(TBlock(l), loop_(l), p);
 	}
 
 	public static function type_object_decl (ctx:context.Typecore.Typer, fl:ImmutableList<core.Ast.ObjectField>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -1511,13 +1557,17 @@ class Typer {
 		throw false;
 	}
 
+	public static function type_local_function (ctx:context.Typecore.Typer, name:Option<String>, f:core.Ast.Func, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: typing.Typer.type_local_function");
+		throw false;
+	}
+
 	public static function type_array_decl (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
 		trace("TODO: typing.Typer.type_array_declaration");
 		throw false;
 	}
 
 	public static function type_expr (ctx:context.Typecore.Typer, expr:core.Ast.Expr, with_type:context.Typecore.WithType) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_expr");
 		var e = expr.expr; var p = expr.pos;
 		return switch (e) {
 			case EField({expr:EConst(CString(s)), pos:ps}, "code"):
@@ -1780,14 +1830,150 @@ class Typer {
 				type_call(ctx, e, el, with_type, p);
 			case ENew(t, el):
 				type_new(ctx, t, el, with_type, p);
-			case _:
-				trace("TODO: finish", e);
+			case EUnop(op, flag, e):
+				type_unop(ctx, op, flag, e, p);
+			case EFunction(name, f):
+				type_local_function(ctx, name, f, with_type, p);
+			case EUntyped(e):
+				var old = ctx.untyped_.clone();
+				ctx.untyped_ = true;
+				if (!core.Meta.has(HasUntyped, ctx.curfield.cf_meta)) {
+					ctx.curfield.cf_meta = ({name:HasUntyped,params:[],pos:p} : core.Ast.MetadataEntry) :: ctx.curfield.cf_meta;
+				}
+				var e = type_expr(ctx, e, with_type);
+				ctx.untyped_ = old;
+				{
+					eexpr:e.eexpr,
+					etype:core.Type.mk_mono(),
+					epos:e.epos
+				};
+			case ECast(e, None):
+				var e = type_expr(ctx, e, Value);
+				core.Type.mk(TCast(e, None), core.Type.mk_mono(), p);
+			case ECast(e, Some(t)):
+				var t = typing.Typeload.load_complex_type(ctx, true, p, t);
+				function check_param(pt:core.Type.T) : Void {
+					switch (core.Type.follow(pt)) {
+						case TMono(_): // This probably means that Dynamic wasn't bound (issue #4675).
+						case t if (t.equals(core.Type.t_dynamic)):
+						case _: core.Error.error("Cast type parameters must be Dynamic", p);
+					}
+				}
+				function loop (t:core.Type.T) : core.Type.ModuleType {
+					return switch(core.Type.follow(t)) {
+						case TInst(_, params), TEnum(_, params):
+							List.iter(check_param, params);
+							switch (core.Type.follow(t)) {
+								case TInst(c, _):
+									switch (c.cl_kind) {
+										case KTypeParameter(_): core.Error.error("Can't cast to a type parameter", p);
+										case _:
+									}
+									TClassDecl(c);
+								case TEnum(e, _): TEnumDecl(e);
+								case _: throw false;
+							}
+						case TAbstract(a, params) if (core.Meta.has(RuntimeValue, a.a_meta)):
+							List.iter(check_param, params);
+							TAbstractDecl(a);
+						case TAbstract(a, params):
+							loop(core.Abstract.get_underlying_type(a, params));
+						case _:
+							core.Error.error("Cast type must be a class or an enum", p);
+					}
+				}
+				var texpr = loop(t);
+				core.Type.mk(TCast(type_expr(ctx, e, Value), Some(texpr)), t, p);
+			case EDisplay(e, iscall):
+				switch (ctx.com.display.dms_kind) {
+					case DMField, DMSignature if (iscall):
+						handle_signature_display(ctx, e, with_type);
+					case _:
+						handle_display(ctx, e, with_type);
+				}
+			case EDisplayNew(t):
 				throw false;
+				/*let t = Typeload.load_instance ctx t true p in
+				(match follow t with
+				| TInst (c,params) | TAbstract({a_impl = Some c},params) ->
+					let ct, f = get_constructor ctx c params p in
+					raise (Display.DisplaySignatures ((ct,f.cf_doc) :: List.map (fun f -> (f.cf_type,f.cf_doc)) f.cf_overloads))
+				| _ ->
+					error "Not a class" p)*/
+			case ECheckType(e, t):
+				var t = typing.Typeload.load_complex_type(ctx, true, p, t);
+				var e = type_expr(ctx, e, WithType(t));
+				var e = context.typecore.AbstractCast.cast_or_unify(ctx, t, e, p);
+				(e.etype.equals(t)) ? e : core.Type.mk(TCast(e, None), t, p);
+			case EMeta(m, e1):
+				if (ctx.is_display_file) {
+					context.display.DisplayEmitter.check_display_metadata(ctx, [m]);
+				}
+				var old = ctx.meta.clone();
+				ctx.meta = m :: ctx.meta;
+				function e_ () {
+					return type_expr(ctx, e1, with_type);
+				}
+				var e = switch (m) {
+					case {name:ToString}:
+						var e = e_();
+						switch (core.Type.follow(e.etype)) {
+							case TAbstract({a_impl:Some(c)}, _) if (PMap.mem("toString", c.cl_statics)): call_to_string(ctx, e);
+							case _: e;
+						}
+					case {name:This}:
+						var e = switch (ctx.this_stack) {
+							case []: core.Error.error("Cannot type @:this this here", p);
+							case e::_: e_();
+						}
+						function loop(e:core.Type.TExpr) : core.Type.TExpr {
+							return switch (e.eexpr) {
+								case TConst(TThis): get_this(ctx, e.epos);
+								case _: core.Type.map_expr(loop, e);
+							}
+						}
+						loop(e);
+					case {name:Analyzer}:
+						var e = e_();
+						e.eexpr = TMeta(m, e);
+						e;
+					case {name:MergeBlock}:
+						switch (e1.expr) {
+							case EBlock(el):
+								var e = type_block(ctx, el, with_type, p);
+								e.eexpr = TMeta(m, e);
+								e;
+							case _: e_();
+						}
+					case {name:StoredTypedExpr}:
+						var id = switch (e1) {
+							case {expr:EConst(CIdent(s))}: Std.parseInt(s);
+							case _: throw false;
+						}
+						typing.MacroContext.get_stored_typed_expr(ctx.com, id);
+					case {name:NoPrivateAccess}:
+						ctx.meta = List.filter(function (meta:core.Ast.MetadataEntry) {
+							var m = meta.name;
+							return m != PrivateAccess;
+						}, ctx.meta);
+						e_();
+					case {name:Fixed} if (ctx.com.platform == Cpp):
+						var e = e_();
+						e.eexpr = TMeta(m, e);
+						e;
+					case _: e_();
+				}
+				e;
 		}
 	}
 
 	public static function handle_display (ctx:context.Typecore.Typer, e_ast:core.Ast.Expr, with_type:context.Typecore.WithType) : core.Type.TExpr {
 		trace("TODO: typing.Typer.handle_dislpay");
+		throw false;
+	}
+
+	public static function handle_signature_display (ctx:context.Typecore.Typer, e_ast:core.Ast.Expr, with_type:context.Typecore.WithType) : core.Type.TExpr {
+		trace("TODO: typing.Typer.handle_signature_dislpay");
 		throw false;
 	}
 

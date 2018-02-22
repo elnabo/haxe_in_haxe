@@ -53,7 +53,7 @@ class Texpr {
 			case {f:TWhile(e1,eb1,flag1), s:TWhile(e2,eb2,flag2)}: equal(e1, e2) && equal(eb2, eb2) && flag1.equals(flag2);
 			case {f:TSwitch(e1,cases1,eo1), s:TSwitch(e2,cases2,eo2)}:
 				equal(e1, e2) &&
-				core.Ast.safe_for_all2(function (c1, c2) { 
+				core.Ast.safe_for_all2(function (c1, c2) {
 					var el1 = c1.values; var e1 = c1.e;
 					var el2 = c2.values; var e2 = c2.e;
 					return core.Ast.safe_for_all2(equal, el1, el2) && equal(e1, e2);}, cases1, cases2) &&
@@ -79,6 +79,11 @@ class Texpr {
 			case {f:TEnumParameter(e1,ef1,i1),s: TEnumParameter(e2,ef2,i2)}: equal(e1, e2) && ef1.equals(ef2) && i1.equals(i2);
 			case _: false;
 		}
+	}
+
+	public static function duplicate_tvars (e:core.Type.TExpr) : core.Type.TExpr {
+		trace("TODO: core.Texpr.duplicate_tvars");
+		throw false;
 	}
 
 	public static function skip (e:core.Type.TExpr) : core.Type.TExpr {
