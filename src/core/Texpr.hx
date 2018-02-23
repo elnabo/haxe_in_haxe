@@ -2,6 +2,12 @@ package core;
 
 using equals.Equal;
 
+class Builder {
+	public static function binop (op:core.Ast.Binop, a:core.Type.TExpr, b:core.Type.TExpr, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		return core.Type.mk(TBinop(op, a, b), t, p);
+	}
+}
+
 class Texpr {
 	public static function equal_fa (fa1:core.Type.TFieldAccess, fa2:core.Type.TFieldAccess) : Bool {
 		return switch {f:fa1,s:fa2} {

@@ -6,4 +6,12 @@ class Abstract {
 		trace("TODO: core.Abstract.get_underlying_type");
 		throw false;
 	}
+
+	public static function follow_with_abstracts (t:core.Type.T) : core.Type.T {
+		return switch (core.Type.follow(t)) {
+			case TAbstract(a, tl) if (!core.Meta.has(CoreType, a.a_meta)):
+				follow_with_abstracts(get_underlying_type(a, tl));
+			case t: t;
+		}
+	}
 }

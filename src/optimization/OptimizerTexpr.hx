@@ -8,6 +8,13 @@ using ocaml.Cloner;
 
 class OptimizerTexpr {
 
+	// module PurityState
+
+	public static function has_side_effect(e:core.Type.TExpr) : Bool {
+		trace("TODO: OptimizerTexpr.has_side_effect");
+		throw false;
+	}
+
 	public static function optimize_binop(e:core.Type.TExpr, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Type.TExpr) : core.Type.TExpr {
 		function is_float(t:core.Type.T) {
 			return switch (core.Type.follow(t)) {
@@ -94,7 +101,7 @@ class OptimizerTexpr {
 					return opt(function (a:Int, b:Int) : Int {
 						var _a:Int64 = Int64.make(a, a);
 						var _b:Int64 = Int64.make(b, b);
-						var v:Int64 = f(_a, _b); 
+						var v:Int64 = f(_a, _b);
 						var iv:Int32 = Int64.toInt(v);
 						var _tmp1:Int = iv;
 						var _tmp2:Int64 = _tmp1;

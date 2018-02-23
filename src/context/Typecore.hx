@@ -145,6 +145,7 @@ typedef Typer = {
 }
 
 class Typecore {
+	public static var make_call_ref = new Ref<Typer -> core.Type.TExpr -> ImmutableList<core.Type.TExpr> -> core.Type.T -> core.Globals.Pos -> core.Type.TExpr>(function (_,_,_,_,_) { throw false; });
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { throw false; });
 	public static var match_expr_ref = new Ref(typing.matcher.Match.match_expr);
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(function (_, _, _, _) { throw false; });
@@ -158,12 +159,35 @@ class Typecore {
 		throw false; // for return type dynamic
 	}
 
+	public static function make_call (ctx:Typer, e:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		return make_call_ref.get()(ctx, e, el, t, p);
+	}
+
 	public static function type_expr (ctx:Typer, e:core.Ast.Expr, with_type:WithType) : core.Type.TExpr {
 		return type_expr_ref.get()(ctx, e, with_type);
 	}
 
 	public static function match_expr (ctx:Typer, e:core.Ast.Expr, cases:ImmutableList<core.Ast.Case>, def:Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>, with_type:WithType, p:core.Globals.Pos) : core.Type.TExpr {
 		return match_expr_ref.get()(ctx, e, cases, def, with_type, p);
+	}
+
+	public static function make_static_this (c:core.Type.TClass, p:core.Globals.Pos) : core.Type.TExpr {
+		var ta:core.Type.T = TAnon({a_fields:c.cl_statics, a_status:new Ref<core.Type.AnonStatus>(Statics(c))});
+		return core.Type.mk(TTypeExpr(TClassDecl(c)), ta, p);
+	}
+
+	public static function make_static_field_access (c:core.Type.TClass, cf:core.Type.TClassField, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		var ethis = make_static_this(c, p);
+		return core.Type.mk(TField(ethis, FStatic(c, cf)), t, p);
+	}
+
+	public static function make_static_call(ctx:Typer, c:core.Type.TClass, cf:core.Type.TClassField, map:core.Type.T->core.Type.T, args:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		var monos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
+		function map_ (t) {
+			return map(core.Type.apply_params(cf.cf_params, monos, t));
+		}
+		var ef = make_static_field_access(c, cf, map(cf.cf_type), p);
+		return make_call(ctx, ef, args, map_(t), p);
 	}
 
 	public static function raise_or_display (ctx:Typer, l:ImmutableList<core.Type.UnifyError>, p:core.Globals.Pos) {

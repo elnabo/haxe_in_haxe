@@ -40,6 +40,17 @@ enum ObjectDeclKind {
 	ODKPlain;
 }
 
+enum Type_class {
+	KInt;
+	KFloat;
+	KString;
+	KUnk;
+	KDyn;
+	KOther;
+	KParam(t:core.Type.T);
+	KAbstract(a:core.Type.TAbstract, tl:ImmutableList<core.Type.T>);
+}
+
 enum State {
 	Generating;
 	Done;
@@ -94,11 +105,26 @@ class Typer {
 		return { expr:EObjectDecl(fields), pos:p }
 	}
 
-	public static function check_error (ctx:context.Typecore.Typer, err:core.Error.ErrorMsg, p:core.Globals.Pos) : Void {
-		switch (err) {
-			case Module_not_found({a:[], b:name}) if (context.display.Diagnostics.is_diagnostics_run(ctx)):
-				context.DisplayToplevel.handle_unresolved_identifier(ctx, name, p, true);
-			case _: context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
+	public static function check_assign (ctx:context.Typecore.Typer, e:core.Type.TExpr) : Void {
+		switch (e.eexpr) {
+			case TLocal({v_extra:None}), TArray(_), TField(_), TIdent(_):
+			case TConst(TThis), TTypeExpr(_) if (ctx.untyped_):
+			case _: core.Error.error("Invalid assign", e.epos);
+		}
+	}
+
+	// type type_class
+	public static function classify (t:core.Type.T) : Type_class {
+		return switch (core.Type.follow(t)) {
+			case TInst({cl_path:{a:[], b:"String"}}, []): KString;
+			case TAbstract(a={a_impl:Some(_)}, tl): KAbstract(a, tl);
+			case TAbstract({a_path:{a:[], b:"Int"}}, []): KInt;
+			case TAbstract({a_path:{a:[], b:"Float"}}, []): KFloat;
+			case TAbstract(a, []) if (List.exists(function (t) { return classify(t).match(KInt|KFloat); }, a.a_to)): KParam(t);
+			case TInst({cl_kind:KTypeParameter(ctl)}, _) if (List.exists(function (t) { return classify(t).match(KInt|KFloat); }, ctl)): KParam(t);
+			case TMono(r) if (r.get() == None): KUnk;
+			case TDynamic(_): KDyn;
+			case _: KOther;
 		}
 	}
 
@@ -119,6 +145,19 @@ class Typer {
 					acc;
 			}
 		}, l, a.a_from_field);
+	}
+
+	public static function check_error (ctx:context.Typecore.Typer, err:core.Error.ErrorMsg, p:core.Globals.Pos) : Void {
+		switch (err) {
+			case Module_not_found({a:[], b:name}) if (context.display.Diagnostics.is_diagnostics_run(ctx)):
+				context.DisplayToplevel.handle_unresolved_identifier(ctx, name, p, true);
+			case _: context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
+		}
+	}
+
+	public static function check_constraints (ctx:context.Typecore.Typer, tname:String, tpl:core.Type.TypeParams, tl:ImmutableList<core.Type.T>, map:core.Type.T->core.Type.T, delayed:Bool, p:core.Globals.Pos) : Void {
+		trace("TODO: check_constraints");
+		throw false;
 	}
 
 	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:ImmutableList<core.Type.T>, tl_ef:ImmutableList<core.Type.T>, p:core.Globals.Pos) : core.Type.T {
@@ -1094,6 +1133,11 @@ class Typer {
 		throw false;
 	}
 
+	public static function unify_int (ctx:context.Typecore.Typer, e:core.Type.TExpr, k:Type_class) : Bool {
+		trace("TODO: typing.Typer.unify_int");
+		throw false;
+	}
+
 	public static function type_generic_function (ctx:context.Typecore.Typer, _efa:{fst:core.Type.TExpr, snd:core.Type.TFieldAccess}, el:ImmutableList<core.Ast.Expr>, ?using_param:Option<core.Type.TExpr>=null, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
 		if (using_param == null) { using_param = None; }
 		var e = _efa.fst; var fa = _efa.snd;
@@ -1110,22 +1154,673 @@ class Typer {
 	}
 
 	public static function type_binop (ctx:context.Typecore.Typer, op:core.Ast.Binop, e1:core.Ast.Expr, e2:core.Ast.Expr, is_assign_op:Bool, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_binop");
-		throw false;
+		return switch (op) {
+			case OpAssign:
+				var e1 = type_access(ctx, e1.expr, e1.pos, MSet);
+				var tt:context.Typecore.WithType = switch (e1) {
+					case AKNo(_), AKInline(_), AKUsing(_), AKMacro(_), AKAccess(_): Value;
+					case AKSet(_, t, _): WithType(t);
+					case AKExpr(e): WithType(e.etype);
+				}
+				var e2 = type_expr(ctx, e2, tt);
+				switch (e1) {
+					case AKNo(s): core.Error.error("Cannot access field or identifier "+s+" for writing", p);
+					case AKExpr(e1):
+						var e2 = context.typecore.AbstractCast.cast_or_unify(ctx, e1.etype, e2, p);
+						check_assign(ctx, e1);
+						switch [e1.eexpr, e2.eexpr] {
+							case [TLocal(i1), TLocal(i2)] if (i1.equals(i2)): core.Error.error("Assigning a value to itself", p);
+							case [TField({eexpr:TConst(TThis)}, FInstance(_,_,f1)), TField({eexpr:TConst(TThis)}, FInstance(_,_,f2))] if (f1.equals(f2)):
+								core.Error.error("Assigning a value to itself", p);
+							case [_, _]:
+						}
+						core.Type.mk(TBinop(op, e1, e2), e1.etype, p);
+					case AKSet(e, t, cf):
+						var e2 = context.typecore.AbstractCast.cast_or_unify(ctx, t, e2, p);
+						make_call(ctx, core.Type.mk(TField(e, core.Type.quick_field_dynamic(e.etype, "set_"+cf.cf_name)), core.Type.tfun([t], t), p), [e2], t, p);
+					case AKAccess(a, tl, c, ebase, ekey):
+						mk_array_get_call(ctx, context.typecore.AbstractCast.find_array_access(ctx, a, tl, ekey, Some(e2), p), c, ebase, p);
+					case AKUsing(ef, _, _, et):
+						// this must be an abstract setter
+						var _tmp = switch (core.Type.follow(ef.etype)) {
+							case TFun({args:[_, {t:t}], ret:ret}):
+								{fst:context.typecore.AbstractCast.cast_or_unify(ctx, t, e2, p), snd:ret};
+							case _:
+								core.Error.error("Invalid field type for abstract setter", p);
+						}
+						var e2 = _tmp.fst; var ret = _tmp.snd;
+						make_call(ctx, ef, [et, e2], ret, p);
+					case AKInline(_), AKMacro(_): throw false;
+				}
+			case OpAssignOp((OpBoolAnd | OpBoolOr)):
+				core.Error.error("The operators ||= and &&= are not supported", p);
+			case OpAssignOp(op):
+				switch (type_access(ctx, e1.expr, e1.pos, MSet)) {
+					case AKNo(s): core.Error.error("Cannot access field or identifier "+s+" for writing", p);
+					case AKExpr(e):
+						var save = context.Typecore.save_locals(ctx);
+						var v = context.Typecore.gen_local(ctx, e.etype, e.epos);
+						var has_side_effect = optimization.OptimizerTexpr.has_side_effect(e);
+						var e1:core.Ast.Expr = (has_side_effect) ? {expr:EConst(CIdent(v.v_name)), pos:e.epos} : e1;
+						var eop = type_binop(ctx, op, e1, e2, true, with_type, p);
+						save();
+						switch (eop.eexpr) {
+							case TBinop(_, _, e2):
+								context.Typecore.unify(ctx, eop.etype, e.etype, p);
+								check_assign(ctx, e);
+								core.Type.mk(TBinop(OpAssignOp(op), e, e2), e.etype, p);
+							case TMeta({name:RequiresAssign}, e2):
+								context.Typecore.unify(ctx, e2.etype, e.etype, p);
+								check_assign(ctx, e);
+								switch (e.eexpr) {
+									case TArray(ea1, ea2) if (has_side_effect):
+										var v1 = context.Typecore.gen_local(ctx, ea1.etype, ea1.epos);
+										var ev1 = core.Type.mk(TLocal(v1), v1.v_type, p);
+										var v2 = context.Typecore.gen_local(ctx, ea2.etype, ea2.epos);
+										var ev2 = core.Type.mk(TLocal(v2), v2.v_type, p);
+										var e = e.clone();
+										e.eexpr = TArray(ev1, ev2);
+										core.Type.mk(TBlock([
+											core.Type.mk(TVar(v1, Some(ea1)), ctx.t.tvoid, p),
+											core.Type.mk(TVar(v2, Some(ea2)), ctx.t.tvoid, p),
+											core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
+											core.Type.mk(TBinop(OpAssign, e, e2), e.etype, p)
+										]), e.etype, p);
+									case TField(ea1, fa) if (has_side_effect):
+										var v1 = context.Typecore.gen_local(ctx, ea1.etype, ea1.epos);
+										var ev1 = core.Type.mk(TLocal(v1), v1.v_type, p);
+										var e = e.clone();
+										e.eexpr = TField(ev1, fa);
+										core.Type.mk(TBlock([
+											core.Type.mk(TVar(v1, Some(ea1)), ctx.t.tvoid, p),
+											core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
+											core.Type.mk(TBinop(OpAssign, e, e2), e.etype, p)
+										]), e.etype, p);
+									case _:
+										core.Type.mk(TBinop(OpAssign, e, e2), e.etype, p);
+
+								}
+							case _:
+								// this must be an abstract cast
+								check_assign(ctx, e);
+								if (has_side_effect) {
+									core.Type.mk(TBlock([
+										core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, eop.epos),
+										eop
+									]), eop.etype, eop.epos);
+								}
+								else {
+									eop;
+								}
+						}
+					case AKSet(e, t, cf):
+						var l = context.Typecore.save_locals(ctx);
+						var v = context.Typecore.gen_local(ctx, e.etype, e.epos);
+						var ev = core.Type.mk(TLocal(v), e.etype, p);
+						var get = type_binop(ctx, op, {expr:EField({expr:EConst(CIdent(v.v_name)), pos:p}, cf.cf_name), pos:p}, e2, true, with_type, p);
+						var e_ = switch (get.eexpr) {
+							case TBinop(_), TMeta({name:RequiresAssign}, _):
+								context.Typecore.unify(ctx, get.etype, t, p);
+								make_call(ctx, core.Type.mk(TField(ev, core.Type.quick_field_dynamic(ev.etype, "set_"+cf.cf_name)), core.Type.tfun([t], t), p), [get], t, p);
+							case _:
+								// abstract setter
+								get;
+						}
+						l();
+						core.Type.mk(TBlock([
+							core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
+							e_
+						]), t, p);
+					case AKUsing(ef, c, cf, et):
+						// abstract setter + getter
+						var ta:core.Type.T = switch (c.cl_kind) {
+							case KAbstractImpl(a): TAbstract(a, List.map(function (_) { return core.Type.mk_mono(); }, a.a_params));
+							case _: throw false;
+						}
+						var ret = switch (core.Type.follow(ef.etype)) {
+							case TFun({args:[_, _], ret:ret}): ret;
+							case _: core.Error.error("Invalid field type for abstract setter", p);
+						}
+						var l = context.Typecore.save_locals(ctx);
+						var _tmp = switch (et.eexpr) {
+							case TLocal(v) if (v.v_name != "this"):
+								{fst:v, snd:false};
+							case _:
+								{fst:context.Typecore.gen_local(ctx, ta, ef.epos), snd:true};
+						}
+						var v = _tmp.fst; var is_temp = _tmp.snd;
+						var ev = core.Type.mk(TLocal(v), ta, p);
+						// this relies on the fact that cf_name is set_name
+						var getter_name = cf.cf_name.substr(4);
+						var get = type_binop(ctx, op, {expr:EField({expr:EConst(CIdent(v.v_name)), pos:p}, getter_name), pos:p}, e2, true, with_type, p);
+						context.Typecore.unify(ctx, get.etype, ret, p);
+						l();
+						var e_call = make_call(ctx, ef, [ev, get], ret, p);
+						if (is_temp) {
+							core.Type.mk(TBlock([
+								core.Type.mk(TVar(v, Some(et)), ctx.t.tvoid, p),
+								e_call
+							]), ret, p);
+						}
+						else {
+							e_call;
+						}
+					case AKAccess(a, tl, c, ebase, ekey):
+						var _tmp = context.typecore.AbstractCast.find_array_access(ctx, a, tl, ekey, None, p);
+						var cf_get = _tmp.cf; var tf_get = _tmp.tf; var r_get = _tmp.r; var ekey = _tmp.e1;
+						// bind complex keys to a variable so they do not make it into the output twice
+						var save = context.Typecore.save_locals(ctx);
+						function maybe_bind_to_temp(e:core.Type.TExpr) : {fst:core.Type.TExpr, snd:Option<core.Type.TExpr>} {
+							return switch (optimization.Optimizer.make_constant_expression(ctx, e)) {
+								case Some(e): {fst:e, snd:None};
+								case None:
+									var v = context.Typecore.gen_local(ctx, e.etype, p);
+									var e_ = core.Type.mk(TLocal(v), e.etype, p);
+									{fst:e_, snd:Some(core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p))};
+							}
+						}
+						var _tmp = maybe_bind_to_temp(ekey);
+						var ekey = _tmp.fst; var ekey_ = _tmp.snd;
+						var _tmp2 = maybe_bind_to_temp(ebase);
+						var ebase = _tmp2.fst; var ebase_ = _tmp2.snd;
+						var eget = mk_array_get_call(ctx, {cf:cf_get, tf:tf_get, r:r_get, e1:ekey, e2o:None}, c, ebase, p);
+						var eget = type_binop2(ctx, op, eget, e2, true, WithType(eget.etype), p);
+						context.Typecore.unify(ctx, eget.etype, r_get, p);
+						var _tmp3 = context.typecore.AbstractCast.find_array_access(ctx, a, tl, ekey, Some(eget), p);
+						var cf_set = _tmp3.cf; var tf_set = _tmp3.tf; var r_set = _tmp3.r; var ekey = _tmp3.e1; var eget = _tmp3.e2o;
+						var eget = switch (eget) { case None: throw false; case Some(e): e; }
+						var et = type_module_type(ctx, TClassDecl(c), None, p);
+						var e = switch [cf_set.cf_expr, cf_get.cf_expr] {
+							case [None, None]:
+								var ea = core.Type.mk(TArray(ebase, ekey), r_get, p);
+								core.Type.mk(TBinop(OpAssignOp(op), ea, type_expr(ctx, e2, WithType(r_get))), r_set, p);
+							case [Some(_), Some(_)]:
+								var ef_set = core.Type.mk(TField(et, FStatic(c, cf_set)), tf_set, p);
+								var el = [make_call(ctx, ef_set, [ebase, ekey, eget], r_set, p)];
+								el = switch(ebase_) { case None: el; case Some(ebase): ebase::el; };
+								el = switch (ekey_) { case None: el; case Some(ekey): ekey::el; };
+								switch (el) {
+									case [e]: e;
+									case el: core.Type.mk(TBlock(el), r_set, p);
+								}
+							case _:
+								core.Error.error("Invalid array access getter/setter combination", p);
+						}
+						save();
+						e;
+					case AKInline(_), AKMacro(_): throw false;
+				}
+			case _:
+				/* If the with_type is an abstract which has exactly one applicable @:op method, we can promote it
+					to the individual arguments (issue #2786). */
+				var wt:context.Typecore.WithType = switch (with_type) {
+					case WithType(t):
+						switch (core.Type.follow(t)) {
+							case TAbstract(a, _):
+								switch (List.filter(function (ao:{op:core.Ast.Binop, cf:core.Type.TClassField}) { var o = ao.op; return o.equals(OpAssignOp(op)) || o.equals(op); }, a.a_ops)) {
+									case [_]: with_type;
+									case _: Value;
+								}
+							case _: Value;
+						}
+					case _: Value;
+				}
+				var e1 = type_expr(ctx, e1, wt);
+				type_binop2(ctx, op, e1, e2, is_assign_op, wt, p);
+		}
 	}
-	public static function type_binop2 (ctx:context.Typecore.Typer, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Type.TExpr, is_assign_op:Bool, wt:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_binop2");
-		throw false;
+	public static function type_binop2 (ctx:context.Typecore.Typer, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Ast.Expr, is_assign_op:Bool, wt:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		var e2 = type_expr(ctx, e2, (op.match(OpEq|OpNotEq)) ? WithType(e1.etype) : wt);
+		var tint = ctx.t.tint;
+		var tfloat = ctx.t.tfloat;
+		var tstring = ctx.t.tstring;
+		function to_string (e:core.Type.TExpr): core.Type.TExpr {
+			function loop(t:core.Type.T) : core.Type.TExpr {
+				return switch(classify(t)) {
+					case KAbstract({a_impl:Some(c)}, _) if (PMap.mem("toString", c.cl_statics)):
+						call_to_string(ctx, e);
+					case KInt, KFloat, KString: e;
+					case KUnk, KDyn, KParam(_), KOther:
+						var std = type_type(ctx, new core.Path([], "std"), e.epos);
+						var acc = acc_get(ctx, type_field(ctx, std, "string", e.epos, MCall), e.epos);
+						core.Type.follow(acc.etype);
+						var acc = switch (acc.eexpr) {
+							case TField(e, FClosure(Some({c:c, params:tl}), f)):
+								var _acc = acc.clone();
+								_acc.eexpr = TField(e, FInstance(c, tl, f));
+								_acc;
+							case _: acc;
+						}
+						make_call(ctx, acc, [e], ctx.t.tstring, e.epos);
+					case KAbstract(a, tl):
+						try {
+							context.typecore.AbstractCast.cast_or_unify(ctx, tstring, e, p);
+						}
+						catch (err:core.Error) {
+							switch (err.msg) {
+								case Unify(_):
+									loop(core.Abstract.get_underlying_type(a, tl));
+								case _: throw err;
+							}
+						}
+				}
+			}
+			return loop(e.etype);
+		}
+		function mk_op(e1:core.Type.TExpr, e2:core.Type.TExpr, t:core.Type.T) : core.Type.TExpr {
+			return
+			if (op.match(OpAdd) && classify(t)==KString) {
+				var e1 = to_string(e1);
+				var e2 = to_string(e2);
+				core.Type.mk(TBinop(op, e1, e2), t, p);
+			}
+			else {
+				core.Type.mk(TBinop(op, e1, e2), t, p);
+			}
+		}
+		function make (e1:core.Type.TExpr, e2:core.Type.TExpr) : core.Type.TExpr {
+			return switch (op) {
+				case OpAdd:
+					mk_op(e1, e2, switch [classify(e1.etype), classify(e2.etype)] {
+						case [KInt, KInt]: tint;
+						case [KFloat, KInt], [KInt, KFloat], [KFloat, KFloat]: tfloat;
+						case [KUnk, KInt]: (unify_int(ctx, e1, KUnk)) ? tint : tfloat;
+						case [KUnk, KFloat], [KUnk, KString]:
+							context.Typecore.unify(ctx, e1.etype, e2.etype, e1.epos);
+							e1.etype;
+						case [KInt, KUnk]:
+							(unify_int(ctx, e2, KUnk)) ? tint : tfloat;
+						case [KFloat, KUnk], [KString, KUnk]:
+							context.Typecore.unify(ctx, e2.etype, e1.etype, e2.epos);
+							e2.etype;
+						case [_, KString], [KString, _]: tstring;
+						case [_, KDyn]: e2.etype;
+						case [KDyn, _]: e1.etype;
+						case [KUnk, KUnk]:
+							var ok1 = unify_int(ctx, e1, KUnk);
+							var ok2 = unify_int(ctx, e2, KUnk);
+							(ok1 && ok2) ? tint : tfloat;
+						case [KParam(t1), KParam(t2)] if (core.Type.type_iseq(t1, t2)):
+							t1;
+						case [KParam(t), KInt], [KInt, KParam(t)]:
+							t;
+						case [KParam(_), KFloat], [KFloat, KParam(_)], [KParam(_), KParam(_)]:
+							tfloat;
+						case [KParam(t), KUnk]:
+							context.Typecore.unify(ctx, e2.etype, tfloat, e2.epos);
+							tfloat;
+						case [KUnk, KParam(t)]:
+							context.Typecore.unify(ctx, e1.etype, tfloat, e1.epos);
+							tfloat;
+						case [KAbstract(_), KFloat]:
+							context.Typecore.unify(ctx, e1.etype, tfloat, e1.epos);
+							tfloat;
+						case [KFloat, KAbstract(_)]:
+							context.Typecore.unify(ctx, e2.etype, tfloat, e2.epos);
+							tfloat;
+						case [KAbstract(_), KInt]:
+							context.Typecore.unify(ctx, e1.etype, tint, e1.epos);
+							tint;
+						case [KInt, KAbstract(_)]:
+							context.Typecore.unify(ctx, e2.etype, tint, e2.epos);
+							tint;
+						case [KAbstract(_), _], [_, KAbstract(_)], [KParam(_), _], [_, KParam(_)], [KOther, _], [_, KOther]:
+							var pr = core.Type.print_context();
+							core.Error.error("Cannot add "+core.Type.s_type(pr, e1.etype)+ " and "+ core.Type.s_type(pr, e2.etype), p);
+					});
+				case OpAnd, OpOr, OpXor, OpShl, OpShr, OpUShr:
+					var i = tint;
+					context.Typecore.unify(ctx, e1.etype, i, e1.epos);
+					context.Typecore.unify(ctx, e2.etype, i, e2.epos);
+					mk_op(e1, e2, i);
+				case OpMod, OpMult, OpDiv, OpSub:
+					var result = new Ref((op == OpDiv) ? tfloat : tint);
+					switch [classify(e1.etype), classify(e2.etype)] {
+						case [KFloat, KFloat]: result.set(tfloat);
+						case [KParam(t1), KParam(t2)] if (core.Type.type_iseq(t1, t2)):
+							if (op != OpDiv) {
+								result.set(t1);
+							}
+						case [KParam(_), KParam(_)]:
+							result.set(tfloat);
+						case [KParam(t), KInt], [KInt, KParam(t)]:
+							if (op != OpDiv) {
+								result.set(t);
+							}
+						case [KParam(t), KFloat], [KFloat, KParam(t)]:
+							result.set(tfloat);
+						case [KFloat, k]:
+							unify_int(ctx, e2, k);
+							result.set(tfloat);
+						case [k, KFloat]:
+							unify_int(ctx, e1, k);
+							result.set(tfloat);
+						case [k1, k2]:
+							var ok1 = unify_int(ctx, e1, k1);
+							var ok2 = unify_int(ctx, e2, k2);
+							if (!ok1 || !ok2) {
+								result.set(tfloat);
+							}
+					}
+					mk_op(e1, e2, result.get());
+				case OpEq, OpNotEq:
+					var _tmp = try {
+						// we only have to check one type here, because unification fails if one is Void and the other is not
+						switch (core.Type.follow(e2.etype)) {
+							case TAbstract({a_path:{a:[], b:"Void"}}, _):
+								core.Error.error("Cannot compare Void", p);
+							case _:
+						}
+						{fst:context.typecore.AbstractCast.cast_or_unify_raise(ctx, e2.etype, e1, p), snd:e2};
+					}
+					catch (err:core.Error) {
+						switch (err.msg) {
+							case Unify(_):
+								{fst:e1, snd:context.typecore.AbstractCast.cast_or_unify(ctx, e1.etype, e2, p)};
+							case _: throw err;
+						}
+					}
+					var e1 = _tmp.fst; var e2 = _tmp.snd;
+					mk_op(e1, e2, ctx.t.tbool);
+				case OpGt, OpGte, OpLt, OpLte:
+					switch [classify(e1.etype), classify(e2.etype)] {
+						case [KInt, KInt], [KInt, KFloat], [KFloat, KInt], [KFloat, KFloat], [KString, KString]:
+						case [KInt, KUnk]: unify_int(ctx, e2, KUnk);
+						case [KFloat, KUnk], [KString, KUnk]: context.Typecore.unify(ctx, e2.etype, e1.etype, e2.epos);
+						case [KUnk, KInt]: unify_int(ctx, e1, KUnk);
+						case [KUnk, KFloat], [KUnk, KString]: context.Typecore.unify(ctx, e1.etype, e2.etype, e1.epos);
+						case [KUnk, KUnk]:
+							unify_int(ctx, e1, KUnk);
+							unify_int(ctx, e2, KUnk);
+						case [KDyn, KInt], [KDyn, KFloat], [KDyn, KString]:
+						case [KInt, KDyn], [KFloat, KDyn], [KString, KDyn]:
+						case [KDyn, KDyn]:
+						case [KParam(_), x] if (x != KString && x != KOther):
+						case [x, KParam(_)] if (x != KString && x != KOther):
+						case [KAbstract(_), _], [_, KAbstract(_)],
+							 [KDyn, KUnk], [KUnk, KDyn], [KString, KInt],
+							 [KString, KFloat], [KInt, KString],
+							 [KFloat, KString], [KParam(_), _],
+							 [_, KParam(_)], [KOther, _],
+							 [_, KOther]:
+							var pr = core.Type.print_context();
+							core.Error.error("Cannot compare "+core.Type.s_type(pr, e1.etype) + " and " + core.Type.s_type(pr, e2.etype), p);
+					}
+					mk_op(e1, e2, ctx.t.tbool);
+				case OpBoolAnd, OpBoolOr:
+					var b = ctx.t.tbool;
+					context.Typecore.unify(ctx, e1.etype, b, p);
+					context.Typecore.unify(ctx, e2.etype, b, p);
+					mk_op(e1, e2, b);
+				case OpInterval:
+					var t = typing.Typeload.load_core_type(ctx, "IntIterator");
+					context.Typecore.unify(ctx, e1.etype, tint, e1.epos);
+					context.Typecore.unify(ctx, e2.etype, tint, e2.epos);
+					core.Type.mk(TNew(switch (t) {case TInst(c,[]): c; case _: throw false;}, [], [e1, e2]), t, p);
+				case OpArrow: core.Error.error("Unexpected =>", p);
+				case OpIn: core.Error.error("Unexpected in", p);
+				case OpAssign, OpAssignOp(_): throw false;
+			}
+		}
+		function find_overload(a:core.Type.TAbstract, c, tl:ImmutableList<core.Type.T>, left) {
+			var map = core.Type.apply_params.bind(a.a_params, tl);
+			function make_(op_cf, cf:core.Type.TClassField, e1:core.Type.TExpr, e2:core.Type.TExpr, tret:core.Type.T) {
+				return if (cf.cf_expr == None) {
+					if (!core.Meta.has(NoExpr, cf.cf_meta)) {
+						context.Typecore.display_error(ctx, "Recursive operator method", p);
+					}
+					if (!core.Meta.has(CoreType, a.a_meta)) {
+						// for non core-types we require that the return type is compatible to the native result type
+						var _e1 = e1.clone();
+						_e1.etype = core.Abstract.follow_with_abstracts(e1.etype);
+						var _e2 = e1.clone();
+						_e2.etype = core.Abstract.follow_with_abstracts(e2.etype);
+						var e_ = make(_e1, _e2);
+						var t_expected = e_.etype;
+						try {
+							context.Typecore.unify_raise(ctx, tret, t_expected, p);
+						}
+						catch (err:core.Error) {
+							switch (err.msg) {
+								case Unify(_):
+									switch (core.Type.follow(tret)) {
+										case TAbstract(a, tl) if (core.Type.type_iseq(core.Abstract.get_underlying_type(a, tl), t_expected)):
+										case _:
+											var st = core.Type.s_type.bind(core.Type.print_context());
+											core.Error.error('The result of this operation (${st(t_expected)}) is not compatible with declared return type ${st(tret)}', p);
+									}
+								case _: throw err;
+							}
+						}
+					}
+					var e = core.Texpr.Builder.binop(op, e1, e2, tret, p);
+					core.Type.mk_cast(e, tret, p);
+				}
+				else {
+					var e = context.Typecore.make_static_call(ctx, c, cf, map, [e1, e2], tret, p);
+					e;
+				}
+			}
+			/* special case for == and !=: if the second type is a monomorph, assume that we want to unify
+				it with the first type to preserve comparison semantics. */
+			var is_eq_op = op.match(OpEq | OpNotEq);
+			if (is_eq_op) {
+				switch [core.Type.follow(e1.etype), core.Type.follow(e2.etype)] {
+					case [TMono(_), _], [_, TMono(_)]:
+						core.Type.unify(e1.etype, e2.etype);
+					case _:
+				}
+			}
+			function loop (ol:ImmutableList<{op:core.Ast.Binop, cf:core.Type.TClassField}>) {
+				return switch (ol) {
+					case {op:op_cf, cf:cf}::ol if (!op_cf.equals(op) && (!is_assign_op || !op_cf.equals(OpAssignOp(op))) ):
+						loop(ol);
+					case {op:op_cf, cf:cf}::ol:
+						var is_impl = core.Meta.has(Impl, cf.cf_meta);
+						switch (core.Type.follow(cf.cf_type)) {
+							case TFun({args:[{t:t1}, {t:t2}], ret:tret}):
+								function check(e1, e2, swapped) {
+									function map_arguments() {
+										var monos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
+										function map_(t) {
+											return map(core.Type.apply_params(cf.cf_params, monos, t));
+										}
+										var t1 = map_(t1);
+										var t2 = map_(t2);
+										var tret = map_(tret);
+										return {fst:monos, snd:t1, trd:t2, frth:tret};
+									}
+									var _tmp = map_arguments();
+									var monos = _tmp.fst; var t1 = _tmp.snd; var t2 = _tmp.trd; var tret = _tmp.frth;
+									function make__ (e1, e2) {
+										return make_(op_cf, cf, e1, e2, tret);
+									}
+									var t1 = (is_impl) ? core.Abstract.follow_with_abstracts(t1) : t1;
+									var _tmp = if (left || (!left && swapped)) {
+										core.Type.type_eq(EqStrict, (is_impl) ? core.Abstract.follow_with_abstracts(e1.etype) : e1.etype, t1);
+										{fst:e1, snd:context.typecore.AbstractCast.cast_or_unify_raise(ctx, t2, e2, p)};
+									}
+									else {
+										core.Type.type_eq(EqStrict, e2.etype, t2);
+										{fst:context.typecore.AbstractCast.cast_or_unify_raise(ctx, t1, e1, p), snd:e2};
+									}
+									var e1 = _tmp.fst; var e2 = _tmp.snd;
+									check_constraints(ctx, "", cf.cf_params, monos, core.Type.apply_params.bind(a.a_params, tl), false, cf.cf_pos);
+									function check_null (e:core.Type.TExpr, t:core.Type.T) {
+										if (is_eq_op) {
+											switch (e.eexpr) {
+												case TConst(TNull) if (!core.Type.is_explicit_null(t)):
+													throw new core.Type.Unify_error([]);
+												case _:
+											}
+										}
+									}
+									/* If either expression is `null` we only allow operator resolving if the argument type
+										is explicitly Null<T> (issue #3376) */
+									if (is_eq_op) {
+										check_null(e2, t2);
+										check_null(e1, t2);
+									}
+									var e = if (!swapped) {
+										make__(e1, e2);
+									}
+									else if (!optimization.OptimizerTexpr.has_side_effect(e1) && !optimization.OptimizerTexpr.has_side_effect(e2)) {
+										make__(e1, e2);
+									}
+									else {
+										var v1 = context.Typecore.gen_local(ctx, t1, e1.epos); var v2 = context.Typecore.gen_local(ctx, t2, e2.epos);
+										var ev1 = core.Type.mk(TVar(v1, Some(e1)), ctx.t.tvoid, p);
+										var ev2 = core.Type.mk(TVar(v2, Some(e2)), ctx.t.tvoid, p);
+										var eloc1 = core.Type.mk(TLocal(v1), v1.v_type, p);
+										var eloc2 = core.Type.mk(TLocal(v2), v2.v_type, p);
+										var e = make__(eloc1, eloc2);
+										var e = core.Type.mk(TBlock([
+											ev2,
+											ev1,
+											e
+										]), e.etype, e.epos);
+										e;
+									}
+									if (is_assign_op && op_cf.equals(op)) {
+										return core.Type.mk(TMeta({name:RequiresAssign, params:[], pos:p}, e), e.etype, e.epos);
+									}
+									else {
+										return e;
+									}
+								}
+								function __catch () {
+									return
+									try {
+										if (!core.Meta.has(Commutative, cf.cf_meta)) {
+											throw ocaml.Not_found.instance;
+										}
+										check(e1, e2, false);
+									}
+									catch (_:ocaml.Not_found) { loop(ol); }
+									catch (err:core.Error) {
+										switch (err.msg) {
+											case Unify(_): loop(ol);
+											case _: throw err;
+										}
+									}
+									catch (_:core.Type.Unify_error) {
+										loop(ol);
+									}
+								}
+
+								try {
+									check(e1, e2, false);
+								}
+								catch (err:core.Error) {
+									switch (err.msg) {
+										case Unify(_):
+											__catch();
+										case _: throw err;
+									}
+								}
+								catch (_:core.Type.Unify_error) {
+									__catch();
+								}
+							case _: throw false;
+						}
+					case []: throw ocaml.Not_found.instance;
+				}
+			}
+			return loop ((left) ? a.a_ops : List.filter(function (ops:{op:core.Ast.Binop, cf:core.Type.TClassField}) { var cf = ops.cf; return !core.Meta.has(Impl, cf.cf_meta); }, a.a_ops));
+		}
+		return
+		try {
+			switch (core.Type.follow(e1.etype)) {
+				case TAbstract(a={a_impl:Some(c)}, tl): find_overload(a, c, tl, true);
+				case _: throw ocaml.Not_found.instance;
+			}
+		}
+		catch (_:ocaml.Not_found) {
+			try {
+				switch (core.Type.follow(e2.etype)) {
+					case TAbstract(a={a_impl:Some(c)}, tl): find_overload(a, c, tl, false);
+					case _: throw ocaml.Not_found.instance;
+				}
+			}
+			catch (_:ocaml.Not_found) {
+				make(e1, e2);
+			}
+		}
 	}
 
 	public static function type_unop (ctx:context.Typecore.Typer, op:core.Ast.Unop, flag:core.Ast.UnopFlag, e:core.Ast.Expr, p:core.Globals.Pos) : core.Type.TExpr {
 		trace("TODO: typing.Typer.type_unop");
+		var set = op.match(OpIncrement | OpDecrement); // (op == OpIncrement || op == OpDecrement);
+		var acc = type_access(ctx, e.expr, e.pos, (set) ? MSet : MGet);
 		throw false;
 	}
 
 	public static function type_ident(ctx:context.Typecore.Typer, i:String, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
-		trace("TODO: typing.Typer.type_ident");
-		throw false;
+		return try {
+			type_ident_raise(ctx, i, p, mode);
+		}
+		catch (_:ocaml.Not_found) {
+			try {
+				// lookup type
+				if (core.Ast.is_lower_ident(i)) {
+					throw ocaml.Not_found.instance;
+				}
+				var e = try {
+					type_type(ctx, new core.Path([], i), p);
+				}
+				catch (exc:core.Error) {
+					switch (exc.msg) {
+						case Module_not_found({a:[], b:name}) if (name == i): throw ocaml.Not_found;
+						case _: throw exc;
+					}
+				}
+				AKExpr(e);
+			}
+			catch (_:ocaml.Not_found) {
+				if (ctx.untyped_) {
+					if (i == "__this__") {
+						AKExpr(core.Type.mk(TConst(TThis), ctx.tthis, p));
+					}
+					else {
+						var t = core.Type.mk_mono();
+						AKExpr(core.Type.mk(TIdent(i), t, p));
+					}
+				}
+				else {
+					if (ctx.curfun == FunStatic && PMap.mem(i, ctx.curclass.cl_fields)) {
+						core.Error.error("Cannot access "+i+" in static function", p);
+					}
+					try {
+						var t = List.find(function (tp:{name:String, t:core.Type.T}) { var i2 = tp.name; return i2 == i;}, ctx.type_params);
+						var c = switch (core.Type.follow(t.t)) { case TInst(c, _): c; case _: throw false;};
+						if (typing.Typeload.is_generic_parameter(ctx, c) && core.Meta.has(Const, c.cl_meta)) {
+							AKExpr(type_module_type(ctx, TClassDecl(c), None, p));
+						}
+						else {
+							context.Typecore.display_error(ctx, "Type parameter "+i+" is only available at compilation and is not a runtime value", p);
+							AKExpr(core.Type.mk(TConst(TNull), core.Type.t_dynamic, p));
+						}
+					}
+					catch (_:ocaml.Not_found) {
+						var err:core.Error.ErrorMsg = Unknown_ident(i);
+						if (ctx.in_display) {
+							throw new core.Error(err, p);
+						}
+						switch (ctx.com.display.dms_kind) {
+							case DMNone: throw new core.Error(err, p);
+							case DMDiagnostics(b) if (b || ctx.is_display_file):
+								context.DisplayToplevel.handle_unresolved_identifier(ctx, i, p, false);
+								var t = core.Type.mk_mono();
+								AKExpr(core.Type.mk(TIdent(i), t, p));
+							case _:
+								context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
+								var t = core.Type.mk_mono();
+								AKExpr(core.Type.mk(TIdent(i), t, p));
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// MORDOR
