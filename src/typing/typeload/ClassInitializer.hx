@@ -100,7 +100,7 @@ class ClassInitializer {
 				switch (a.a_this) {
 					case TMono(_.get()=>r) if (r == None):
 						TAbstract(a, List.map(function (p) { return p.t; }, c.cl_params));
-					case t: t; 
+					case t: t;
 				}
 			case None:
 				TInst(c, List.map(function (p) { return p.t; }, c.cl_params));
@@ -470,7 +470,7 @@ class ClassInitializer {
 										context.Typecore.unify(ctx, t, TAbstract(a, List.map(function(_) {return core.Type.mk_mono(); }, a.a_params)), p);
 										switch (e.eexpr) {
 											case TCast(e1,None): context.Typecore.unify(ctx, e1.etype, a.a_this, e1.epos);
-											case _: throw false;
+											case _: trace("Shall not be seen"); throw false;
 										}
 									case _:
 								}
@@ -618,7 +618,7 @@ class ClassInitializer {
 									// delay ctx PFinal (fun () -> unify ctx m tthis f.cff_pos);
 									var args = switch (core.Type.follow(core.Type.monomorphs(a.a_params, ctor.cf_type))) {
 										case TFun({args:args}): List.map(function (arg) {return arg.t; }, args);
-										case _: throw false;
+										case _: trace("Shall not be seen"); throw false;
 									};
 									args;
 								}
@@ -759,8 +759,8 @@ class ClassInitializer {
 				function no_expr_of (tp:core.Ast.TypeHint) : Option<core.Ast.TypeHint> {
 					var t = tp.ct; var p = tp.pos;
 					return switch (t) {
-						case CTPath({tpackage:["haxe", "macro"], tname:"Expr", tsub:Some("ExprOf"), tparams:[TPType(_)]}), 
-								CTPath({tpackage:[], tname:"ExprOf", tsub:None, tparams:[TPType(_)]}):							
+						case CTPath({tpackage:["haxe", "macro"], tname:"Expr", tsub:Some("ExprOf"), tparams:[TPType(_)]}),
+								CTPath({tpackage:[], tname:"ExprOf", tsub:None, tparams:[TPType(_)]}):
 							Some({ct:texpr, pos:p});
 						case t:
 							Some({ct:t, pos:p});
@@ -964,7 +964,7 @@ class ClassInitializer {
 						}
 				}
 			}
-			throw false;
+			return t;
 		}, "type_fun");
 		if (fctx.do_bind) {
 			bind_type(ctx,cctx,fctx, cf, r, switch(fd.f_expr) {
@@ -1001,12 +1001,12 @@ class ClassInitializer {
 				{fst:core.Type.tfun([], ret), snd:core.Type.T.TFun({args:[{name:"value", opt:false, t:ret}], ret:ret})}
 		}
 		var t_get = _tmp.fst; var t_set = _tmp.snd;
-		function find_accessor(m:String) {
+		function find_accessor(m:String) : ImmutableList<{t:core.Type.T, cf:core.Type.TClassField}> {
 			// on pf_overload platforms, the getter/setter may have been defined as an overloaded function; get all overloads
 			return if (ctx.com.config.pf_overload) {
 				if (fctx.is_static) {
 					var f = PMap.find(m, c.cl_statics);
-					{fst:f.cf_type, snd:f} :: List.map(function (f:core.Type.TClassField) {return {fst:f.cf_type, snd:f}; }, f.cf_overloads);
+					{t:f.cf_type, cf:f} :: List.map(function (f:core.Type.TClassField) {return {t:f.cf_type, cf:f}; }, f.cf_overloads);
 				}
 				else {
 					codegen.Overloads.get_overloads(c, m);
@@ -1015,11 +1015,11 @@ class ClassInitializer {
 			else {
 				if (fctx.is_static) {
 					var f = PMap.find(m, c.cl_statics);
-					[{fst:f.cf_type, snd:f}];
+					[{t:f.cf_type, cf:f}];
 				}
 				else {
 					switch (core.Type.class_field(c, List.map(function (p) {return p.t;}, c.cl_params), m)) {
-						case {snd:t, trd:f}: [{fst:t, snd:f}];
+						case {snd:t, trd:f}: [{t:t, cf:f}];
 					}
 				}
 			}
@@ -1029,12 +1029,12 @@ class ClassInitializer {
 				try {
 					var overloads = find_accessor(m);
 					// choose the correct overload if and only if there is more than one overload found
-					function get_overload (overl:ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}>) {
+					function get_overload (overl:ImmutableList<{t:core.Type.T, cf:core.Type.TClassField}>) {
 						return switch (overl) {
 							case [tf] : tf;
-							case {fst:t2, snd:f2}::overl:
+							case {t:t2, cf:f2}::overl:
 								if (core.Type.type_iseq(t, t2)) {
-									{fst:t2, snd:f2};
+									{t:t2, cf:f2};
 								}
 								else {
 									get_overload(overl);
@@ -1048,7 +1048,7 @@ class ClassInitializer {
 								}
 						}
 						var _tmp = get_overload(overloads);
-						var t2 = _tmp.fst; var f2 = _tmp.snd;
+						var t2 = _tmp.t; var f2 = _tmp.cf;
 						// accessors must be public on As3 (issue #1872)
 						if (context.Common.defined(ctx.com, As3)) {
 							f2.cf_meta = ({name:Public, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f2.cf_meta;
@@ -1115,11 +1115,11 @@ class ClassInitializer {
 				}
 			}
 		}
-		
+
 		function display_accessor (m:String, p:core.Globals.Pos) {
 			try {
 				var cf = switch (find_accessor(m)) {
-					case [{snd:cf}]: cf;
+					case [{cf:cf}]: cf;
 					case _: throw ocaml.Not_found.instance;
 				}
 				context.display.DisplayEmitter.display_field(ctx.com.display, cf, p);
@@ -1147,7 +1147,7 @@ class ClassInitializer {
 				AccCall;
 		};
 		var set:core.Type.VarAccess = switch (set) {
-			case {pack:"null"}: 
+			case {pack:"null"}:
 				//standard flash library read-only variables can't be accessed for writing, even in subclasses
 				var flag = switch (c.cl_path) { case {a:"flash"::_}: true; case _: false;};
 				if (c.cl_extern && flag && ctx.com.platform == Flash) {
@@ -1256,7 +1256,7 @@ class ClassInitializer {
 				check_overloads(ctx, c);
 			});
 		}
-		
+
 		function has_field (f, s:Option<{params:core.Type.TParams, c:core.Type.TClass}>) : Bool {
 			return switch (s) {
 				case None: false;
@@ -1274,7 +1274,7 @@ class ClassInitializer {
 							case e::l:
 								var sc = switch (e.expr) {
 									case EConst(CIdent(s)): s;
-									case EBinop(op=(OpEq|OpNotEq|OpGt|OpGte|OpLt|OpLte), {expr:EConst(CIdent(s))}, {expr:EConst(c=(CInt(_)|CFloat(_)|CString(_)))}): 
+									case EBinop(op=(OpEq|OpNotEq|OpGt|OpGte|OpLt|OpLte), {expr:EConst(CIdent(s))}, {expr:EConst(c=(CInt(_)|CFloat(_)|CString(_)))}):
 										s + core.Ast.s_binop(op) + core.Ast.s_constant(c);
 									case _: "";
 								}

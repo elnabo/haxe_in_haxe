@@ -40,7 +40,7 @@ class Overloads {
 				case _: core.Type.type_iseq(t1, t2);
 			}
 		}
-		
+
 		var _tmp = core.Type.follow(core.Type.apply_params(f1.cf_params, List.map(function (a) { return a.t; }, f2.cf_params), t1));
 		return switch ({fst:_tmp, snd:core.Type.follow(t2)}) {
 			case {fst:TFun(f1), snd:TFun(f2)}:
@@ -57,18 +57,18 @@ class Overloads {
 	}
 
 	// retrieves all overloads from class c and field i, as (Type.t * tclass_field) list
-	public static function get_overloads (c:core.Type.TClass, i:String) : ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}> {
-		var ret:ImmutableList<{fst:core.Type.T, snd:core.Type.TClassField}> = try {
+	public static function get_overloads (c:core.Type.TClass, i:String) : ImmutableList<{t:core.Type.T, cf:core.Type.TClassField}> {
+		var ret:ImmutableList<{t:core.Type.T, cf:core.Type.TClassField}> = try {
 			var f = PMap.find(i, c.cl_fields);
 			switch (f.cf_kind) {
 				case Var(_):
 					// @:libType may generate classes that have a variable field in a superclass of an overloaded method
 					[];
 				case Method(_):
-					{fst:f.cf_type, snd:f} :: List.map(function (f:core.Type.TClassField) { return {fst:f.cf_type , snd:f}; }, f.cf_overloads);
+					{t:f.cf_type, cf:f} :: List.map(function (f:core.Type.TClassField) { return {t:f.cf_type , cf:f}; }, f.cf_overloads);
 			}
 		}
-		catch (_:ocaml.Not_found) { 
+		catch (_:ocaml.Not_found) {
 			Tl; // [];
 		}
 		var rsup = switch (c.cl_super) {
@@ -76,23 +76,23 @@ class Overloads {
 				var ifaces = List.concat(List.map(function (p1:{c:core.Type.TClass, params:core.Type.TParams}) {
 					var c = p1.c; var tl = p1.params;
 					return List.map(function (p2) {
-						var t = p2.fst; var f = p2.snd;
-						return {fst:core.Type.apply_params(c.cl_params, tl, t), snd:f};
+						var t = p2.t; var f = p2.cf;
+						return {t:core.Type.apply_params(c.cl_params, tl, t), cf:f};
 					}, get_overloads(c, i));
 				}, c.cl_implements));
 				List.append(ret, ifaces);
 			case None: ret;
 			case Some({c:c, params:tl}):
 				List.append(ret, List.map(function (p) {
-					var t = p.fst; var f = p.snd;
-					return {fst:core.Type.apply_params(c.cl_params, tl, t), snd:f};
+					var t = p.t; var f = p.cf;
+					return {t:core.Type.apply_params(c.cl_params, tl, t), cf:f};
 				}, get_overloads(c, i)));
 		}
 
-		return List.append(ret, List.filter(function (p:{fst:core.Type.T, snd:core.Type.TClassField}) {
-				var t = p.fst; var f = p.snd;
-				return !List.exists(function (p2:{fst:core.Type.T, snd:core.Type.TClassField}) {
-					var t2 = p2.fst; var f2 = p2.snd;
+		return List.append(ret, List.filter(function (p:{t:core.Type.T, cf:core.Type.TClassField}) {
+				var t = p.t; var f = p.cf;
+				return !List.exists(function (p2:{t:core.Type.T, cf:core.Type.TClassField}) {
+					var t2 = p2.t; var f2 = p2.cf;
 					return same_overload_args(None, t, t2, f, f2);
 				}, ret);
 			}, rsup));

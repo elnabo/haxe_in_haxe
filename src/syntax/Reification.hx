@@ -27,13 +27,13 @@ class Reification {
 	public static function reifyExpr (e:core.Ast.Expr, inMacro:Bool) : core.Ast.Expr {
 		var toExpr = reify(inMacro).toExpr;
 		var e = toExpr(e);
-		return { expr: ECheckType(e, 
+		return { expr: ECheckType(e,
 			{
 				ct:CTPath({
 					tpackage:["haxe","macro"],
 					tname:"Expr",
 					tsub:None,
-					tparams: []}), 
+					tparams: []}),
 				pos:core.Globals.null_pos
 			}),
 			pos: e.pos
@@ -541,7 +541,7 @@ class Reification {
 					var old = curPos;
 					switch (md.params) {
 						case Hd(v, Tl): curPos = Some(v);
-						case _: throw false;
+						case _: trace("Shall not be seen"); throw false;
 					}
 					var e = loop(e1);
 					curPos = old;
@@ -559,10 +559,10 @@ class Reification {
 	}
 
 	function toTParamDecl(t:core.Ast.TypeParam, p:core.Globals.Pos):core.Ast.Expr{
-		var params = List.map(function (tp) { 
+		var params = List.map(function (tp) {
 			return toTParamDecl(tp, p);
 		}, t.tp_params);
-		var constraints = List.map(function (c) { 
+		var constraints = List.map(function (c) {
 			return toCType(c, p);
 		}, t.tp_constraints);
 
@@ -586,7 +586,7 @@ class Reification {
 					switch(f){
 						case HExtern | HPrivate:
 						case HInterface: interf = true;
-						case HExtends(t): 
+						case HExtends(t):
 							ext = switch (ext) {
 								case None: Some(toTPath(t, p));
 								case Some(_):
@@ -623,7 +623,7 @@ class Reification {
 					{field:"kind", expr:mkEnum("TypeDefKind", "TDClass", kindParams, p)},
 					{field:"fields", expr:{expr:EArrayDecl(fields), pos:p}}
 				], td.pos);
-			case _: throw false;
+			case _: trace("Shall not be seen"); throw false;
 		}
 	}
 }

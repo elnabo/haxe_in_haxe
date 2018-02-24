@@ -31,7 +31,7 @@ class Parser {
 			case DExtern : AExtern;
 		}
 	}
-	
+
 	public static function error_msg (msg:syntax.parser.ErrorMsg) : String {
 		return switch (msg) {
 			case Unexpected(token): "Unexpected " + core.Ast.s_token(token);
@@ -75,14 +75,14 @@ class Parser {
 		throw new syntax.parser.Error(m,p);
 	}
 
-	public static var display_error:syntax.parser.ErrorMsg->core.Globals.Pos->Void = function(error_msg:Dynamic, pos:core.Globals.Pos) : Void { throw false; }
+	public static var display_error:syntax.parser.ErrorMsg->core.Globals.Pos->Void = function(error_msg:Dynamic, pos:core.Globals.Pos) : Void { trace("Shall not be seen"); throw false; }
 
 	public static var last_doc : Option<{doc:String, pos:Int}> = None;
 	public static var use_doc: Bool = false;
 	public static var resume_display : core.Globals.Pos = core.Globals.null_pos;
 	public static var in_macro : Bool = false;
 
-	public static inline function do_resume() : Bool {	
+	public static inline function do_resume() : Bool {
 		return resume_display != core.Globals.null_pos;
 	}
 
@@ -112,7 +112,7 @@ class Parser {
 	public static inline function set_resume(p:core.Globals.Pos) {
 		resume_display = new core.Globals.Pos(core.Path.unique_full_path(p.pfile), p.pmin, p.pmax);
 	}
-	
+
 	public static inline function encloses_resume(p:core.Globals.Pos) {
 		return p.pmin <= resume_display.pmin && p.pmax >= resume_display.pmax;
 	}

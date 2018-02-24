@@ -308,7 +308,7 @@ class Typeload {
 									a.a_impl = Some(c);
 									c.cl_kind = KAbstractImpl(a);
 									c.cl_meta = ({name:Final, params:Tl, pos:core.Globals.null_pos} : core.Ast.MetadataEntry) ::c.cl_meta;
-								case _: throw false;
+								case _: trace("Shall not be seen"); throw false;
 						}
 						acc;
 					}
@@ -635,7 +635,7 @@ class Typeload {
 			}, [], args);
 			switch (values) {
 				case []:
-				case _: 
+				case _:
 					var m:core.Ast.MetadataEntry = {name:Value, params:[{expr:EObjectDecl(values), pos:cf.cf_pos}], pos:core.Globals.null_pos};
 					cf.cf_meta = m :: cf.cf_meta;
 			}
@@ -684,7 +684,7 @@ class Typeload {
 								});
 							}
 							t;
-						case _: throw false;
+						case _: trace("Shall not be seen"); throw false;
 					}
 				}, types));
 				f(pl.get());
@@ -693,7 +693,7 @@ class Typeload {
 				switch (t.tparams) {
 					case []: core.Type.t_dynamic;
 					case [TPType(t)]: TDynamic(new Ref(load_complex_type(ctx, true, p, t)));
-					case _: core.Error.error("Too many parameteres for Dynamic", p); throw false;
+					case _: core.Error.error("Too many parameteres for Dynamic", p); trace("Shall not be seen"); throw false;
 				}
 			}
 			else {
@@ -749,7 +749,7 @@ class Typeload {
 										return t;
 									}, "constraint");
 									TLazy(r);
-								case _: throw false;
+								case _: trace("Shall not be seen"); throw false;
 							}
 							t::loop(tl1, tl2, is_rest);
 						case {fst:[], snd:[]}: [];
@@ -819,9 +819,9 @@ class Typeload {
 								case TAnon(a2):
 									PMap.iter(function (_, cf) {is_redefined(cf, a2);}, a.a_fields);
 									TAnon({a_fields: PMap.foldi(PMap.add, a.a_fields, a2.a_fields), a_status:new Ref(core.Type.AnonStatus.Extend([t]))});
-								case _: 
+								case _:
 									core.Error.error("Can only extend structures", p);
-								
+
 							}
 						}
 						function loop (t) {
@@ -844,7 +844,7 @@ class Typeload {
 
 							var some = switch(il) {
 								case [i]: mk_extension(i);
-								case _: 
+								case _:
 									List.iter(loop, il);
 									a.a_status.set(Extend(il));
 									ta;
@@ -853,7 +853,7 @@ class Typeload {
 							return t;
 						}, "constraint");
 						TLazy(r);
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 			case CTAnonymous(l):
 				function loop(acc:Map<String, core.Type.TClassField>, f:core.Ast.ClassField) : Map<String, core.Type.TClassField> {
@@ -1085,10 +1085,10 @@ class Typeload {
 			case TType(t, _): t.t_module;
 			case TAbstract(a, _): a.a_module;
 			case TEnum(e, _): e.e_module;
-			case _: throw false;
+			case _: trace("Shall not be seen"); throw false;
 		});
 		return t;
-		
+
 	}
 
 	public static function t_iterator (ctx:context.Typecore.Typer) : {fst:core.Type.T, snd:core.Type.T} {
@@ -1098,11 +1098,11 @@ class Typeload {
 				show();
 				core.Type.add_dependency(ctx.m.curmod, t.t_module);
 				if (List.length(t.t_params) != 1) {
-					throw false;
+					trace("Shall not be seen"); throw false;
 				}
 				var pt = core.Type.mk_mono();
 				return {fst:core.Type.apply_params(t.t_params, [pt], t.t_type), snd:pt};
-			case _: throw false;
+			case _: trace("Shall not be seen"); throw false;
 		}
 	}
 
@@ -1333,14 +1333,14 @@ class Typeload {
 									List.map(function (a:core.Type.TSignatureArg) {
 										var n = a.name; var o = a.opt; var t = a.t;
 										var def:Option<core.Type.TConstant> = try {
-											type_function_arg_value(ctx, t, Some(PMap.find(n, values)), false); 
+											type_function_arg_value(ctx, t, Some(PMap.find(n, values)), false);
 										}
 										catch (_:ocaml.Not_found) {
 											(o) ? Some(TNull) : None;
 										}
 										return map_arg({v:core.Type.alloc_var(n, (o) ? ctx.t.tnull(t) : t, p), c:def}); // TODO: var pos
 									}, args);
-								case _: throw false;
+								case _: trace("Shall not be seen"); throw false;
 							}
 					}
 					var p = c.cl_pos;
@@ -1420,7 +1420,7 @@ class Typeload {
 
 	public static function type_type_param (?enum_constructor:Bool=false, ctx:context.Typecore.Typer, path:core.Path, get_params:Void->core.Type.TypeParams, p:core.Globals.Pos, tp:core.Ast.TypeParam) : {name:String, t:core.Type.T} {
 		var n = tp.tp_name.pack;
-		var c = core.Type.mk_class(ctx.m.curmod, new core.Path(List.append(path.a, [path.b]), n), tp.tp_name.pos, tp.tp_name.pos); 
+		var c = core.Type.mk_class(ctx.m.curmod, new core.Path(List.append(path.a, [path.b]), n), tp.tp_name.pos, tp.tp_name.pos);
 		c.cl_params = type_type_params(ctx, c.cl_path, get_params, p, tp.tp_params);
 		c.cl_kind = KTypeParameter([]);
 		c.cl_meta = tp.tp_meta.clone();
@@ -1722,7 +1722,7 @@ class Typeload {
 		context.Typecore.flush_pass(ctx2, PFinal, "core_final");
 		return switch (t) {
 			case TInst(ccore, _), TAbstract({a_impl:Some(ccore)}, _): ccore;
-			case _: throw false;
+			case _: trace("Shall not be seen"); throw false;
 		};
 	}
 
@@ -1747,7 +1747,7 @@ class Typeload {
 						}
 					case {fst:t1, snd:t2}:
 						Sys.print(core.Type.s_type(core.Type.print_context(), t1) + " " + core.Type.s_type(core.Type.print_context(), t2));
-						throw false;
+						trace("Shall not be seen"); throw false;
 				}
 			}, ccore.cl_params, c.cl_params);
 		}
@@ -1916,7 +1916,7 @@ class Typeload {
 				ocaml.List.rev(loop([], fields));
 		};
 	}
-	
+
 	public static function string_list_of_expr_path (expr:core.Ast.Expr) : ImmutableList<String> {
 		return try {
 			core.Ast.string_list_of_expr_path_raise(expr);
@@ -2076,7 +2076,7 @@ class Typeload {
 				}, ctx.m.curmod.m_types);
 			}
 			catch (_:ocaml.Not_found) {
-				throw false;
+				trace("Shall not be seen"); throw false;
 			}
 		}
 		function check_path_display (path:ImmutableList<core.Ast.PlacedName>, p:core.Globals.Pos) {
@@ -2339,7 +2339,7 @@ class Typeload {
 					ctx.m.module_using = List.append(filter_classes(types), ctx.m.module_using);
 				}::context_init.get());
 			case EClass(d):
-				var c = switch (get_type(d.d_name.pack)) { case TClassDecl(c): c; case _: throw false;};
+				var c = switch (get_type(d.d_name.pack)) { case TClassDecl(c): c; case _: trace("Shall not be seen"); throw false;};
 				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
 					context.display.DisplayEmitter.display_module_type(ctx.com.display, switch (c.cl_kind) { case KAbstractImpl(a): TAbstractDecl(a); case _: TClassDecl(c); } ,d.d_name.pos);
 				}
@@ -2369,7 +2369,7 @@ class Typeload {
 								context.Typecore.delay_late(ctx, PBuildClass, function () { c.cl_build(); });
 							}
 							return switch (state) {
-								case Built: throw false;
+								case Built: trace("Shall not be seen"); throw false;
 								case Building(cl):
 									if (build_count.get() == prev_build_count.get()) {
 										var arr = List.map(function (c) { return core.Globals.s_type_path(c.cl_path); }, cl);
@@ -2384,7 +2384,7 @@ class Typeload {
 							}
 
 						}
-						catch (_:Bool) { throw false; }
+						catch (_:Bool) { trace("Shall not be seen"); throw false; }
 						catch (exn:Any) {
 							c.cl_build = function () { return Built; };
 							throw exn;
@@ -2419,7 +2419,7 @@ class Typeload {
 					});
 				}
 			case EEnum(d):
-				var e = switch (get_type(d.d_name.pack)) { case TEnumDecl(e): e; case _: throw false; }
+				var e = switch (get_type(d.d_name.pack)) { case TEnumDecl(e): e; case _: trace("Shall not be seen"); throw false; }
 				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
 					context.display.DisplayEmitter.display_module_type(ctx.com.display, TEnumDecl(e), d.d_name.pos);
 				}
@@ -2596,9 +2596,9 @@ class Typeload {
 					});
 				}
 			case ETypedef(d):
-				var t = switch (get_type(d.d_name.pack)) { 
+				var t = switch (get_type(d.d_name.pack)) {
 					case TTypeDecl(t): t;
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
 					context.display.DisplayEmitter.display_module_type(ctx.com.display, TTypeDecl(t), d.d_name.pos);
@@ -2656,9 +2656,9 @@ class Typeload {
 					case TMono(r):
 						switch (r.get()) {
 							case None: r.set(Some(tt));
-							case Some(_): throw false;
+							case Some(_): trace("Shall not be seen"); throw false;
 						}
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 				if (ctx.com.platform.equals(Cs) && t.t_meta != Tl) {
 					context.Typecore.delay(ctx, PTypeField, function () {
@@ -2671,7 +2671,7 @@ class Typeload {
 			case EAbstract(d):
 				var a = switch (get_type(d.d_name.pack)) {
 					case TAbstractDecl(a): a;
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 				if (ctx.is_display_file && context.Display.is_display_position(d.d_name.pos)) {
 					context.display.DisplayEmitter.display_module_type(ctx.com.display, TAbstractDecl(a), d.d_name.pos);
@@ -2719,7 +2719,7 @@ class Typeload {
 					switch (flag) {
 						case AFromType(t): a.a_from = load_type(t, true) :: a.a_from;
 						case AToType(t): a.a_to = load_type(t, true) :: a.a_to;
-						case AIsType(t): 
+						case AIsType(t):
 							if (a.a_impl == None) {
 								core.Error.error("Abstracts with underlying type must have an implementation",a.a_pos);
 							}
@@ -2783,7 +2783,7 @@ class Typeload {
 					t.t_params = type_type_params(ctx, t.t_path, function () { return t.t_params.clone();}, p, d.d_params);
 				case {fst:TAbstractDecl(a), snd:{decl:EAbstract(d),pos:p}}:
 					a.a_params = type_type_params(ctx, a.a_path, function () { return a.a_params.clone();}, p, d.d_params);
-				default: throw false;
+				default: trace("Shall not be seen"); throw false;
 			}
 		}, decls);
 		// setup module types
@@ -2961,7 +2961,7 @@ class Typeload {
 			};
 			return _tmp + ".hx";
 		}
-		
+
 		var file = try {
 			context.Common.find_file(com, compose_path(false));
 		}
@@ -3008,7 +3008,7 @@ class Typeload {
 			var meta = loop(decls);
 			if (!core.Meta.has(NoPackageRestrict, meta)) {
 				var x = switch (m.a) {
-					case []: throw false;
+					case []: trace("Shall not be seen"); throw false;
 					case x::_: x;
 				}
 				throw new context.Typecore.Forbid_package(
@@ -3155,7 +3155,7 @@ class Typeload {
 				case {f:[], s:[]}: [];
 				case {f:{name:x, t:TLazy(f)}::l1}: loop({name:x, t:core.Type.lazy_type(f)}::l1, l2);
 				case {f:{t:t1}::l1, s:t2::l2}: {fst:t1, snd:t2}::loop(l1, l2);
-				case _: throw false;
+				case _: trace("Shall not be seen"); throw false;
 			}
 		}
 		var name = List.join("_", List.map2(function (tp, t) {
@@ -3188,8 +3188,8 @@ class Typeload {
 		}, ps, pt));
 		var _ctx = ctx.clone(); _ctx.g = ctx.g;
 		return {
-			// ctx:ctx, 
-			ctx:_ctx, 
+			// ctx:ctx,
+			ctx:_ctx,
 			subst: loop(ps, pt),
 			name: name,
 			p: p.clone(),
@@ -3317,7 +3317,7 @@ class Typeload {
 							Hashtbl.find(ctx.g.modules, Hashtbl.find(ctx.g.types_module, c.cl_path));
 						}
 						catch (_:ocaml.Not_found) {
-							throw false;
+							trace("Shall not be seen"); throw false;
 						}
 						c.cl_build(); // make sure the super class is alread setup
 						var mg:core.Type.ModuleDef = {
@@ -3375,11 +3375,11 @@ class Typeload {
 								var subst = a.fst; var params = a.snd; var s = b.name; var t = b.t;
 								return switch (core.Type.follow(t)) {
 									case t=TInst(c, tl):
-										var _c = c.clone(); 
+										var _c = c.clone();
 										_c.cl_module = mg;
 										var t2:core.Type.T = TInst(_c, tl);
 										return {fst:{fst:t, snd:t2} :: subst, snd:{name:s, t:t2} ::params};
-									case _: throw false;
+									case _: trace("Shall not be seen"); throw false;
 								};
 							}, {fst:[], snd:[]}, cf_old.cf_params);
 							var param_subst = _tmp.fst; var params = _tmp.snd;
@@ -3395,7 +3395,7 @@ class Typeload {
 										var tl1 = List.map(generic_substitute_type.bind(gctx), tl1);
 										c.cl_kind = KTypeParameter(tl1);
 										{name:s, t:t};
-									case _: throw false;
+									case _: trace("Shall not be seen"); throw false;
 								}
 							}, params);
 							function f() {
@@ -3446,7 +3446,7 @@ class Typeload {
 									case KGeneric:
 										switch (build_generic(ctx, cs, p, pl)) {
 											case TInst(_cs, _pl): Some({c:_cs, params:_pl});
-											case _: throw false;
+											case _: trace("Shall not be seen"); throw false;
 										}
 									case _: Some({c:cs, params:pl});
 								}
@@ -3467,7 +3467,7 @@ class Typeload {
 						cg.cl_implements = List.map(function (imp:{c:core.Type.TClass, params:core.Type.TParams} ) {
 							return switch core.Type.follow(generic_substitute_type(gctx, TInst(imp.c, List.map(generic_substitute_type.bind(gctx), imp.params)))) {
 								case TInst(i, tl): {c:i, params:tl};
-								case _: throw false;
+								case _: trace("Shall not be seen"); throw false;
 							}
 						}, c.cl_implements);
 						cg.cl_ordered_fields = List.map(function (f) {
@@ -3480,7 +3480,7 @@ class Typeload {
 								PMap.find(f.cf_name, cg.cl_fields);
 							}
 							catch (_:ocaml.Not_found) {
-								throw false;
+								trace("Shall not be seen"); throw false;
 							}
 						}, c.cl_overrides);
 						// In rare cases the class name can become too long, so let's shorten it (issue #3090).

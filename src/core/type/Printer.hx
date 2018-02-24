@@ -61,7 +61,7 @@ class Printer {
 					case []: tp.name;
 					case _: '${tp.name}:${List.join(", ", List.map(s_type, tl1))}';
 				}
-			case _: throw false;
+			case _: trace("Shall not be seen"); throw false;
 		}
 	}
 

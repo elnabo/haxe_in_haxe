@@ -320,16 +320,16 @@ class Common {
 			load_extern_type : [],
 			defines : {values:defines, defines_signature:None},
 			get_macros : function () { return None; },
-			warning : function (s:String, pos:core.Globals.Pos) { throw false; },
-			error : function (s:String, pos:core.Globals.Pos) { throw false; },
+			warning : function (s:String, pos:core.Globals.Pos) { trace("Shall not be seen"); throw false; },
+			error : function (s:String, pos:core.Globals.Pos) { trace("Shall not be seen"); throw false; },
 			basic : {
 				tvoid : m,
 				tint : m,
 				tfloat : m,
 				tbool : m,
-				tnull : function (t:core.Type.T) { throw false; },
+				tnull : function (t:core.Type.T) { trace("Shall not be seen"); throw false; },
 				tstring : m,
-				tarray : function (t:core.Type.T) { throw false; }
+				tarray : function (t:core.Type.T) { trace("Shall not be seen"); throw false; }
 			},
 			file_lookup_cache : new Map<String, Option<String>>(),
 			stored_typed_exprs : new Map<Int, core.Type.TExpr>(),

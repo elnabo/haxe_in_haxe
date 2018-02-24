@@ -390,7 +390,7 @@ class Meta {
 	public static function has(m:StrictMeta, ml:core.Ast.Metadata) : Bool {
 		return List.exists(function (m2:core.Ast.MetadataEntry) { return m == m2.name; }, ml);
 	}
-	
+
 	public static function get(m:StrictMeta, ml:core.Ast.Metadata) : core.Ast.MetadataEntry {
 		return List.find(function (m2:core.Ast.MetadataEntry) { return m == m2.name; }, ml);
 	}
@@ -734,7 +734,7 @@ class Meta {
 			case Void:
 				{a:":void", b:{a:"Use Cpp native 'void' return type", b:[Platform(Cpp)]}};
 			case Last:
-				throw false;
+				trace("Shall not be seen"); throw false;
 			// do not put any custom metadata after Last
 			case Dollar(s):
 				{a:"$" + s, b:{a:"", b:[]}};
@@ -746,7 +746,7 @@ class Meta {
 	public static function parse (s:String) {
 		return string_to_meta(":"+s);
 	}
-	
+
 	public static function get_documentation (d:StrictMeta) : Option<{a:String, b:String}> {
 		var meta_info = get_info(d);
 		var flags = meta_info.b.b;
@@ -761,7 +761,7 @@ class Meta {
 					case Platforms(fl): pfs.set(List.append(fl,pfs.get()));
 					case UsedOn(u): used.set(u::used.get());
 					case UsedOnEither(ul): used.set(List.append(ul,used.get()));
-					case UsedInternally: throw false;
+					case UsedInternally: trace("Shall not be seen"); throw false;
 				}
 			}, flags);
 			var string_params = switch (List.rev(params.get())) {

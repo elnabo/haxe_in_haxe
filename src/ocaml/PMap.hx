@@ -4,6 +4,10 @@ using equals.Equal;
 
 class PMap {
 
+	public static inline function is_empty<A,B> (map:Map<A,B>) : Bool {
+		return map.iterator().hasNext();
+	}
+
 	public static function add<A,B> (key:A, value:B, m:Map<A,B>) : Map<A,B> {
 		m.set(key, value);
 		return m;
@@ -42,7 +46,7 @@ class PMap {
 			f(key, m.get(key));
 		}
 	}
-	
+
 	public static inline function exists<A,B> (key:A, m:Map<A,B>) : Bool {
 		return mem(key, m);
 	}

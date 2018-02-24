@@ -726,4 +726,13 @@ class Ast {
 			return List.append(tpath.a, [mpath.b, tpath.b]);
 		}
 	}
+
+	public static function remove_duplicates<A> (f:A->A->Bool, l:ImmutableList<A>) : ImmutableList<A> {
+		return switch (l) {
+			case []: [];
+			case x::l:
+				x :: remove_duplicates(f, List.filter(function (x_:A) { return f(x, x_); }, l));
+		}
+	}
+	// module Expr = struct
 }

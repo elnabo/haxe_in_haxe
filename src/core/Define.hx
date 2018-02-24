@@ -431,7 +431,7 @@ class Define {
 			case WarnVarShadowing:
 				{a:"warn_var_shadowing", b:{a:"Warn about shadowing variable declarations", b:[]}};
 			case Last:
-				throw false;
+				trace("Shall not be seen"); throw false;
 		}
 	}
 

@@ -190,7 +190,7 @@ class Main {
 		}
 		return res.join("");
 	}
-	
+
 	public static function error(ctx:Server.Context, msg:String, p:core.Globals.Pos) {
 		var msg =try {
 			List.assoc(msg, deprecated);
@@ -304,7 +304,7 @@ class Main {
 			var binary_string = function (s:String) {
 				return (core.Globals.is_windows) ? s.split("\r\n").join("\n") : s;
 			};
-			
+
 			// var env = std.Sys.environment();
 			// var p = new Process(cmd, [for (key in env.keys()) key+"="+env.get(key)]);
 			var p = new Process(cmd);
@@ -397,7 +397,7 @@ class Main {
 		var each_params = new Ref<ImmutableList<String>>([]);
 		function loop (acc:ImmutableList<String>, l:ImmutableList<String>) : Void {
 			switch (l) {
-				case []: 
+				case []:
 					var ctx = create(List.append(each_params.get(), List.rev(acc)));
 					init(ctx);
 					ctx.flush();
@@ -513,7 +513,7 @@ class Main {
 			syntax.Parser.display_error = function (e:syntax.parser.ErrorMsg, p:core.Globals.Pos) {
 				com.error(syntax.Parser.error_msg(e), p);
 			};
-			
+
 			syntax.Parser.use_doc = context.Common.display_default.get() == DMNone || context.common.CompilationServer.runs();
 			com.class_path = get_std_class_paths();
 			com.std_path = List.filter(function (p:String) : Bool {
@@ -722,7 +722,7 @@ class Main {
 						var s_bytes = sys.io.File.getBytes(file);
 						if (s_bytes.length > 12000000) {
 							throw "Resource '" + file + "' excess the maximum size of 12MB";
-						} 
+						}
 						data = s_bytes.toString();
 					}
 					else {
@@ -765,8 +765,8 @@ class Main {
 					});
 					xml_out = Some("hx");
 				}), doc:": generate hx headers for all input classes"},
-				{arg:"--next", spec:S_Unit(function() { throw false; }), doc:": separate several haxe compilations"},
-				{arg:"--each", spec:S_Unit(function() { throw false; }), doc:": append preceding parameters to all haxe compilations separated by --next"},
+				{arg:"--next", spec:S_Unit(function() { trace("Shall not be seen"); throw false; }), doc:": separate several haxe compilations"},
+				{arg:"--each", spec:S_Unit(function() { trace("Shall not be seen"); throw false; }), doc:": append preceding parameters to all haxe compilations separated by --next"},
 				{arg:"--display", spec:S_String( function(file_pos:String) {
 					DisplayOutput.handle_display_argument(com,file_pos,pre_compilation,did_something);
 				}),doc:": display code tips"},
@@ -816,10 +816,10 @@ class Main {
 					compiler.Server.wait_loop(process_params, com.verbose, accept);
 				}), doc:"[[host:]port]|stdio] : wait on the given port (or use standard i/o) for commands to run)"},
 				{arg:"--connect", spec:S_String( function(_:String) {
-					throw false;
+					trace("Shall not be seen"); throw false;
 				}), doc:"<[host:]port> : connect on the given port and run commands there)"},
 				{arg:"--cwd", spec:S_String( function(dir:String) {
-					throw false;
+					trace("Shall not be seen"); throw false;
 				}),doc:"<dir> : set current working directory"},
 				{arg:"-version", spec:S_Unit(function() {
 					message(ctx, CMInfo(compiler.Server.s_version(),core.Globals.null_pos));
@@ -890,7 +890,7 @@ class Main {
 			process(ctx.com.args);
 			process_libs();
 			if (com.display.dms_display) {
-				com.warning = (com.display.dms_error_policy == EPCollect) 
+				com.warning = (com.display.dms_error_policy == EPCollect)
 					? function(s:String, p:core.Globals.Pos) {
 						context.Common.add_diagnostics_message(com, s, p, Warning);
 					}
@@ -1004,7 +1004,7 @@ class Main {
 					generate(tctx, ext, xml_out, interp, swf_header);
 				}
 			}
-			// Sys.catch_break false; 
+			// Sys.catch_break false;
 			List.iter(function (f) { f(); }, List.rev(com.callbacks.after_generation));
 			if (!no_output) {
 				var sdmc = cmds.copy();
@@ -1038,7 +1038,7 @@ class Main {
 			var fields = None;
 			try {
 				switch (e.c) {
-					case None: 
+					case None:
 						fields = compiler.displayoutput.TypePathHandler.complete_type_path(com, e.p);
 					case Some(v):
 						fields = compiler.displayoutput.TypePathHandler.complete_type_path_inner(com, e.p, v.c, v.cur_package, e.is_import);
@@ -1166,7 +1166,7 @@ class Main {
 				core.Timer.report_times(f);
 				std.Sys.exit(e.i);
 			}
-		} 
+		}
 		// catch (e:generators.Hlinterp.Sys_exit) {
 		// 	ctx.flush();
 		// 	if (Server.measure_times) {

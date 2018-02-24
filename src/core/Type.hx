@@ -763,7 +763,7 @@ class Type {
 					rloop({name:x, t:lazy_type(f)}::_l1, l2);
 				case {f:{t:t1}::l1, s:t2::l2}:
 					{fst:t1, snd:t2}::rloop(l1, l2);
-				case _: throw false;
+				case _: trace("Shall not be seen"); throw false;
 			}
 		}
 		var subst = rloop(cparams, params);
@@ -809,7 +809,7 @@ class Type {
 										case TMono(r) :
 											r.set(Some(t));
 										case _:
-											throw false; // never
+											trace("Shall not be seen"); throw false; // never
 									}
 									t;
 								case _: TInst(c, List.map(loop, tl));
@@ -1181,7 +1181,7 @@ class Type {
 				}
 			case TDynamic(_): FDynamic(n);
 			case TEnum(_), TMono(_), TAbstract(_), TFun(_): throw ocaml.Not_found.instance;
-			case TLazy(_), TType(_): throw false;
+			case TLazy(_), TType(_): trace("Shall not be seen"); throw false;
 		}
 	}
 
@@ -1471,7 +1471,7 @@ class Type {
 				return false;
 			}
 			catch (_:Bool) {
-				throw false;
+				trace("Shall not be seen"); throw false;
 			}
 			catch (e:Any) {
 				stack.set(List.tl(stack.get()));
@@ -1628,8 +1628,384 @@ class Type {
 		}
 	}
 
-	public static function unify (a:T, b:T) : Dynamic {
-		trace("TODO: core.Type.unify");
+	public static var unify_stack = new Ref<ImmutableList<{fst:T, snd:T}>>([]);
+	public static var unify_new_monos = new Ref<ImmutableList<T>>([]);
+
+	public static function unify (a:T, b:T) : Void {
+		if (a ==b) {}
+		switch [a, b] {
+			case [TLazy(f), _]: unify(lazy_type(f), b);
+			case [_, TLazy(f)]: unify(a, lazy_type(f));
+			case [TMono(t), _]:
+				switch (t.get()) {
+					case None: if (!link(t, a, b)) { error([cannot_unify(a, b)]); }
+					case Some(t): unify(t, b);
+				}
+			case [_, TMono(t)]:
+				switch (t.get()) {
+					case None: if (!link(t, b, a)) { error([cannot_unify(a, b)]); }
+					case Some(t): unify(a, t);
+				}
+			case [TType(t, tl), _]:
+				rec_stack(unify_stack, {fst:a, snd:b},
+					function (arg)  { var a2=arg.fst; var b2 = arg.snd; return fast_eq(a, a2) && fast_eq(b, b2); },
+					function () { unify(apply_params(t.t_params, tl, t.t_type), b); },
+					function (l:ImmutableList<UnifyError>) { error(cannot_unify(a, b)::l); }
+				);
+			case [_, TType(t, tl)]:
+				rec_stack(unify_stack, {fst:a, snd:b},
+					function (arg)  { var a2=arg.fst; var b2 = arg.snd; return fast_eq(a, a2) && fast_eq(b, b2); },
+					function () { unify(a, apply_params(t.t_params, tl, t.t_type)); },
+					function (l:ImmutableList<UnifyError>) { error(cannot_unify(a, b)::l); }
+				);
+			case [TEnum(ea, tl1), TEnum(eb, tl2)]:
+				if (!ea.equals(eb)) {
+					error([cannot_unify(a, b)]);
+				}
+				unify_type_params(a, b, tl1, tl2);
+			case [TAbstract({a_path:{a:[], b:"Null"}}, [t]), _]:
+				try {
+					unify(t, b);
+				}
+				catch (ue:Unify_error) {
+					var l = ue.l;
+					error(cannot_unify(a, b)::l);
+				}
+			case [_, TAbstract({a_path:{a:[], b:"Null"}}, [t])]:
+				try {
+					unify(a, t);
+				}
+				catch (ue:Unify_error) {
+					var l = ue.l;
+					error(cannot_unify(a, b)::l);
+				}
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1.equals(a2)):
+				try {
+					unify_type_params(a, b, tl1, tl2);
+				}
+				catch (err:Unify_error) {
+					// the type could still have a from/to relation to itself (issue #3494)
+					try {
+						unify_abstracts(a, b, a1, tl1, a2, tl2);
+					}
+					catch (_:Unify_error) {
+						throw err;
+					}
+				}
+			case [TAbstract({a_path:{a:[], b:"Void"}}, _), _], [_, TAbstract({a_path:{a:[], b:"Void"}}, _)]:
+				error([cannot_unify(a, b)]);
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)]:
+				unify_abstracts(a, b, a1, tl1, a2, tl2);
+			case [TInst(c1, tl1), TInst(c2, tl2)]:
+				function loop (c:TClass, tl:ImmutableList<T>) : Bool {
+					return
+					if (c.equals(c2)) {// strict
+						unify_type_params(a, b, tl, tl2);
+						true;
+					}
+					else {
+						var _tmp = switch (c.cl_super) {
+							case None: false;
+							case Some({c:cs, params:tls}):
+								loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls));
+						}
+						_tmp || List.exists(function (arg:{c:TClass, params:ImmutableList<T>}) { var cs = arg.c; var tls = arg.params; return loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls)); }, c.cl_implements)
+							 || switch (c.cl_kind) {
+								case KTypeParameter(pl):
+									List.exists(function (t:T) { return
+										switch (follow(t)) {
+											case TInst(cs,tls): loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls));
+											case TAbstract(aa, tl): List.exists(unify_to.bind(aa, tl, b), aa.a_to);
+											case _: false;
+										}
+									}, pl);
+								 case _: false;
+							 };
+					}
+				}
+				if (!loop(c1, tl1)) { error([cannot_unify(a, b)]); }
+			case [TFun({args:l1, ret:r1}), TFun({args:l2, ret:r2})] if (List.length(l1) == List.length(l2)):
+				var i = new Ref(0);
+				try {
+					switch (r2) {
+						case TAbstract({a_path:{a:[], b:"Void"}}, _): i.set(i.get()+1);
+						case _: unify(r1, r2); i.set(i.get()+1);
+					}
+					List.iter2(function (fa1:TSignatureArg, fa2:TSignatureArg) {
+						var o1 = fa1.opt; var t1 = fa1.t; var o2 = fa2.opt; var t2 = fa2.t;
+						if (o1 && ! o2) { error([Cant_force_optional]); }
+						unify(t1, t2);
+						i.set(i.get()+1);
+					}, l1, l2); // contravariance
+				}
+				catch (ue:Unify_error) {
+					var l = ue.l;
+					var msg = (i.get() != 0) ? "Cannot unify return types" : "Cannot unify argument";
+					error(cannot_unify(a, b)::Unify_custom(msg)::l);
+				}
+			case [TInst(c, tl), TAnon(an)]:
+				if (PMap.is_empty(an.a_fields)) {
+					switch (c.cl_kind) {
+						case KTypeParameter(pl):
+							// one of the constraints must unify with { }
+							if (!List.exists(function (t:T) { return t.match(TInst(_, _)|TAnon(_)); }, pl)) {
+								error([cannot_unify(a, b)]);
+							}
+						case _:
+					}
+				}
+				try {
+					PMap.iter(function (n:String, f2:TClassField) {
+						/*
+						 * introducing monomorphs while unifying might create infinite loops - see #2315
+						 * let's store these monomorphs and make sure we reach a fixed point
+						 */
+						var monos = new Ref<ImmutableList<T>>([]);
+						function make_type(f:TClassField) : T {
+							return
+							switch (f.cf_params) {
+								case []: f.cf_type;
+								case l:
+									var ml = List.map(function (_) { return mk_mono(); }, l);
+									monos.set(ml);
+									apply_params(f.cf_params, ml, f.cf_type);
+							}
+						}
+						var _tmp = try {
+							raw_class_field(make_type, c, tl, n);
+						}
+						catch (_:ocaml.Not_found) {
+							error([has_no_field(a, n)]);
+						}
+						var ft = _tmp.snd; var f1 = _tmp.trd;
+						var ft = apply_params(c.cl_params, tl, ft);
+						if (!unify_kind(f1.cf_kind, f2.cf_kind)){
+							error([invalid_kind(n, f1.cf_kind, f2.cf_kind)]);
+						}
+						if (f2.cf_public && !f1.cf_public) {
+							error([invalid_visibility(n)]);
+						}
+
+						switch (f2.cf_kind) {
+							case Var({v_read:AccNo}), Var({v_read:AccNever}):
+								// we will do a recursive unification, so let's check for possible recursion
+								var old_monos = unify_new_monos.get();
+								unify_new_monos.set(List.append(monos.get(), unify_new_monos.get()));
+								rec_stack(unify_stack, {fst:ft, snd:f2.cf_type},
+									function (arg) { var a2 = arg.fst; var b2 = arg.snd; return fast_eq(b2, f2.cf_type) && fast_eq_mono(unify_new_monos.get(), ft, a2); },
+									function () { try { unify_with_access(ft, f2); } catch (e:Any) { unify_new_monos.set(old_monos); throw e;} },
+									function (l:ImmutableList<UnifyError>) { error(invalid_field(n)::l); }
+								);
+								unify_new_monos.set(old_monos);
+							case Method(MethNormal), Method(MethInline), Var({v_write:AccNo}), Var({v_write:AccNever}):
+								// same as before, but unification is reversed (read-only var)
+								var old_monos = unify_new_monos.get();
+								unify_new_monos.set(List.append(monos.get(), unify_new_monos.get()));
+								rec_stack(unify_stack, {fst:f2.cf_type, snd:ft},
+									function (arg) { var a2 = arg.fst; var b2 = arg.snd; return fast_eq_mono(unify_new_monos.get(), b2, ft) && fast_eq(f2.cf_type, a2); },
+									function () { try { unify_with_access(ft, f2); } catch (e:Any) { unify_new_monos.set(old_monos); throw e;} },
+									function (l:ImmutableList<UnifyError>) { error(invalid_field(n)::l); }
+								);
+								unify_new_monos.set(old_monos);
+							case _:
+								// will use fast_eq, with have its own stack
+								try {
+									unify_with_access(ft, f2);
+								}
+								catch (ue:Unify_error) {
+									var l = ue.l;
+									error(invalid_field(n)::l);
+								}
+						}
+
+						List.iter(function (f2o) {
+							if (!List.exists(function (f1o) { return type_iseq(f1o.cf_type, f2o.cf_type); }, f1::f1.cf_overloads)) {
+								error([Missing_overload(f1, f2o.cf_type)]);
+							}
+						}, f2.cf_overloads);
+						// we mark the field as :?used because it might be used through the structure
+						if (!core.Meta.has(MaybeUsed, f1.cf_meta)) {
+							f1.cf_meta = ({name:MaybeUsed, params:[], pos:f1.cf_pos} : core.Ast.MetadataEntry) :: f1.cf_meta;
+						}
+						switch (f1.cf_kind) {
+							case Method(MethInline):
+								if ((c.cl_extern || core.Meta.has(Extern, f1.cf_meta)) && !core.Meta.has(Runtime, f1.cf_meta)) {
+									error([Has_no_runtime_field(a, n)]);
+								}
+							case _:
+						}
+					}, an.a_fields);
+					switch (an.a_status.get()) {
+						case Opened: an.a_status.set(Closed);
+						case Statics(_), EnumStatics(_), AbstractStatics(_): error([]);
+						case Closed, Extend(_), Const:
+					}
+				}
+				catch (ue:Unify_error) {
+					var l = ue.l;
+					error(cannot_unify(a, b)::l);
+				}
+			case [TAnon(a1), TAnon(a2)]:
+				unify_anons(a, b, a1, a2);
+			case [TAnon(an), TAbstract({a_path:{a:[], b:"Class"}}, [pt])]:
+				switch (an.a_status.get()) {
+					case Statics(cl): unify(TInst(cl, List.map(function (_) { return mk_mono(); }, cl.cl_params)), pt);
+					case _: error([cannot_unify(a, b)]);
+				}
+			case [TAnon(an), TAbstract({a_path:{a:[], b:"Enum"}}, [pt])]:
+				switch (an.a_status.get()) {
+					case EnumStatics(e): unify(TEnum(e, List.map(function (_) { return mk_mono(); }, e.e_params)), pt);
+					case _: error([cannot_unify(a, b)]);
+				}
+			case [TEnum(_, _), TAbstract({a_path:{a:[], b:"EnumValue"}}, [])]:
+			case [TEnum(en , _), TAbstract({a_path:{a:["haxe"], b:"FlatEnum"}}, [])] if (core.Meta.has(FlatEnum, en.e_meta)):
+			case [TFun(_), TAbstract({a_path:{a:["haxe"], b:"Function"}}, [])]:
+			case [TInst(c, tl), TAbstract({a_path:{a:["haxe"], b:"Constructible"}}, [t1])]:
+				try {
+					switch (c.cl_kind) {
+						case KTypeParameter(tl):
+							// type parameters require an equal Constructible constraint
+								if (!List.exists(function (t) { return switch follow(t) { case TAbstract({a_path:{a:["haxe"], b:"Constructible"}}, [t2]): type_iseq(t1, t2); case _: false;}; }, tl)) {
+									error([cannot_unify(a, b)]);
+								}
+						case _:
+							var _tmp = class_field(c, tl, "new");
+							var t = _tmp.snd; var cf = _tmp.trd;
+							if (!cf.cf_public) {
+								error([invalid_visibility("new")]);
+							}
+							try {
+								unify(t, t1);
+							}
+							catch (ue:Unify_error) {
+								var l = ue.l;
+								error(cannot_unify(a, b)::l);
+							}
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					error([Has_no_field(a, "new")]);
+				}
+			case [TDynamic(_.get()=>t), _]:
+				if (t.equals(a)) {}
+				else {
+					switch (b) {
+						case TDynamic(_.get()=>t2):
+							if (t2.diff(b)) {
+								try {
+									type_eq(EqRightDynamic, t, t2);
+								}
+								catch (ue:Unify_error) {
+									var l = ue.l;
+									error(cannot_unify(a, b)::l);
+								}
+							}
+						case TAbstract(bb, tl) if (List.exists(unify_from.bind(bb, tl, a, b), bb.a_from)):
+						case _:
+							error([cannot_unify(a, b)]);
+					}
+				}
+			case [_, TDynamic(_.get()=>t)]:
+				if (t.equals(b)) {}
+				else {
+					switch (a) {
+						case TDynamic(_.get()=>t2):
+							if (t2.diff(a)) {
+								try {
+									type_eq(EqRightDynamic, t, t2);
+								}
+								catch (ue:Unify_error) {
+									var l = ue.l;
+									error(cannot_unify(a, b)::l);
+								}
+							}
+						case TAnon(an):
+							try {
+								switch (an.a_status.get()) {
+									case Statics(_), EnumStatics(_): error([]);
+									case Opened: an.a_status.set(Closed);
+									case _:
+								}
+								PMap.iter(function (_, f:TClassField) {
+									try {
+										type_eq(EqStrict, field_type(f), t);
+									}
+									catch (ue:Unify_error) {
+										var l = ue.l;
+										error(invalid_field(f.cf_name)::l);
+									}
+								}, an.a_fields);
+							}
+							catch (ue:Unify_error) {
+								var l = ue.l;
+								error(cannot_unify(a, b)::l);
+							}
+						case TAbstract(aa, tl) if (List.exists(unify_to.bind(aa, tl, b), aa.a_to)):
+						case _: error([cannot_unify(a, b)]);
+					}
+				}
+			case [TAbstract(aa, tl), _]:
+				if (!List.exists(unify_to.bind(aa, tl, b), aa.a_to)) {
+					error([cannot_unify(a, b)]);
+				}
+			case [TInst(c={cl_kind:KTypeParameter(ctl)}, pl), TAbstract(bb, tl)]:
+				// one of the constraints must satisfy the abstract
+				var _tmp = List.exists(function (t) {
+					var t = apply_params(c.cl_params, pl, t);
+					try { unify(t, b); return true; }
+					catch (_:Unify_error) { return false; }
+				}, ctl);
+				if (!_tmp && !List.exists(unify_from.bind(bb, tl, a, b), bb.a_from)) {
+					error([cannot_unify(a, b)]);
+				}
+			case [_, TAbstract(bb, tl)]:
+				if (!List.exists(unify_from.bind(bb, tl, a, b), bb.a_from)) {
+					error([cannot_unify(a, b)]);
+				}
+			case [_, _]:
+				error([cannot_unify(a, b)]);
+		}
+	}
+
+	public static function unify_abstracts (a:core.Type.T, b:core.Type.T, a1:core.Type.TAbstract, tl1:ImmutableList<core.Type.T>, a2:core.Type.TAbstract, tl2:ImmutableList<core.Type.T>) : Void {
+		trace("TODO: unify_abstracts");
+		throw false;
+	}
+
+	public static function unify_anons (a:core.Type.T, b:core.Type.T, a1:core.Type.TAnon, a2:core.Type.TAnon) : Void {
+		trace("TODO: unify_anons");
+		throw false;
+	}
+
+	public static function unify_from (ab:TAbstract, tl:ImmutableList<core.Type.T>, a:T, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
+		trace("TODO: unify_from");
+		throw false;
+	}
+
+	public static function unify_to (ab:TAbstract, tl:ImmutableList<core.Type.T>, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
+		trace("TODO: unify_to");
+		throw false;
+	}
+
+	public static function unify_from_field (ab:TAbstract, tl:ImmutableList<core.Type.T>, a:T, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
+		var t = _tmp.t; var cf = _tmp.cf;
+		trace("TODO: unify_from_field");
+		throw false;
+	}
+
+	public static function unify_to_field (ab:TAbstract, tl:ImmutableList<core.Type.T>, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
+		var t = _tmp.t; var cf = _tmp.cf;
+		trace("TODO: unify_to_field");
+		throw false;
+	}
+
+	public static function unify_type_params (a:core.Type.T, b:core.Type.T, tl1:ImmutableList<core.Type.T>, tl2:ImmutableList<core.Type.T>) : Void {
+		trace("TODO: unify_type_params");
+		throw false;
+	}
+
+	public static function unify_with_access (t1:T, f2:TClassField) : Void {
+		trace("TODO: unify_with_access");
 		throw false;
 	}
 

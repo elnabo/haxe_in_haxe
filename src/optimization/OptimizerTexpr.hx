@@ -142,12 +142,12 @@ class OptimizerTexpr {
 				var fa:Float = switch (ca) {
 					case TFloat(a): Std.parseFloat(a);
 					case TInt(a): a;
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 				var fb:Float = switch(cb) {
 					case TFloat(b): Std.parseFloat(b);
 					case TInt(b): b;
-					case _: throw false;
+					case _: trace("Shall not be seen"); throw false;
 				}
 				function fop (op:Float->Float->Float) : core.Type.TExpr {
 					return check_float(op, fa, fb);

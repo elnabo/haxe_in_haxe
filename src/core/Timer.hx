@@ -22,7 +22,7 @@ class Timer {
 		var key = List.join(".", id);
 		var t = htimers.get(key);
 		if (t != null) {
-			t.start = get_time() :: t.start; 
+			t.start = get_time() :: t.start;
 			t.calls++;
 			return t;
 		}
@@ -40,7 +40,7 @@ class Timer {
 
 	public static function close (t:TimerInfos) : Void {
 		var start = switch (t.start) {
-			case []: throw false;
+			case []: trace("Shall not be seen"); throw false;
 			case s::l:
 				t.start = l;
 				s;
@@ -59,7 +59,7 @@ class Timer {
 			}
 		}
 		loop();
-		// because of rounding errors while adding small times, we need to make sure that we don't have start > now 
+		// because of rounding errors while adding small times, we need to make sure that we don't have start > now
 		List.iter(function (ct) {
 			ct.start = List.map(function (t) {
 				var s = t + dt;

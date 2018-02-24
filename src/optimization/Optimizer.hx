@@ -290,7 +290,7 @@ class Optimizer {
 						}
 						switch (List.filter(_f, l)) {
 							case []: ec;
-							case l: 
+							case l:
 								var _e = e.clone();
 								_e.eexpr = TBlock(ocaml.List.rev(ec :: l));
 								_e;
@@ -387,7 +387,7 @@ class Optimizer {
 						var ethis = core.Type.mk(TConst(TThis), core.Type.t_dynamic, e.epos);
 						var rt = switch (core.Type.follow(ef.etype)) {
 							case TFun({ret:rt}): rt;
-							case _: throw false;
+							case _: trace("Shall not be seen"); throw false;
 						}
 						var inl = try {
 							type_inline(ctx, cf, func, ethis, el, rt, None, e.epos, true, false);
