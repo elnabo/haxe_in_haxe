@@ -364,8 +364,109 @@ class Typecore {
 	 * checks if we can access to a given class field using current context
 	 */
 	public static function can_access (ctx:context.Typecore.Typer, ?in_overload:Bool=false, c:core.Type.TClass, cf:core.Type.TClassField, stat:Bool) : Bool {
-		trace("TODO: context.Typecore.can_access");
-		throw false;
+		return
+		if (cf.cf_public) {
+			true;
+		}
+		else if (!in_overload && ctx.com.config.pf_overload && core.Meta.has(Overload, cf.cf_meta)) {
+			true;
+		}
+		else {
+			// TODO: should we add a c == ctx.curclass short check here?
+			// has metadata path
+			function make_path(c:core.Type.TClass, f:core.Type.TClassField) : ImmutableList<String> {
+				return switch (c.cl_kind) {
+					case KAbstractImpl(a):
+						List.append(a.a_path.a, [a.a_path.b, f.cf_name]);
+					case KGenericInstance(c, _):
+						make_path(c, f);
+					case _ if (c.cl_private):
+						List.rev(f.cf_name::c.cl_path.b::List.tl(List.rev(c.cl_path.a)));
+					case _:
+						List.append(c.cl_path.a, [c.cl_path.b, f.cf_name]);
+				}
+			}
+			function expr_path (acc:ImmutableList<String>, e:core.Ast.Expr) {
+				return switch (e.expr) {
+					case EField(e, f): expr_path(f::acc, e);
+					case EConst(CIdent(n)): n :: acc;
+					case _: Tl; // []
+				}
+			}
+			function chk_path (psub:ImmutableList<String>, pfull:ImmutableList<String>) : Bool {
+				return switch [psub, pfull] {
+					case [[], _]: true;
+					case [a::l1, b::l2] if (a == b): chk_path(l1, l2);
+					case _: false;
+				}
+			}
+			function has (m:core.Meta.StrictMeta, c:core.Type.TClass, f:core.Type.TClassField, path:ImmutableList<String>) : Bool {
+				function loop (l:core.Ast.Metadata) : Bool {
+					return switch (l) {
+						case {name:m2, params:el} :: l if (m.equals(m2)):
+							List.exists(function (e) {
+								var p = expr_path([], e);
+								return p != [] && chk_path(p, path);
+							}, el);
+						case _::l: loop(l);
+						case []: false;
+					}
+				}
+				return loop(c.cl_meta) || loop(f.cf_meta);
+			}
+			var cur_paths = new Ref([]);
+			function loop (c:core.Type.TClass) : Void {
+				cur_paths.set(make_path(c, ctx.curfield)::cur_paths.get());
+				switch (c.cl_super) {
+					case Some({c:csup}): loop(csup);
+					case None:
+				}
+				List.iter(function (arg) { var c = arg.c; return loop(c); }, c.cl_implements);
+			}
+			loop(ctx.curclass);
+			var is_constr = cf.cf_name == "new";
+			function loop_(c:core.Type.TClass) : Bool {
+				var _tmp = try {
+					// if our common ancestor declare/override the field, then we can access it
+					var f = if (is_constr) {
+						switch (c.cl_constructor) {
+							case None: throw ocaml.Not_found.instance;
+							case Some(c): c;
+						}
+					}
+					else {
+						PMap.find(cf.cf_name, (stat) ? c.cl_statics : c.cl_fields);
+					}
+					core.Type.is_parent(c, ctx.curclass) || List.exists(has.bind(Allow, c, f), cur_paths.get());
+				}
+				catch (_:ocaml.Not_found) {
+					false;
+				}
+				_tmp = _tmp || (switch (c.cl_super) {
+					case Some({c:csup}): loop_(csup);
+					case None: false;
+				});
+				return _tmp || has(Access, ctx.curclass, ctx.curfield, make_path(c, cf));
+			}
+			var b = loop_(c);
+			// access is also allowed of we access a type parameter which is constrained to our (base) class
+			b = b || (switch (c.cl_kind) {
+				case KTypeParameter(tl):
+					List.exists(function (t:core.Type.T) {
+						return switch (core.Type.follow(t)) {
+							case TInst(c, _): loop_(c);
+							case _: false;
+						}
+					}, tl);
+				case _: false;
+			});
+			b = b || core.Meta.has(PrivateAccess, ctx.meta);
+			// TODO: find out what this does and move it to genas3
+			if (b && context.Common.defined(ctx.com, As3) && !core.Meta.has(Public, cf.cf_meta)) {
+				cf.cf_meta = ({name:Public, params:[], pos:cf.cf_pos} : core.Ast.MetadataEntry) :: cf.cf_meta;
+			}
+			b;
+		}
 	}
 
 	/*

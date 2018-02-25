@@ -531,7 +531,7 @@ class Typer {
 		}
 	}
 
-	public static function type_module_type (ctx:context.Typecore.Typer, t:core.Type.ModuleType, tparams:Option<Dynamic>, p:core.Globals.Pos) : Dynamic {
+	public static function type_module_type (ctx:context.Typecore.Typer, t:core.Type.ModuleType, tparams:Option<Dynamic>, p:core.Globals.Pos) : core.Type.TExpr {
 		return switch (t) {
 			case TClassDecl({cl_kind:KGenericBuild(_)}):
 				var f = typing.Typeload.build_instance(ctx, t, p).f;
@@ -578,10 +578,9 @@ class Typer {
 				var t_tmp = core.Type.abstract_module_type(a, []);
 				core.Type.mk(TTypeExpr(TAbstractDecl(a)), TType(t_tmp, []), p);
 		}
-		// return type_module_type ctx (Typeload.load_type_def ctx p { tpackage = fst tpath; tname = snd tpath; tparams = []; tsub = None }) None p
 	}
 
-	public static function type_type (ctx:context.Typecore.Typer, tpath:core.Path, p:core.Globals.Pos) : Dynamic {
+	public static function type_type (ctx:context.Typecore.Typer, tpath:core.Path, p:core.Globals.Pos) : core.Type.TExpr {
 		return type_module_type(ctx, typing.Typeload.load_type_def(ctx, p, {tpackage:tpath.a, tname:tpath.b, tparams:[], tsub:None}), None, p);
 	}
 
@@ -838,8 +837,34 @@ class Typer {
 	}
 
 	public static function get_this (ctx:context.Typecore.Typer, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: get_this");
-		throw false;
+		return switch (ctx.curfun) {
+			case FunStatic:
+				core.Error.error("Cannot acces this from a static function", p);
+			case FunMemberClassLocal, FunMemberAbstractLocal:
+				var v = switch (ctx.vthis) {
+					case None:
+						var v = if (ctx.curfun == FunMemberAbstractLocal) {
+							PMap.find("this", ctx.locals);
+						}
+						else {
+							context.Typecore.add_local(ctx, "`this", ctx.tthis, p);
+						}
+						ctx.vthis = Some(v);
+						v;
+					case Some(v):
+						ctx.locals = PMap.add(v.v_name, v, ctx.locals);
+						v;
+				}
+				core.Type.mk(TLocal(v), ctx.tthis, p);
+			case FunMemberAbstract:
+				var v = try {
+					PMap.find("this", ctx.locals);
+				}
+				catch (_:ocaml.Not_found) { trace("Shall not be seen"); throw false; }
+				core.Type.mk(TLocal(v), v.v_type, p);
+			case FunConstructor, FunMember:
+				core.Type.mk(TConst(TThis), ctx.tthis, p);
+		}
 	}
 
 	public static function field_access (ctx:context.Typecore.Typer, mode:AccessMode, f:core.Type.TClassField, fmode:core.Type.TFieldAccess, t:core.Type.T, e:core.Type.TExpr, p:core.Globals.Pos) : AccessKind {
@@ -2236,7 +2261,7 @@ class Typer {
 				}
 				catch (exc:core.Error) {
 					switch (exc.msg) {
-						case Module_not_found({a:[], b:name}) if (name == i): throw ocaml.Not_found;
+						case Module_not_found({a:[], b:name}) if (name == i): throw ocaml.Not_found.instance;
 						case _: throw exc;
 					}
 				}
@@ -2380,7 +2405,7 @@ class Typer {
 											try {
 												// then look for main type statics
 												if (m.a == []) {
-													throw ocaml.Not_found; // ensure that we use def() to resolve local types first
+													throw ocaml.Not_found.instance; // ensure that we use def() to resolve local types first
 												}
 												var t = List.find(function (t) { return !(core.Type.t_infos(t).mt_private) && core.Type.t_path(t).equals(m); }, md.m_types);
 												Some(get_static(false, t));
@@ -2651,8 +2676,43 @@ class Typer {
 	}
 
 	public static function type_vars (ctx:context.Typecore.Typer, vl:ImmutableList<core.Ast.Var>, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_vars");
-		throw false;
+		var vl = List.map(function (variable:core.Ast.Var) {
+			var v = variable.name.pack; var pv = variable.name.pos; var t = variable.type; var e = variable.expr;
+			return
+			try {
+				var t = typing.Typeload.load_type_hint(ctx, p, t);
+				var e = switch (e) {
+					case None: None;
+					case Some(e):
+						var e = type_expr(ctx, e, WithType(t));
+						Some(context.typecore.AbstractCast.cast_or_unify(ctx, t, e, p));
+				}
+				if (v.charAt(0) == "$") {
+					context.Typecore.display_error(ctx, "Variables names starting with a dollar are not allowed", p);
+				}
+				var v = context.Typecore.add_local(ctx, v, t, pv);
+				v.v_meta = ({name:UserVariable, params:[], pos:pv} : core.Ast.MetadataEntry) :: v.v_meta;
+				if (ctx.in_display && context.Display.is_display_position(pv)) {
+					context.display.DisplayEmitter.display_variable(ctx.com.display, v, pv);
+				}
+				{fst:v, snd:e};
+			}
+			catch (err:core.Error) {
+				var e = err.msg; var p = err.pos;
+				check_error(ctx, e, p);
+				{fst:context.Typecore.add_local(ctx, v, core.Type.t_dynamic, pv), snd:None} // TODO: What to do with this...
+			}
+		}, vl);
+		return switch (vl) {
+			case [{fst:v, snd:eo}]:
+				core.Type.mk(TVar(v, eo), ctx.t.tvoid, p);
+			case _:
+				var e = core.Type.mk(TBlock(List.map(function(_tmp) {
+					var v = _tmp.fst; var e = _tmp.snd;
+					return core.Type.mk(TVar(v, e), ctx.t.tvoid, p);
+				}, vl)), ctx.t.tvoid, p);
+				core.Type.mk(TMeta({name:MergeBlock, params:[], pos:p}, e), e.etype, e.epos);
+		}
 	}
 
 	public static function type_block (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -3371,7 +3431,7 @@ class Typer {
 											throw ocaml.Exit.instance;
 										}
 										loop(t::stack, t2);
-									case _: throw ocaml.Exit;
+									case _: throw ocaml.Exit.instance;
 								}
 							case _: throw ocaml.Exit.instance;
 						}

@@ -77,7 +77,7 @@ class HaxeTokenSource {
 
 	@:allow(haxeparser.HaxeParser)
 	var old:syntax.Lexer.LexerFile;
-	
+
 	@:allow(haxeparser.HaxeParser)
 	var restore_cache:Void->Void;
 
@@ -239,13 +239,13 @@ class HaxeTokenSource {
 			case [TBool(a), TBool(b)]: Reflect.compare(a, b);
 			case [TString(a), TFloat(b)]: Reflect.compare(Std.parseFloat(a), b);
 			case [TFloat(a), TString(b)]: Reflect.compare(a, Std.parseFloat(b));
-			case _: throw ocaml.Exit; // alway false
+			case _: throw ocaml.Exit.instance; // alway false
 		}
 	}
 
 	public static function eval(ctx:core.Define, e:core.Ast.Expr) : syntax.ParserEntry.Small_type {
 		return switch (e.expr) {
-			case EConst(CIdent(i)): 
+			case EConst(CIdent(i)):
 				try {
 					TString(core.Define.raw_defined_value(ctx, i));
 				}
@@ -731,7 +731,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					syntax.Parser.serror();
 			}
 		}
-		
+
 		var path : {pos:core.Globals.Pos, acc:Array<core.Ast.PlacedName>, mode:core.Ast.ImportMode} = switch stream {
 			case [{td:Const(CIdent(name)), pos:p}]: loop([{pack:name, pos:p}]);
 			case _:
@@ -809,7 +809,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		var p2 = switch stream {
 			case [{td: BrClose, pos: p2}]:
 				p2;
-			case _: 
+			case _:
 				if (syntax.Parser.do_resume()) {
 					syntax.Parser.last_token(this).pos;
 				}
@@ -982,7 +982,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		return switch stream {
 			case [{td:At, pos:p1}]:
 				switch stream {
-					case [name = metaName(p1), params = parseMetaParams(name.pos)]: 
+					case [name = metaName(p1), params = parseMetaParams(name.pos)]:
 						{name: name.name, params: params, pos: name.pos};
 					case _:
 						if (syntax.Parser.is_resuming(p1)) {
@@ -1334,7 +1334,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					f_expr: e.expr
 				};
 				{
-					name: name, 
+					name: name,
 					kind: core.Ast.ClassFieldKind.FFun(f),
 					pos: punion(p1, e.pos),
 					access: al
@@ -1566,7 +1566,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 
 	function parseBlockElt() : core.Ast.Expr {
 		return switch stream {
-			case [{td:Kwd(Var), pos:p1}, vl = parseVarDecls(p1), p2 = semicolon()]: 
+			case [{td:Kwd(Var), pos:p1}, vl = parseVarDecls(p1), p2 = semicolon()]:
 				{ expr: EVars(vl), pos:punion(p1,p2)};
 			case [{td:Kwd(Inline), pos:p1}, {td:Kwd(Function)}, e = parseFunction(p1, true), _ = semicolon()]: e;
 			case [e = expr(), _ = semicolon()]: e;
@@ -1634,7 +1634,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 				return {name:{pack:name, pos:pn},type:t, expr:eo};
 			}
 			catch (err:syntax.parser.Display) {
-				var v = {name:{pack:name, pos:pn},type:t, expr:Some(err.expr)}; 
+				var v = {name:{pack:name, pos:pn},type:t, expr:Some(err.expr)};
 				var e:core.Ast.Expr = {expr:EVars(apush(vl, v)), pos:punion(pn, err.expr.pos)};
 				syntax.Parser.display(e);
 			}
@@ -1730,7 +1730,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			case _: syntax.Parser.serror();
 		}
 	}
-	
+
 	function arrowFunction (p1:core.Globals.Pos, al:Array<core.Ast.FunArg>, er:{fst:core.Ast.Expr, snd:Bool}) : core.Ast.Expr {
 		function make (e:core.Ast.Expr) : core.Ast.Expr {
 			return {expr:EFunction(None, {
@@ -1859,7 +1859,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 				switch stream {
 					case [{td:POpen, pos:po}, e = parseCallParams(function(el, p2) {return {expr:ENew(t, el), pos:punion(p1,p2)}}, po)]:
 						exprNext(e);
-					case _: 
+					case _:
 						if (syntax.Parser.do_resume()) {
 							{expr:ENew(t, []), pos:punion(p1, t.pos)};
 						}
@@ -1867,7 +1867,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 				}
 			case [{td:POpen, pos: p1}]:
 				switch stream {
-					case [{td:PClose, pos:p2}, er = arrowExpr()]: 
+					case [{td:PClose, pos:p2}, er = arrowExpr()]:
 						arrowFunction(p1, [], er);
 					case [{td:Question, pos:p2}, al = psep(Comma, parseFunParam), {td:PClose}, er = arrowExpr()]:
 						if (al.length == 0) { throw false; }
@@ -1881,7 +1881,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 								arrowFunction(p1, apush(al, arrowFirstParam(e)), er);
 							case [t = parseTypeHint()]:
 								switch stream {
-									case [{td:PClose, pos:p2}]: 
+									case [{td:PClose, pos:p2}]:
 										exprNext({expr:EParenthesis({expr:ECheckType(e, t), pos:punion(p1, p2)}), pos:punion(p1, p2)});
 									case [{td:Comma, pos:pc}, al = psep(Comma, parseFunParam), {td:PClose}, er = arrowExpr()]:
 										var ct = arrowIdentChecktype(e);
@@ -1959,7 +1959,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					case Some(e): e.pos;
 				}
 				{ expr: EIf(cond,e1,e2), pos:punion(p, p2)};
-			case [{td:Kwd(Return), pos:p}, e = popt(expr)]: 
+			case [{td:Kwd(Return), pos:p}, e = popt(expr)]:
 				var p1 = switch (e) {
 					case None: p;
 					case Some(v): punion(p, v.pos);
@@ -2010,7 +2010,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					case [{td:Dollar(v), pos:p2}]:
 						exprNext({expr:EField(e1, "$" + v), pos:punion(e1.pos, p2)});
 					case [{td:Binop(OpOr), pos:p2} && syntax.Parser.do_resume()]:
-						syntax.Parser.set_resume(p); 
+						syntax.Parser.set_resume(p);
 						syntax.Parser.display({expr:EDisplay(e1, false), pos:p}); // help for debug display mode
 					case _:
 						// turn an integer followed by a dot into a float
@@ -2041,7 +2041,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 								switch stream {
 									case [{td:Binop(OpAssign), pos:p4} && p3.pmax == p4.pmin, e2 = expr()]:
 										makeBinop(OpAssignOp(OpUShr),e1,e2);
-									case [e2 = secureExpr()]: 
+									case [e2 = secureExpr()]:
 										makeBinop(OpUShr,e1,e2);
 								}
 							case [{td:Binop(OpAssign), pos:p3} && p2.pmax == p3.pmin, e2 = expr()]:
@@ -2083,7 +2083,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 
 	function parseExprOrVar() :core.Ast.Expr {
 		return switch stream {
-			case [{td:Kwd(Var),pos:p1}, name = dollarIdent()]: 
+			case [{td:Kwd(Var),pos:p1}, name = dollarIdent()]:
 				{ expr: EVars([{name: name, type:None, expr:None}]), pos: punion(p1, name.pos) };
 			case [e = expr()]: e;
 		}
@@ -2174,7 +2174,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 				}
 		}
 	}
-	
+
 	function parseCatches(etry:core.Ast.Expr, catches:Array<core.Ast.Catch>, pmax:core.Globals.Pos) : {catches:Array<core.Ast.Catch>, pos:core.Globals.Pos} {
 		return switch stream {
 			case [c = parseCatch(etry)]:
@@ -2219,7 +2219,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			return switch stream {
 				case [{td:PClose, pos:p2}]: f(apush(acc,e), p2);
 				case [{td:Comma, pos:p2}]: parseNextParam(apush(acc, e), p2);
-				case [{td:Semicolon, pos:p2}]: 
+				case [{td:Semicolon, pos:p2}]:
 					if (syntax.Parser.encloses_resume(punion(p1, p2))) {
 						makeDisplayCall(acc,p2);
 					}
@@ -2245,7 +2245,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			case _: parseNextParam([], p1);
 		}
 	}
-	
+
 	function toplevelExpr():core.Ast.Expr {
 		return try {
 			expr();

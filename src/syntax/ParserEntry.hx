@@ -32,7 +32,7 @@ class ParserEntry {
 		mstack = [];
 		syntax.Parser.last_doc = None;
 		syntax.Parser.in_macro = core.Define.defined(ctx, Macro);
-		
+
 		code.token(syntax.Lexer.skip_header);
 
 		var parser = new haxeparser.HaxeParser(buf, src, ctx);
@@ -41,7 +41,7 @@ class ParserEntry {
 		}
 
 	}
-	
+
 	public static inline function is_true(a:Small_type) {
 		return haxeparser.HaxeParser.HaxeTokenSource.isTrue(a);
 	}
@@ -58,13 +58,13 @@ class ParserEntry {
 	// 		case [TBool(a), TBool(b)]: Reflect.compare(a, b);
 	// 		case [TString(a), TFloat(b)]: Reflect.compare(Std.parseFloat(a), b);
 	// 		case [TFloat(a), TString(b)]: Reflect.compare(a, Std.parseFloat(b));
-	// 		case _: throw ocaml.Exit; // alway false
+	// 		case _: throw ocaml.Exit.instance; // alway false
 	// 	}
 	// }
 
 	// public static function eval(ctx:core.Define, e:core.Ast.Expr) : Small_type {
 	// 	return switch (e.expr) {
-	// 		case EConst(CIdent(i)): 
+	// 		case EConst(CIdent(i)):
 	// 			try {
 	// 				TString(core.Define.raw_defined_value(ctx, i));
 	// 			}

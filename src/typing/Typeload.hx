@@ -496,7 +496,7 @@ class Typeload {
 			// lookup in wildcard imported packages
 			try {
 				if (!no_pack) {
-					throw new ocaml.Exit();
+					throw ocaml.Exit.instance;
 				}
 				function loop (l:ImmutableList<{pos:core.Globals.Pos, l:ImmutableList<String>}>) : core.Type.ModuleType {
 					return switch (l) {
@@ -558,7 +558,7 @@ class Typeload {
 							to access the js classes */
 							try {
 								switch (PMap.find(x, ctx.com.package_rules)) {
-									case Forbidden: throw new ocaml.Exit();
+									case Forbidden: throw ocaml.Exit.instance;
 									case _:
 								}
 							}
@@ -2976,7 +2976,7 @@ class Typeload {
 						(sys.FileSystem.stat(file).size > 0) ? file : throw ocaml.Not_found.instance;
 					}
 					else {
-						throw ocaml.Not_found;
+						throw ocaml.Not_found.instance;
 					}
 				}
 				else {
