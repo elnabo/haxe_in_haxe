@@ -26,7 +26,7 @@ class AbstractCast {
 			cast_stack.set(List.tl(cast_stack.get()));
 			return r;
 		}
-		function find (a:core.Type.TAbstract, tl:ImmutableList<core.Type.T>, f:Void->{cf:core.Type.TClassField, t:core.Type.T}) : core.Type.TExpr {
+		function find (a:core.Type.TAbstract, tl:core.Type.TParams, f:Void->{cf:core.Type.TClassField, t:core.Type.T}) : core.Type.TExpr {
 			var _tmp = f();
 			var tcf = _tmp.t; var cf = _tmp.cf;
 			return
@@ -59,7 +59,7 @@ class AbstractCast {
 							find(a, tl, function () { return core.Abstract.find_from(a, tl, eright.etype, tleft); });
 						}
 						catch (_:ocaml.Not_found) {
-							function loop2(tcl:ImmutableList<core.Type.T>) {
+							function loop2(tcl:core.Type.TParams) {
 								return switch (tcl) {
 									case tc::tcl:
 										if (!core.Type.type_iseq(tc, tleft)) {
@@ -79,7 +79,7 @@ class AbstractCast {
 						}
 						catch (_:ocaml.Not_found) {
 							function loop2(tcl) {
-								return switch (tcl:ImmutableList<core.Type.T>) {
+								return switch (tcl:core.Type.TParams) {
 									case tc::tcl:
 										if (!core.Type.type_iseq(tc, tright)) {
 											loop(tleft, core.Type.apply_params(a.a_params, tl, tc));

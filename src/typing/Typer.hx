@@ -48,7 +48,7 @@ enum Type_class {
 	KDyn;
 	KOther;
 	KParam(t:core.Type.T);
-	KAbstract(a:core.Type.TAbstract, tl:ImmutableList<core.Type.T>);
+	KAbstract(a:core.Type.TAbstract, tl:core.Type.TParams);
 }
 
 enum State {
@@ -128,9 +128,9 @@ class Typer {
 		}
 	}
 
-	public static function get_abstract_froms (a:core.Type.TAbstract, pl:core.Type.TParams) : ImmutableList<core.Type.T> {
+	public static function get_abstract_froms (a:core.Type.TAbstract, pl:core.Type.TParams) : core.Type.TParams {
 		var l = List.map(core.Type.apply_params.bind(a.a_params, pl), a.a_from);
-		return List.fold_left(function (acc:ImmutableList<core.Type.T>, other:{t:core.Type.T, cf:core.Type.TClassField}) {
+		return List.fold_left(function (acc:core.Type.TParams, other:{t:core.Type.T, cf:core.Type.TClassField}) {
 			var t = other.t; var f = other.cf;
 			return switch (core.Type.follow(core.Type.field_type(f))) {
 				case TFun({args:[{t:v}], ret:t}):
@@ -187,22 +187,27 @@ class Typer {
 		}
 	}
 
-	public static function check_constraints (ctx:context.Typecore.Typer, tname:String, tpl:core.Type.TypeParams, tl:ImmutableList<core.Type.T>, map:core.Type.T->core.Type.T, delayed:Bool, p:core.Globals.Pos) : Void {
+	public static function is_pos_infos (t:core.Type.T) : Bool {
+		trace("TODO: is_pos_infos");
+		throw false;
+	}
+
+	public static function check_constraints (ctx:context.Typecore.Typer, tname:String, tpl:core.Type.TypeParams, tl:core.Type.TParams, map:core.Type.T->core.Type.T, delayed:Bool, p:core.Globals.Pos) : Void {
 		trace("TODO: check_constraints");
 		throw false;
 	}
 
-	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:ImmutableList<core.Type.T>, tl_ef:ImmutableList<core.Type.T>, p:core.Globals.Pos) : core.Type.T {
+	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:core.Type.TParams, tl_ef:core.Type.TParams, p:core.Globals.Pos) : core.Type.T {
 		trace("TODO: enum_field_type");
 		throw false;
 	}
 
-	public static function add_constraint_check (ctx:context.Typecore.Typer, ctypes:core.Type.TypeParams, pl:ImmutableList<core.Type.T>, f:core.Type.TClassField, tl:ImmutableList<core.Type.T>, p:core.Globals.Pos) : Void{
+	public static function add_constraint_check (ctx:context.Typecore.Typer, ctypes:core.Type.TypeParams, pl:core.Type.TParams, f:core.Type.TClassField, tl:core.Type.TParams, p:core.Globals.Pos) : Void{
 		trace("TODO: add_constraint_check");
 		throw false;
 	}
 
-	public static function field_type (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:ImmutableList<core.Type.T>, f:core.Type.TClassField, p:core.Globals.Pos) : core.Type.T {
+	public static function field_type (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:core.Type.TParams, f:core.Type.TClassField, p:core.Globals.Pos) : core.Type.T {
 		return switch (f.cf_params) {
 			case []: f.cf_type;
 			case l:
@@ -214,7 +219,7 @@ class Typer {
 		}
 	}
 
-	public static function class_field (ctx:context.Typecore.Typer, c:core.Type.TClass, tl:ImmutableList<core.Type.T>, name:String, p:core.Globals.Pos) : {fst:Option<{c:core.Type.TClass, params:core.Type.TParams}>, snd:core.Type.T, trd:core.Type.TClassField} {
+	public static function class_field (ctx:context.Typecore.Typer, c:core.Type.TClass, tl:core.Type.TParams, name:String, p:core.Globals.Pos) : {fst:Option<{c:core.Type.TClass, params:core.Type.TParams}>, snd:core.Type.T, trd:core.Type.TClassField} {
 		return core.Type.raw_class_field(function (f) { return field_type(ctx, c, tl, f, p); }, c, tl, name);
 	}
 	// ----------------------------------------------------------------------
@@ -249,10 +254,113 @@ class Typer {
 		}
 	}
 
-	public static function unify_call_args_ (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, r:core.Type.T, p:core.Globals.Pos, inline_:Bool, force_inline:Bool) : {fst:ImmutableList<{fst:core.Type.TExpr, snd:Bool}>, snd:core.Type.T} {
-		trace("TODO: unify_call_args_");
-		throw false;
+	public static function unify_call_args_ (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, r:core.Type.T, callp:core.Globals.Pos, inline_:Bool, force_inline:Bool) : {fst:ImmutableList<{fst:core.Type.TExpr, snd:Bool}>, snd:core.Type.T} {
+		var in_call_args = ctx.in_call_args;
+		ctx.in_call_args = true;
+		function call_error (err:core.Error.CallError, p:core.Globals.Pos) : Dynamic {
+			throw new core.Error(Call_error(err), p);
+		}
+		function arg_error (ul:core.Error.ErrorMsg, name:String, opt:Bool, p:core.Globals.Pos) : Dynamic {
+			var err:core.Error.ErrorMsg = Stack(ul, Custom("For " + ((opt) ? "optional " : "") + "function argument '" + name + "'"));
+			return call_error(Could_not_unify(err), p);
+		}
+		function mk_pos_infos (t:core.Type.T) : core.Type.TExpr {
+			var infos = mk_infos(ctx, callp, []);
+			return type_expr(ctx, infos, WithType(t));
+		}
+		function default_value (name:String, t:core.Type.T) : core.Type.TExpr {
+			return (is_pos_infos(t)) ? mk_pos_infos(t) : core.Type.null_(ctx.t.tnull(t), callp);
+		}
+		var skipped = new Ref<ImmutableList<{fst:String, snd:core.Error.ErrorMsg, trd:core.Globals.Pos}>>([]);
+		var invalid_skips = new Ref<ImmutableList<String>>([]);
+		function skip (name:String, ul:core.Error.ErrorMsg, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+			if (!ctx.com.config.pf_can_skip_non_nullable_argument && !core.Type.is_nullable(t)) {
+				invalid_skips.set(name::invalid_skips.get());
+			}
+			skipped.set({fst:name, snd:ul, trd:p} :: skipped.get());
+			return default_value(name, t);
+		}
+		// let force_inline, is_extern = match cf with Some(TInst(c,_),f) -> is_forced_inline (Some c) f, c.cl_extern | _ -> false, false in
+		function type_against (t:core.Type.T, e:core.Ast.Expr) : core.Type.TExpr {
+			try {
+				var e = type_expr(ctx, e, WithType(t));
+				return context.typecore.AbstractCast.cast_or_unify_raise(ctx, t, e, e.epos);
+			}
+			catch (exc:core.Error) {
+				var l = exc.msg; var p = exc.pos;
+				if (!l.match(Call_error(_)|Module_not_found(_))) {
+					throw new context.Typecore.WithTypeError(l, p);
+				}
+				else {
+					throw exc;
+				}
+			}
+		}
+		function loop (el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>) :ImmutableList<{fst:core.Type.TExpr, snd:Bool}> {
+			return switch [el, args] {
+				case [[], []]:
+					switch (List.rev(invalid_skips.get())) {
+						case []:
+						case name::_: call_error(Cannot_skip_non_nullable(name), callp);
+					}
+					[];
+				case [_, [{name:name, opt:false, t:t}]] if (core.Type.follow(t).match(TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, _))):
+					switch (core.Type.follow(t)) {
+						case TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, [t]):
+							try {
+								List.map(function (e:core.Ast.Expr): {fst:core.Type.TExpr, snd:Bool} { return {fst:type_against(t, e), snd:false};}, el);
+							}
+							catch (exc:context.Typecore.WithTypeError) {
+								var ul = exc.m; var p = exc.pos;
+								arg_error(ul, name, false, p);
+							}
+						case _: trace("Shall not be seen"); throw false;
+					}
+				case [[], {opt:false}::_]:
+					call_error(Not_enough_arguments(args), callp);
+				case [[], {name:name, opt:true, t:t}::args]:
+					switch (loop([], args)) {
+						case [] if (!(inline_ && (ctx.g.doinline || force_inline)) && !ctx.com.config.pf_pad_nulls):
+							(is_pos_infos(t)) ? [{fst:mk_pos_infos(t), snd:true}] : [];
+						case args:
+					var e_def = default_value(name, t);
+							{fst:e_def, snd:true}::args;
+					}
+				case [{pos:p}::_, []]:
+					switch (List.rev(skipped.get())) {
+						case []: call_error(Too_many_arguments, p);
+						case {fst:s, snd:ul, trd:p}::_: arg_error(ul, s, true, p);
+					}
+				case [e::el, {name:name, opt:opt, t:t}::args]:
+					try {
+						var e = type_against(t, e);
+						{fst:e, snd:opt}::loop(el, args);
+					}
+					catch (exc:context.Typecore.WithTypeError) {
+						var ul = exc.m; var p = exc.pos;
+						if (opt) {
+							var e_def = skip(name, ul, t, p);
+							{fst:e_def, snd:true}:: loop (e::el, args);
+						}
+						else {
+							arg_error(ul, name, false, p);
+						}
+					}
+
+			}
+		}
+		var el = try {
+			loop(el, args);
+		}
+		catch (_:Bool) { trace("Shall not be seen"); throw false; }
+		catch (exc:Any) {
+			ctx.in_call_args = in_call_args;
+			throw exc;
+		}
+		ctx.in_call_args = in_call_args;
+		return {fst:el, snd:TFun({args:args, ret:r})};
 	}
+
 	public static function unify_call_args (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, args:ImmutableList<core.Type.TSignatureArg>, r:core.Type.T, p:core.Globals.Pos, inline_:Bool, force_inline:Bool) : {fst:ImmutableList<core.Type.TExpr>, snd:core.Type.T} {
 		var _tmp = unify_call_args_(ctx, el, args, r, p, inline_, force_inline);
 		var el = _tmp.fst; var tf = _tmp.snd;
@@ -477,14 +585,91 @@ class Typer {
 		return type_module_type(ctx, typing.Typeload.load_type_def(ctx, p, {tpackage:tpath.a, tname:tpath.b, tparams:[], tsub:None}), None, p);
 	}
 
-	public static function make_call (ctx:context.Typecore.Typer, e:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.make_call");
-		throw false;
+	public static function get_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, params:core.Type.TParams, p:core.Globals.Pos) : {t:core.Type.T, cf:core.Type.TClassField} {
+		return switch (c.cl_kind) {
+			case KAbstractImpl(a):
+				var f = try {
+					PMap.find("_new", c.cl_statics);
+				}
+				catch (_:ocaml.Not_found) {
+					core.Error.raise_error(No_constructor(TAbstractDecl(a)), p);
+				}
+				var ct = field_type(ctx, c, params, f, p);
+				{t:core.Type.apply_params(a.a_params, params, ct), cf:f};
+			case _:
+				var _tmp = try {
+					core.Type.get_constructor(function (f) { return field_type(ctx, c, params, f, p); }, c);
+				}
+				catch (_:ocaml.Not_found) {
+					core.Error.raise_error(No_constructor(TClassDecl(c)), p);
+				}
+				var ct = _tmp.t; var f = _tmp.cf;
+				{t:core.Type.apply_params(c.cl_params, params, ct), cf:f};
+		}
 	}
 
-	public static function get_constructor (ctx:context.Typecore.Typer, c:core.Type.TClass, params:core.Type.TParams, p:core.Globals.Pos) : {fst:core.Type.T, snd:core.Type.TClassField} {
-		trace("TODO: typing.Typer.get_constructor");
-		throw false;
+	public static function make_call (ctx:context.Typecore.Typer, e:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		return
+		try {
+			var _tmp = switch (e.eexpr) {
+				case TField(ethis, fa):
+					var _tmp = switch (fa) {
+						case FInstance(c, _, cf), FStatic(c, cf): {fst:Some(c), snd:cf};
+						case FAnon(cf): {fst:None, snd:cf};
+						case _: throw  ocaml.Exit.instance;
+					}
+					var co = _tmp.fst; var cf = _tmp.snd;
+					{fst:ethis, snd:co, trd:cf};
+				case _: throw ocaml.Exit.instance;
+			}
+			var ethis = _tmp.fst; var cl = _tmp.snd; var f = _tmp.trd;
+			if (!f.cf_kind.match(Method(MethInline))) { throw ocaml.Exit.instance; }
+			var config = switch (cl) {
+				case Some({cl_kind:KAbstractImpl(_)}) if (core.Meta.has(Impl, f.cf_meta)):
+					var t = if (f.cf_name == "_new") {
+						t;
+					}
+					else if (params == []) {
+						core.Error.error("Invalid abstract implementation function", f.cf_pos);
+					}
+					else {
+						core.Type.follow(List.hd(params).etype);
+					}
+					switch (t) {
+						case TAbstract(a, pl):
+							var has_params = a.a_params != [] && f.cf_params != [];
+							var monos = List.map(function (_) { return core.Type.mk_mono(); }, f.cf_params);
+							function map_type (t:core.Type.T) : core.Type.T {
+								return core.Type.apply_params(a.a_params, pl, core.Type.apply_params(f.cf_params, monos, t));
+							}
+							Some({fst:has_params, snd:map_type});
+						case _: None;
+					}
+				case _: None;
+			}
+			core.Type.follow(f.cf_type); // force evaluation
+			var params = List.map(ctx.g.do_optimize.bind(ctx), params);
+			var force_inline = is_forced_inline(cl, f);
+			switch [f.cf_expr_unoptimized, f.cf_expr] {
+				case [Some(fd), _], [None, Some({eexpr:TFunction(fd)})]:
+					switch (optimization.Optimizer.type_inline(ctx, f, fd, ethis, params, t, config, p, false, force_inline)) {
+						case None:
+							if (force_inline) { core.Error.error("Inline could not be done", p); }
+							throw ocaml.Exit.instance;
+						case Some(e): e;
+					}
+				case _:
+					/*
+						we can't inline because there is most likely a loop in the typing.
+						this can be caused by mutually recursive vars/functions, some of them
+						being inlined or not. In that case simply ignore inlining.
+					*/
+					throw ocaml.Exit.instance;
+			}
+		}
+		catch (_:ocaml.Exit) {
+			core.Type.mk(TCall(e, params), t, p);
+		}
 	}
 
 	public static function mk_array_get_call(ctx:context.Typecore.Typer, other: {cf:core.Type.TClassField, tf:core.Type.T, r:core.Type.T, e1:core.Type.TExpr, e2o:Option<core.Type.TExpr>}, c, ebase, p:core.Globals.Pos) : core.Type.TExpr {
@@ -1194,7 +1379,7 @@ class Typer {
 								// if we have an abstract constraint we have to check its static fields and recurse (issue #2343)
 								switch (c.cl_kind) {
 									case KTypeParameter(tl):
-										function loop (tl:ImmutableList<core.Type.T>) {
+										function loop (tl:core.Type.TParams) {
 											return switch (tl) {
 												case t::tl:
 													switch (core.Type.follow(t)) {
@@ -1843,7 +2028,7 @@ class Typer {
 				case OpAssign, OpAssignOp(_): trace("Shall not be seen"); throw false;
 			}
 		}
-		function find_overload(a:core.Type.TAbstract, c, tl:ImmutableList<core.Type.T>, left) {
+		function find_overload(a:core.Type.TAbstract, c, tl:core.Type.TParams, left) {
 			var map = core.Type.apply_params.bind(a.a_params, tl);
 			function make_(op_cf, cf:core.Type.TClassField, e1:core.Type.TExpr, e2:core.Type.TExpr, tret:core.Type.T) {
 				return if (cf.cf_expr == None) {
@@ -2363,7 +2548,7 @@ class Typer {
 						if (mode == MCall) { core.Error.error("Cannot call constructor like this, use 'new " + core.Globals.s_type_path(c.cl_path) + "()' instead", p); }
 						var monos = List.map(function (_) { return core.Type.mk_mono(); }, c.cl_params);
 						var _tmp = get_constructor(ctx, c, monos, p);
-						var ct = _tmp.fst; var cf = _tmp.snd;
+						var ct = _tmp.t; var cf = _tmp.cf;
 						var args = switch (core.Type.follow(ct)) {
 							case TFun({args:args, ret:ret}): args;
 							case _: trace("Shall not be seen"); throw false;
@@ -2522,14 +2707,223 @@ class Typer {
 		throw false;
 	}
 
-	public static function type_new (ctx:context.Typecore.Typer, t:core.Ast.PlacedTypePath, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_try");
-		throw false;
+	public static function type_new (ctx:context.Typecore.Typer, path:core.Ast.PlacedTypePath, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
+		function unify_constructor_call (c:core.Type.TClass, params:core.Type.TParams, f:core.Type.TClassField, ct:core.Type.T) : ImmutableList<core.Type.TExpr> {
+			return switch (core.Type.follow(ct)) {
+				case TFun({args:args, ret:r}):
+					try {
+						var el = unify_field_call(ctx, FInstance(c, params, f), el, args, r, p, false).fst;
+						el;
+					}
+					catch (exc:core.Error) {
+						var e = exc.msg; var p = exc.pos;
+						context.Typecore.display_error(ctx, core.Error.error_msg(e), p);
+						Tl; // []
+					}
+				case _: core.Error.error("Constructor is not a function", p);
+			}
+		}
+		var t = if (path.tp.tparams != []) {
+			core.Type.follow(typing.Typeload.load_instance(ctx, path, false, p));
+		}
+		else {
+			try {
+				ctx.call_argument_stack = el :: ctx.call_argument_stack;
+				var t = core.Type.follow(typing.Typeload.load_instance(ctx, path, true, p));
+				ctx.call_argument_stack = List.tl(ctx.call_argument_stack);
+				// Try to properly build @:generic classes here (issue #2016)
+				switch (t) {
+					case TInst(c={cl_kind:KGeneric}, tl):
+						core.Type.follow(typing.Typeload.build_generic(ctx, c, p, tl));
+					case _: t;
+				}
+			}
+			catch (_:typing.Typeload.GenericException) {
+				// Try to infer generic parameters from the argument list (issue #2044)
+				switch (core.Type.resolve_typedef(typing.Typeload.load_type_def(ctx, p, path.tp))) {
+					case TClassDecl(c={cl_constructor:Some(cf)}):
+						var monos = List.map(function (_) { return core.Type.mk_mono(); }, c.cl_params);
+						var _tmp = get_constructor(ctx, c, monos, p);
+						var ct = _tmp.t; var f = _tmp.cf;
+						unify_constructor_call(c, monos, f, ct);
+						try {
+							var t = typing.Typeload.build_generic(ctx, c, p, monos);
+							var map = core.Type.apply_params.bind(c.cl_params, monos);
+							check_constraints(ctx, core.Globals.s_type_path(c.cl_path), c.cl_params, monos, map, true, p);
+							t;
+						}
+						catch (exc:typing.Typeload.GenericException) {
+							switch (with_type) {
+								case WithType(t):
+									switch (core.Type.follow(t)) {
+										case TMono(_): throw exc;
+										case t: t;
+									}
+								case _: throw exc;
+							}
+						}
+					case mt:
+						core.Error.error(core.Globals.s_type_path(core.Type.t_infos(mt).mt_path) + " cannot be constructed", p);
+				}
+			}
+		}
+		context.display.DisplayEmitter.check_display_type(ctx, t, path.pos);
+		function build_constructor_call(c:core.Type.TClass, tl:core.Type.TParams) {
+			var _tmp = get_constructor(ctx, c, tl, p);
+			var ct = _tmp.t; var f = _tmp.cf;
+			if (core.Meta.has(CompilerGenerated, f.cf_meta)) {
+				context.Typecore.display_error(ctx, core.Error.error_msg(No_constructor(TClassDecl(c))), p);
+			}
+			if (!(context.Typecore.can_access(ctx, c, f, true) || core.Type.is_parent(c, ctx.curclass)) && !ctx.untyped_) {
+				context.Typecore.display_error(ctx, "Cannot access private constructor", p);
+			}
+			switch (f.cf_kind) {
+				case Var({v_read:AccRequire(r, msg)}):
+					switch (msg) {
+						case Some(msg): core.Error.error(msg, p);
+						case None: error_require(r, p);
+					}
+				case _:
+			}
+			var el = unify_constructor_call(c, tl, f, ct);
+			return {fst:el, snd:f, trd:ct};
+		}
+		return
+		try {
+			switch (t) {
+				case TInst(c={cl_kind:KTypeParameter(tl)}, params):
+					if (!typing.Typeload.is_generic_parameter(ctx, c)) {
+						core.Error.error("Only generic type parameters can be constructed", p);
+					}
+					var el = List.map(function (e) { return type_expr(ctx, e, Value); }, el);
+					var ct = core.Type.tfun(List.map(function (e) { return e.etype; }, el), ctx.t.tvoid);
+					function loop(t) {
+						return switch (core.Type.follow(t)) {
+							case TAnon(a):
+								try {
+									context.Typecore.unify(ctx, PMap.find("new", a.a_fields).cf_type, ct, p);
+									true;
+								}
+								catch (_:ocaml.Not_found) {
+									false;
+								}
+							case TAbstract({a_path:{a:["haxe"], b:"Constructible"}}, _): true;
+							case TInst({cl_kind:KTypeParameter(tl)}, _): List.exists(loop, tl);
+							case _: false;
+						}
+					}
+					if (!List.exists(loop, tl)) {
+						core.Error.raise_error(No_constructor(TClassDecl(c)), p);
+					}
+					core.Type.mk(TNew(c, params, el), t, p);
+				case TAbstract(a={a_impl:Some(c)}, tl) if (!core.Meta.has(MultiType, a.a_meta)):
+					var _tmp = build_constructor_call(c, tl);
+					var el = _tmp.fst; var cf = _tmp.snd; var ct = _tmp.trd;
+					var ta:core.Type.T = TAnon({a_fields:c.cl_statics, a_status:new Ref<core.Type.AnonStatus>(Statics(c))});
+					var e = core.Type.mk(TTypeExpr(TClassDecl(c)), ta, p);
+					var e = core.Type.mk(TField(e, FStatic(c, cf)), ct, p);
+					make_call(ctx, e, el, t, p);
+				case TInst(c, params), TAbstract({a_impl:Some(c)}, params):
+					var el = build_constructor_call(c, params).fst;
+					core.Type.mk(TNew(c, params, el), t, p);
+				case _:
+					core.Error.error(core.Type.s_type(core.Type.print_context(), t)+ " cannot be constructed", p);
+			}
+		}
+		catch (exc:core.Error) {
+			var err = exc.msg; var p = exc.pos;
+			switch (err) {
+				case No_constructor(_) if (ctx.com.display.dms_display):
+					context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
+					context.display.Diagnostics.secure_generated_code(ctx, core.Type.mk(TConst(TNull), t, p));
+				case _: throw exc;
+			}
+		}
 	}
 
 	public static function type_try (ctx:context.Typecore.Typer, e1:core.Ast.Expr, catches:ImmutableList<core.Ast.Catch>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_try");
-		throw false;
+		var e1 = type_expr(ctx, core.ast.Expr.ensure_block(e1), with_type);
+		function check_unreachable(cases:ImmutableList<{v:core.Type.TVar, e:core.Type.TExpr}>, t:core.Type.T, p:core.Globals.Pos) {
+			return switch (cases) {
+				case {v:v, e:e}::cases:
+					function unreachable () : Void {
+						context.Typecore.display_error(ctx, "This block is unreachable", p);
+						var st = core.Type.s_type.bind(core.Type.print_context());
+						context.Typecore.display_error(ctx, '${st(t)} can be assigned to ${st(v.v_type)}, which is handled here', e.epos);
+					}
+					try {
+						switch [core.Type.follow(t), core.Type.follow(v.v_type)] {
+							case [TDynamic(_), TDynamic(_)]: unreachable();
+							case [TDynamic(_), _]:
+							case _:
+								core.Type.unify(t, v.v_type);
+								unreachable();
+						}
+					}
+					catch (_:core.Type.Unify_error) {
+						check_unreachable(cases, t, p);
+					}
+				case []:
+			}
+		}
+		function check_catch_type (path:core.Path, params:core.Type.TParams) : String {
+			List.iter(function (pt:core.Type.T) {
+				if (pt != core.Type.t_dynamic) {
+					core.Error.error("Catch class parameter must be Dynamic", p);
+				}
+			}, params);
+			return switch (path) {
+				case {a:x::_}: x;
+				case {a:[], b:name}: name;
+			}
+		}
+		var catches = List.fold_left(function (acc:ImmutableList<{v:core.Type.TVar, e:core.Type.TExpr}>, _catch:core.Ast.Catch) {
+			var v = _catch.name.pack; var pv = _catch.name.pos; var t = _catch.type; var e_ast = _catch.expr; var pc = _catch.pos;
+			var t = typing.Typeload.load_complex_type(ctx, true, p, t);
+			function loop (t:core.Type.T) : {fst:String, snd:core.Type.T} {
+				return switch (core.Type.follow(t)) {
+					case TInst(c={cl_kind:KTypeParameter(_)}, _) if (!typing.Typeload.is_generic_parameter(ctx, c)):
+						core.Error.error("Cannot catch non-generic type parameter", p);
+					case TInst({cl_path:path}, params), TEnum({e_path:path}, params):
+						{fst:check_catch_type(path, params), snd:t};
+					case TAbstract(a, params) if (core.Meta.has(RuntimeValue, a.a_meta)):
+						{fst:check_catch_type(a.a_path, params), snd:t};
+					case TAbstract(a, tl) if (!core.Meta.has(CoreType, a.a_meta)):
+						loop(core.Abstract.get_underlying_type(a, tl));
+					case TDynamic(_):
+						{fst:"", snd:t};
+					case _:
+						core.Error.error("Catch type must be a class, an enum or Dynamic", e_ast.pos);
+				}
+			}
+			var _tmp = loop(t);
+			var name = _tmp.fst; var t2 = _tmp.snd;
+			if (v.charAt(0) == "$") {
+				context.Typecore.display_error(ctx, "Catch variable names starting with a dollar are not allowed", p);
+			}
+			check_unreachable(acc, t2, e_ast.pos);
+			var locals = context.Typecore.save_locals(ctx);
+			var v = context.Typecore.add_local(ctx, v, t, pv);
+			if (ctx.is_display_file && context.Display.is_display_position(pv)) {
+				context.display.DisplayEmitter.display_variable(ctx.com.display, v, pv);
+			}
+			var e = type_expr(ctx, e_ast, with_type);
+			/* If the catch position is the display position it means we get completion on the catch keyword or some
+				punctuation. Otherwise we wouldn't reach this point. */
+			if (ctx.is_display_file && context.Display.is_display_position(pc)) {
+				display_expr(ctx, e_ast, e, with_type, pc);
+			}
+			v.v_type = t2;
+			locals();
+			if (with_type != NoValue) {
+				context.Typecore.unify(ctx, e.etype, e1.etype, e.epos);
+			}
+			if (PMap.mem(name, ctx.locals)) {
+				core.Error.error("Local variable "+name+" is preventing usage of this type here", e.epos);
+			}
+			return {v:v, e:e}::acc;
+		}, [], catches);
+		return core.Type.mk(TTry(e1, List.rev(catches)), (with_type == NoValue) ? ctx.t.tvoid : e1.etype ,p);
 	}
 
 	public static function type_local_function (ctx:context.Typecore.Typer, name:Option<String>, f:core.Ast.Func, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -2952,6 +3346,11 @@ class Typer {
 		throw false;
 	}
 
+	public static function display_expr (ctx:context.Typecore.Typer, e_ast:core.Ast.Expr, e:core.Type.TExpr, with_type:context.Typecore.WithType, p:core.Globals.Pos) : Void {
+		trace("TODO: display_expr");
+		throw false;
+	}
+
 	public static function maybe_type_against_enum (ctx:context.Typecore.Typer, f:Void->AccessKind, with_type:context.Typecore.WithType, iscall:Bool, p:core.Globals.Pos) : AccessKind {
 		return try {
 			switch (with_type) {
@@ -3108,7 +3507,7 @@ class Typer {
 					case None: core.Error.error("Current class does not have a super", p);
 					case Some({c:c, params:params}):
 						var _tmp = get_constructor(ctx,c, params, p);
-						var ct = _tmp.fst; var f = _tmp.snd;
+						var ct = _tmp.t; var f = _tmp.cf;
 						if (core.Meta.has(CompilerGenerated, f.cf_meta)) {
 							context.Typecore.display_error(ctx, core.Error.error_msg(No_constructor(TClassDecl(c))), p);
 						}

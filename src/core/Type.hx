@@ -1194,14 +1194,14 @@ class Type {
 		}
 	}
 
-	public static function get_constructor (build_type:TClassField->T, c:TClass) : {fst:T, snd:TClassField} {
-		return switch ({fst:c.cl_constructor, snd:c.cl_super}) {
-			case {fst:Some(c)}: {fst:build_type(c), snd:c};
-			case {fst:None, snd:None}: throw ocaml.Not_found.instance;
-			case {snd:Some({c:csup, params:cparams})}:
+	public static function get_constructor (build_type:TClassField->T, c:TClass) : {t:T, cf:TClassField} {
+		return switch [c.cl_constructor, c.cl_super] {
+			case [Some(c), _]: {t:build_type(c), cf:c};
+			case [None, None]: throw ocaml.Not_found.instance;
+			case [_, Some({c:csup, params:cparams})]:
 				var _tmp = get_constructor(build_type, csup);
-				var t = _tmp.fst; var c = _tmp.snd;
-				{fst:apply_params(csup.cl_params, cparams, t), snd:c}
+				var t = _tmp.t; var c = _tmp.cf;
+				{t:apply_params(csup.cl_params, cparams, t), cf:c}
 		}
 	}
 
@@ -1967,7 +1967,7 @@ class Type {
 		}
 	}
 
-	public static function unify_abstracts (a:core.Type.T, b:core.Type.T, a1:core.Type.TAbstract, tl1:ImmutableList<core.Type.T>, a2:core.Type.TAbstract, tl2:ImmutableList<core.Type.T>) : Void {
+	public static function unify_abstracts (a:core.Type.T, b:core.Type.T, a1:core.Type.TAbstract, tl1:TParams, a2:core.Type.TAbstract, tl2:TParams) : Void {
 		trace("TODO: unify_abstracts");
 		throw false;
 	}
@@ -1977,29 +1977,29 @@ class Type {
 		throw false;
 	}
 
-	public static function unify_from (ab:TAbstract, tl:ImmutableList<core.Type.T>, a:T, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
+	public static function unify_from (ab:TAbstract, tl:TParams, a:T, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
 		trace("TODO: unify_from");
 		throw false;
 	}
 
-	public static function unify_to (ab:TAbstract, tl:ImmutableList<core.Type.T>, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
+	public static function unify_to (ab:TAbstract, tl:TParams, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
 		trace("TODO: unify_to");
 		throw false;
 	}
 
-	public static function unify_from_field (ab:TAbstract, tl:ImmutableList<core.Type.T>, a:T, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
+	public static function unify_from_field (ab:TAbstract, tl:TParams, a:T, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
 		var t = _tmp.t; var cf = _tmp.cf;
 		trace("TODO: unify_from_field");
 		throw false;
 	}
 
-	public static function unify_to_field (ab:TAbstract, tl:ImmutableList<core.Type.T>, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
+	public static function unify_to_field (ab:TAbstract, tl:TParams, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
 		var t = _tmp.t; var cf = _tmp.cf;
 		trace("TODO: unify_to_field");
 		throw false;
 	}
 
-	public static function unify_type_params (a:core.Type.T, b:core.Type.T, tl1:ImmutableList<core.Type.T>, tl2:ImmutableList<core.Type.T>) : Void {
+	public static function unify_type_params (a:core.Type.T, b:core.Type.T, tl1:TParams, tl2:TParams) : Void {
 		trace("TODO: unify_type_params");
 		throw false;
 	}

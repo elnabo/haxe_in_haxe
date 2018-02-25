@@ -18,7 +18,7 @@ class Optimizer {
 	// ----------------------------------------------------------------------
 	// INLINING
 
-	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, tret:core.Type.T, config:Option<Any>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {
+	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, tret:core.Type.T, config:Option<{fst:Bool, snd:core.Type.T->core.Type.T}>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {
 		trace("Optimizer.type_inline");
 		throw false;
 	}

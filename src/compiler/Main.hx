@@ -1196,6 +1196,9 @@ class Main {
 	}
 
 	public static function main () {
+		{
+			context.Typecore.make_call_ref.set(typing.Typer.make_call);
+		}
 		var other = core.Timer.timer(["other"]);
 		typing.MacroContext.setup();
 		var args = std.Sys.args();

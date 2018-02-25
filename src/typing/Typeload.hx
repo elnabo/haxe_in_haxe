@@ -579,11 +579,11 @@ class Typeload {
 		throw context.Display.DisplayException.DisplayPosition([p]);
 	}
 
-	public static function check_param_constraints (ctx:context.Typecore.Typer, types:core.Type.TypeParams, t:core.Type.T, pl:ImmutableList<core.Type.T>, c:core.Type.TClass, p:core.Globals.Pos) {
+	public static function check_param_constraints (ctx:context.Typecore.Typer, types:core.Type.TypeParams, t:core.Type.T, pl:core.Type.TParams, c:core.Type.TClass, p:core.Globals.Pos) {
 		switch (core.Type.follow(t)) {
 			case TMono(_):
 			case _:
-				var ctl:ImmutableList<core.Type.T> = switch (c.cl_kind) {
+				var ctl:core.Type.TParams = switch (c.cl_kind) {
 					case KTypeParameter(l): l;
 					case _: [];
 				}
@@ -672,7 +672,7 @@ class Typeload {
 			var types = _tmp.types; var path = _tmp.path; var f = _tmp.f;
 			var is_rest = is_generic_build && (switch (types) {case [{name:"Rest"}]: true; case _:false;});
 			if (allow_no_params && t.tparams == Tl && !is_rest) {
-				var pl = new Ref<ImmutableList<core.Type.T>>([]);
+				var pl = new Ref<core.Type.TParams>([]);
 				pl.set(List.map(function (tp) {
 					var name = tp.name; var t = tp.t;
 					return switch (core.Type.follow(t)) {
@@ -700,7 +700,7 @@ class Typeload {
 				if (!is_rest && ctx.com.display.dms_error_policy != EPIgnore && List.length(types) != List.length(t.tparams)) {
 					core.Error.error ("Invalid number of type parameters for " + core.Globals.s_type_path(path), p);
 				}
-				var tparams:ImmutableList<core.Type.T> = List.map(function (t:core.Ast.TypeParamOrConst) : core.Type.T {
+				var tparams:core.Type.TParams = List.map(function (t:core.Ast.TypeParamOrConst) : core.Type.T {
 					return switch (t) {
 						case TPExpr(e):
 							var name = switch (e.expr) {
@@ -715,7 +715,7 @@ class Typeload {
 						case TPType(t): load_complex_type(ctx, true, p, t);
 					}
 				}, t.tparams);
-				function loop(tl1:ImmutableList<core.Type.T>, tl2:core.Type.TypeParams, is_rest:Bool) : ImmutableList<core.Type.T>{
+				function loop(tl1:core.Type.TParams, tl2:core.Type.TypeParams, is_rest:Bool) : core.Type.TParams{
 					return switch ({fst:tl1, snd:tl2}) {
 						case {fst:t::tl1, snd:{name:name, t:t2}::tl2}:
 							function check_const(c) {
@@ -1611,7 +1611,7 @@ class Typeload {
 				case None: None;
 				case Some({c:csup, params:tl}):
 					try {
-						var cf = core.Type.get_constructor(function (f) { return f.cf_type; }, csup).snd;
+						var cf = core.Type.get_constructor(function (f) { return f.cf_type; }, csup).cf;
 						Some({fst:core.Meta.has(CompilerGenerated, cf.cf_meta), snd:TInst(csup,tl)});
 					}
 					catch (_:ocaml.Not_found) {
@@ -3149,8 +3149,8 @@ class Typeload {
 
 	// type generic_context = { ...
 
-	public static function make_generic (ctx:context.Typecore.Typer, ps:core.Type.TypeParams, pt:ImmutableList<core.Type.T>, p:core.Globals.Pos) : Generic_context {
-		function loop (l1:core.Type.TypeParams, l2:ImmutableList<core.Type.T>) : ImmutableList<{fst:core.Type.T, snd:core.Type.T}>{
+	public static function make_generic (ctx:context.Typecore.Typer, ps:core.Type.TypeParams, pt:core.Type.TParams, p:core.Globals.Pos) : Generic_context {
+		function loop (l1:core.Type.TypeParams, l2:core.Type.TParams) : ImmutableList<{fst:core.Type.T, snd:core.Type.T}>{
 			return switch ({f:l1, s:l2}) {
 				case {f:[], s:[]}: [];
 				case {f:{name:x, t:TLazy(f)}::l1}: loop({name:x, t:core.Type.lazy_type(f)}::l1, l2);
@@ -3166,7 +3166,7 @@ class Typeload {
 					case _: List.join("_", p) + "_" + s;
 				}
 			}
-			var loop_tl : ImmutableList<core.Type.T>->String = null;
+			var loop_tl : core.Type.TParams->String = null;
 			function loop (top, t) {
 				return switch (core.Type.follow(t)) {
 					case TInst(c, tl): s_type_path_underscore(c.cl_path) + loop_tl(tl);
@@ -3282,7 +3282,7 @@ class Typeload {
 		}
 	}
 
-	public static function build_generic (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, tl:ImmutableList<core.Type.T>) : core.Type.T {
+	public static function build_generic (ctx:context.Typecore.Typer, c:core.Type.TClass, p:core.Globals.Pos, tl:core.Type.TParams) : core.Type.T {
 		var pack = c.cl_path.a;
 		var recurse = new Ref(false);
 		function check_recursive(t) {
@@ -3333,8 +3333,8 @@ class Typeload {
 						core.Type.add_dependency(mg, m);
 						core.Type.add_dependency(ctx.m.curmod, mg);
 						// ensure that type parameters are set in dependencies
-						var dep_stack = new Ref<ImmutableList<core.Type.T>>([]);
-						var add_dep : core.Type.ModuleDef->ImmutableList<core.Type.T>->Void = null;
+						var dep_stack = new Ref<core.Type.TParams>([]);
+						var add_dep : core.Type.ModuleDef->core.Type.TParams->Void = null;
 						function loop (t:core.Type.T) {
 							if (!List.memq(t, dep_stack.get())) {
 								dep_stack.set(t::dep_stack.get());
@@ -3533,7 +3533,7 @@ class Typeload {
 		}
 	}
 
-	public static function build_macro_type (ctx:context.Typecore.Typer, pl:ImmutableList<core.Type.T>, p:core.Globals.Pos) : core.Type.T {
+	public static function build_macro_type (ctx:context.Typecore.Typer, pl:core.Type.TParams, p:core.Globals.Pos) : core.Type.T {
 		var _tmp = switch (pl) {
 			case [TInst({cl_kind:KExpr({expr:ECall(e, args)})}, _)],
 				[TInst({cl_kind:KExpr({expr:EArrayDecl([{expr:ECall(e, args)}])})}, _)]:
@@ -3551,7 +3551,7 @@ class Typeload {
 		return t;
 	}
 
-	public static function build_macro_build (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:ImmutableList<core.Type.T>, cfl:ImmutableList<core.Ast.ClassField>, p:core.Globals.Pos) : core.Type.T {
+	public static function build_macro_build (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:core.Type.TParams, cfl:ImmutableList<core.Ast.ClassField>, p:core.Globals.Pos) : core.Type.T {
 		var _tmp = switch(core.Meta.get(GenericBuild, c.cl_meta)) {
 			case {params:[{expr:ECall(e, args)}]}:
 				get_macro_path(ctx, e, args, p);
@@ -3575,7 +3575,7 @@ class Typeload {
 	// --------------------------------------------------------------------------
 	// API EVENTS
 
-	public static function build_instance (ctx:context.Typecore.Typer, mtype:core.Type.ModuleType, p:core.Globals.Pos) : {types:core.Type.TypeParams, path:core.Path, f:ImmutableList<core.Type.T>->core.Type.T} {
+	public static function build_instance (ctx:context.Typecore.Typer, mtype:core.Type.ModuleType, p:core.Globals.Pos) : {types:core.Type.TypeParams, path:core.Path, f:core.Type.TParams->core.Type.T} {
 		return switch (mtype) {
 			case TClassDecl(c):
 				if (EnumValueTools.getIndex(ctx.pass) > EnumValueTools.getIndex(context.Typecore.TyperPass.PBuildClass)) {
@@ -3595,7 +3595,7 @@ class Typeload {
 					}, s);
 					return TLazy(r);
 				}
-				var ft = function (pl:ImmutableList<core.Type.T>) : core.Type.T {
+				var ft = function (pl:core.Type.TParams) : core.Type.T {
 					return switch (c.cl_kind) {
 						case KGeneric: build(function() { return build_generic(ctx, c, p, pl); }, "build_generic");
 						case KMacroType: build(function() { return build_macro_type(ctx, pl, p); }, "macro_type");

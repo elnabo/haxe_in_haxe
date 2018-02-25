@@ -92,7 +92,7 @@ class TyperGlobals {
 	public var type_patches : Map<core.Path, {map:Map<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>;
 	public var global_metadata : ImmutableList<{l:ImmutableList<String>, me:core.Ast.MetadataEntry, bs:{a:Bool, b:Bool, c:Bool}}>;
 	public var module_check_policies : ImmutableList<{l:ImmutableList<String>, mcps:ImmutableList<core.Type.ModuleCheckPolicy>, b:Bool}>;
-	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:ImmutableList<core.Type.T>, cfs: ImmutableList<core.Ast.ClassField>}>;
+	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:core.Type.TParams, cfs: ImmutableList<core.Ast.ClassField>}>;
 	public var delayed_macros : DynArray<Void->Void>;
 	public var global_using : ImmutableList<{tc:core.Type.TClass, pos:core.Globals.Pos}>;
 	// api
@@ -101,8 +101,8 @@ class TyperGlobals {
 	public var do_macro : Typer->MacroMode->core.Path->String->ImmutableList<core.Ast.Expr>->core.Globals.Pos->Option<core.Ast.Expr>;
 	public var do_load_module : Typer->core.Path->core.Globals.Pos->core.Type.ModuleDef;
 	public var do_optimize : Typer->core.Type.TExpr->core.Type.TExpr;
-	// do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:ImmutableList<{s:String, t:core.Type.T}>, path:core.Path, f:ImmutableList<core.Type.T>->core.Type.T};
-	public var do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:core.Type.TypeParams, path:core.Path, f:ImmutableList<core.Type.T>->core.Type.T};
+	// do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:ImmutableList<{s:String, t:core.Type.T}>, path:core.Path, f:core.Type.TParams->core.Type.T};
+	public var do_build_instance : Typer->core.Type.ModuleType->core.Globals.Pos->{types:core.Type.TypeParams, path:core.Path, f:core.Type.TParams->core.Type.T};
 	public var do_format_string : Typer->String->core.Globals.Pos->core.Ast.Expr;
 	public var do_finalize : Typer->Void;
 	public var do_generate : Typer->{main:Option<core.Type.TExpr>, types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>};
@@ -148,15 +148,14 @@ class Typecore {
 	public static var make_call_ref = new Ref<Typer -> core.Type.TExpr -> ImmutableList<core.Type.TExpr> -> core.Type.T -> core.Globals.Pos -> core.Type.TExpr>(function (_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var match_expr_ref = new Ref(typing.matcher.Match.match_expr);
-	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(function (_, _, _, _) { trace("Shall not be seen"); throw false; });
+	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(context.typecore.AbstractCast.cast_or_unify_raise);
 	public static var analyser_run_on_expr_ref = new Ref<context.Common.Context-> core.Type.TExpr -> core.Type.TExpr>(function (_, _) { trace("Shall not be seen"); throw false; });
 
-	public static function display_error (ctx:Typer, msg:String, p:core.Globals.Pos) : Dynamic {
+	public static function display_error (ctx:Typer, msg:String, p:core.Globals.Pos) : Void {
 		switch (ctx.com.display.dms_error_policy) {
 			case EPShow, EPIgnore: ctx.on_error(ctx, msg, p);
 			case EPCollect: context.Common.add_diagnostics_message(ctx.com, msg, p, Error);
 		}
-		trace("Shall not be seen"); throw false; // for return type dynamic
 	}
 
 	public static function make_call (ctx:Typer, e:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
