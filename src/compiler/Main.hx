@@ -1198,6 +1198,7 @@ class Main {
 	public static function main () {
 		{
 			context.Typecore.make_call_ref.set(typing.Typer.make_call);
+			context.Typecore.match_expr_ref.set(typing.matcher.Match.match_expr);
 		}
 		var other = core.Timer.timer(["other"]);
 		typing.MacroContext.setup();

@@ -193,8 +193,39 @@ class Typer {
 	}
 
 	public static function check_constraints (ctx:context.Typecore.Typer, tname:String, tpl:core.Type.TypeParams, tl:core.Type.TParams, map:core.Type.T->core.Type.T, delayed:Bool, p:core.Globals.Pos) : Void {
-		trace("TODO: check_constraints");
-		throw false;
+		List.iter2(function (m, other) {
+			var name = other.name; var t = other.t;
+			switch (core.Type.follow(t)) {
+				case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr != []):
+					var f = function () {
+						List.iter(function(ct) {
+							try {
+								core.Type.unify(map(m), map(ct));
+							}
+							catch (ue:core.Type.Unify_error) {
+								var l = ue.l;
+								var l = core.Type.UnifyError.Constraint_failure(tname+"."+name)::l;
+								throw new core.Type.Unify_error(l);
+							}
+						}, constr);
+					}
+					if (delayed) {
+						context.Typecore.delay(ctx, PCheckConstraint, function () {
+							try {
+								f();
+							}
+							catch (ue:core.Type.Unify_error) {
+								var l = ue.l;
+								context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+							}
+						});
+					}
+					else {
+						f();
+					}
+				case _:
+			}
+		}, tl, tpl);
 	}
 
 	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:core.Type.TParams, tl_ef:core.Type.TParams, p:core.Globals.Pos) : core.Type.T {

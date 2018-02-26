@@ -60,8 +60,51 @@ class Abstract {
 	public static var underlying_type_stack = new Ref<core.Type.TParams>([]);
 
 	public static function get_underlying_type (a:core.Type.TAbstract, pl:core.Type.TParams) : core.Type.T {
-		trace("TODO: core.Abstract.get_underlying_type");
-		throw false;
+		function maybe_recurse (t:core.Type.T) {
+			underlying_type_stack.set(core.Type.T.TAbstract(a, pl)::underlying_type_stack.get());
+			function loop (t:core.Type.T) : core.Type.T {
+				return switch(t) {
+					case TMono(r):
+						switch (r.get()) {
+							case Some(t): loop(t);
+							case _: t;
+						}
+					case TLazy(f):
+						loop(core.Type.lazy_type(f));
+					case TAbstract(a={a_path:{a:[], b:"Null"}}, [t1]):
+						TAbstract(a, [loop(t1)]);
+					case TType(t, tl):
+						loop(core.Type.apply_params(t.t_params, tl, t.t_type));
+					case TAbstract(a, tl) if (!core.Meta.has(CoreType, a.a_meta)):
+						if (List.exists(core.Type.fast_eq.bind(t), underlying_type_stack.get())) {
+							var pctx = core.Type.print_context();
+							var s = List.join("->", List.map(function (t) {  return core.Type.s_type(pctx, t); }, List.rev(t::underlying_type_stack.get())));
+							underlying_type_stack.set([]);
+							core.Error.error("Abstract chain detected: "+s, a.a_pos);
+						}
+						get_underlying_type(a, tl);
+					case _: t;
+				}
+			}
+			var t = loop(t);
+			underlying_type_stack.set(List.tl(underlying_type_stack.get()));
+			return t;
+		}
+		return
+		try {
+			if (!core.Meta.has(MultiType, a.a_meta)) { throw ocaml.Not_found.instance; }
+			var m = core.Type.mk_mono();
+			find_to(a, pl, m);
+			maybe_recurse(core.Type.follow(m));
+		}
+		catch (_:ocaml.Not_found) {
+			if (core.Meta.has(CoreType, a.a_meta)) {
+				core.Type.t_dynamic;
+			}
+			else {
+				maybe_recurse(core.Type.apply_params(a.a_params, pl, a.a_this));
+			}
+		}
 	}
 
 	public static function follow_with_abstracts (t:core.Type.T) : core.Type.T {

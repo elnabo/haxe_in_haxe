@@ -10,6 +10,17 @@ enum Fpclass {
 
 class FloatUtils {
 
+	public static final min_int32:Float = -2147483648;
+	public static final max_int32:Float = 2147483647;
+
+	public static function float_of_string (f:String) : Float {
+		var _f = Std.parseFloat(f);
+		if (_f == null) {
+			throw new Failure("float_of_string");
+		}
+		return _f;
+	}
+
 	public static function classify_float(f:Float) : Fpclass {
 		if (Math.isNaN(f)) { return FP_nan; }
 		if (!Math.isFinite(f)) { return FP_infinite; }

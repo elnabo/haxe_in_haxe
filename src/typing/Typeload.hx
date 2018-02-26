@@ -3422,7 +3422,8 @@ class Typeload {
 							var r = context.Typecore.exc_protect(ctx, function (r) {
 								var t = core.Type.mk_mono();
 								r.set(core.Type.lazy_processing(function() { return t;}));
-								return context.Typecore.unify_raise(ctx, f(), t, p);
+								context.Typecore.unify_raise(ctx, f(), t, p);
+								return t;
 							}, "build_generic");
 							cf_new.cf_type = TLazy(r);
 							return cf_new;

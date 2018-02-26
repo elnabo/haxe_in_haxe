@@ -1,8 +1,19 @@
 package core;
 
+import haxe.ds.ImmutableList;
+import ocaml.List;
 using equals.Equal;
 
 class Builder {
+	public static function field (e:core.Type.TExpr, name:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		return core.Type.mk(TField(e, try { core.Type.quick_field(e.etype, name); } catch (_:ocaml.Not_found) { throw false; }), t, p);
+	}
+
+	public static function fcall (e:core.Type.TExpr, name:String, el:ImmutableList<core.Type.TExpr>, ret:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		var ft = core.Type.tfun(List.map(function (e:core.Type.TExpr) { return e.etype; }, el), ret);
+		return core.Type.mk(TCall(field(e, name, ft, p), el), ret, p);
+	}
+
 	public static function binop (op:core.Ast.Binop, a:core.Type.TExpr, b:core.Type.TExpr, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
 		return core.Type.mk(TBinop(op, a, b), t, p);
 	}

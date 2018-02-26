@@ -147,7 +147,7 @@ typedef Typer = {
 class Typecore {
 	public static var make_call_ref = new Ref<Typer -> core.Type.TExpr -> ImmutableList<core.Type.TExpr> -> core.Type.T -> core.Globals.Pos -> core.Type.TExpr>(function (_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { trace("Shall not be seen"); throw false; });
-	public static var match_expr_ref = new Ref(typing.matcher.Match.match_expr);
+	public static var match_expr_ref = new Ref<(context.Typecore.Typer, core.Ast.Expr, ImmutableList<core.Ast.Case>, Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>,context.Typecore.WithType,core.Globals.Pos)->core.Type.TExpr>(function(_,_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(context.typecore.AbstractCast.cast_or_unify_raise);
 	public static var analyser_run_on_expr_ref = new Ref<context.Common.Context-> core.Type.TExpr -> core.Type.TExpr>(function (_, _) { trace("Shall not be seen"); throw false; });
 
@@ -219,7 +219,7 @@ class Typecore {
 		}
 	}
 
-	public static function unify_raise (ctx:Typer, t1:core.Type.T, t2:core.Type.T, p:core.Globals.Pos) : Dynamic {
+	public static function unify_raise (ctx:Typer, t1:core.Type.T, t2:core.Type.T, p:core.Globals.Pos) : Void {
 		try {
 			core.Type.unify(t1, t2);
 		}
@@ -227,7 +227,6 @@ class Typecore {
 			// no untyped check
 			throw new core.Error(Unify(err.l),p);
 		}
-		trace("Shall not be seen"); throw false; // for return type dynamic
 	}
 
 	public static function save_locals (ctx:Typer) : Void->Void {

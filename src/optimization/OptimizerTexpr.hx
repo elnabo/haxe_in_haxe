@@ -3,16 +3,161 @@ package optimization;
 import haxe.Int32;
 import haxe.Int64;
 
+import ocaml.Hashtbl;
+import ocaml.List;
+
 using equals.Equal;
 using ocaml.Cloner;
 
+enum T {
+	Pure;
+	Impure;
+	MaybePure;
+	ExpectPure(p:core.Globals.Pos);
+}
+
+class PurityState {
+	public static function get_purity_from_meta (meta:core.Ast.Metadata) : T {
+		return
+		try {
+			switch (core.Meta.get(Pure, meta)) {
+				case {params:[{expr:EConst(CIdent(s)), pos:p}]}:
+					switch (s) {
+						case "true": Pure;
+						case "false": Impure;
+						case "expect": ExpectPure(p);
+						case _: core.Error.error("Unsupported purity value "+s+", expected true or false", p);
+					}
+				case {params:[]}:
+					Pure;
+				case {pos:p}:
+					core.Error.error("Unsupported purity value", p);
+			}
+		}
+		catch (_:ocaml.Not_found) {
+			MaybePure;
+		}
+	}
+	public static function get_purity (c:core.Type.TClass, cf:core.Type.TClassField) : T {
+		return switch (get_purity_from_meta(cf.cf_meta)) {
+			case Pure: Pure;
+			case Impure: Impure;
+			case ExpectPure(p): ExpectPure(p);
+			case _: get_purity_from_meta(c.cl_meta);
+		}
+	}
+	public static inline function is_pure(c:core.Type.TClass, cf:core.Type.TClassField) : Bool {
+		return get_purity(c, cf) == Pure;
+	}
+
+	public static function is_pure_field_access (fa:core.Type.TFieldAccess) : Bool {
+		return switch (fa) {
+			case FInstance(c, _, cf), FClosure(Some({c:c}), cf), FStatic(c, cf): is_pure(c, cf);
+			case FAnon(cf), FClosure(None,cf): get_purity_from_meta(cf.cf_meta) == Pure;
+			case FEnum(_): true;
+			case FDynamic(_): false;
+		}
+	}
+
+	public static function to_string (t:T) : String {
+		return switch (t) {
+			case Pure: "pure";
+			case Impure: "impure";
+			case MaybePure: "maybe";
+			case ExpectPure(_): "expect";
+		}
+	}
+}
+
 class OptimizerTexpr {
 
-	// module PurityState
-
+	/* tells if an expression causes side effects. This does not account for potential null accesses (fields/arrays/ops) */
 	public static function has_side_effect(e:core.Type.TExpr) : Bool {
-		trace("TODO: OptimizerTexpr.has_side_effect");
-		throw false;
+		function loop (e:core.Type.TExpr) : Void {
+			switch (e.eexpr) {
+				case TConst(_), TLocal(_), TTypeExpr(_), TFunction(_), TIdent(_):
+				case TCall({eexpr:TField(e1, fa)}, el) if (PurityState.is_pure_field_access(fa)):
+					loop(e1); List.iter(loop, el);
+				case TNew(c, _, el) if (switch (c.cl_constructor) { case Some(cf) if (PurityState.is_pure(c, cf)): true; case _: false; }):
+					List.iter(loop, el);
+				case TNew(_), TCall(_), TBinop((OpAssignOp(_) | OpAssign),_,_), TUnop((OpIncrement|OpDecrement),_,_): throw ocaml.Exit.instance;
+				case TReturn(_), TBreak, TContinue, TThrow(_), TCast(_,Some(_)): throw ocaml.Exit.instance;
+				case TArray(_), TEnumParameter(_), TEnumIndex(_), TCast(_,None), TBinop(_,_,_), TUnop(_,_,_), TParenthesis(_), TMeta(_,_), TWhile(_,_,_), TFor(_,_,_),
+					 TField(_,_), TIf(_,_,_), TTry(_,_), TSwitch(_,_,_), TArrayDecl(_), TBlock(_), TObjectDecl(_), TVar(_):
+					core.Type.iter(loop, e);
+			}
+		}
+		return
+		try {
+			loop(e); false;
+		}
+		catch (_:ocaml.Exit) {
+			true;
+		}
+	}
+
+	public static function is_exhaustive (e1:core.Type.TExpr) : Bool {
+		return switch (e1.eexpr) {
+			case TMeta({name:Exhaustive},_): true;
+			case TMeta(_, e1), TParenthesis(e1): is_exhaustive(e1);
+			case _: false;
+		}
+	}
+
+	public static function is_read_only_field_access (e:core.Type.TExpr, fa:core.Type.TFieldAccess) : Bool {
+		return switch (fa) {
+			case FEnum(_): true;
+			case FDynamic(_): false;
+			case FAnon({cf_kind:Var({v_write:AccNo})}) if (e.eexpr.match(TIdent(_))): true;
+			case FInstance(c, _, cf), FStatic(c, cf), FClosure(Some({c:c, params:_}), cf):
+				switch (cf.cf_kind) {
+					case Method(MethDynamic): false;
+					case Method(_): true;
+					case Var({v_write:AccNever}) if (!c.cl_interface): true;
+					case _: false;
+				}
+			case FAnon(cf), FClosure(None, cf):
+				switch (cf.cf_kind) {
+					case Method(MethDynamic): false;
+					case Method(_): true;
+					case _: false;
+				}
+		}
+	}
+
+	public static function create_affection_checker () : {fst:core.Type.TExpr->Bool, snd:core.Type.TExpr->Void} {
+		var modified_locals = new Map<Int,Bool>();
+		function might_be_affected (e:core.Type.TExpr) : Bool {
+			function loop (e:core.Type.TExpr) : Void {
+				return switch (e.eexpr) {
+					case TConst(_), TFunction(_), TTypeExpr(_):
+					case TLocal(v) if (Hashtbl.mem(modified_locals,v.v_id)): throw ocaml.Exit.instance;
+					case TField(e1, fa) if (!is_read_only_field_access(e1, fa)): throw ocaml.Exit.instance;
+					case TCall(_), TNew(_): throw ocaml.Exit.instance;
+					case _: core.Type.iter(loop, e);
+				}
+			}
+			return
+			try {
+				loop(e);
+				false;
+			}
+			catch (_:ocaml.Exit) {
+				true;
+			}
+		}
+		function collect_modified_locals(e:core.Type.TExpr) : Void {
+			switch(e.eexpr) {
+				case TUnop((OpIncrement|OpDecrement), _, {eexpr:TLocal(v)}):
+					Hashtbl.add(modified_locals, v.v_id, true);
+				case TBinop((OpAssign|OpAssignOp(_)), {eexpr:TLocal(v)}, e2):
+					collect_modified_locals(e2);
+					Hashtbl.add(modified_locals, v.v_id, true);
+				case _:
+					core.Type.iter(collect_modified_locals, e);
+			}
+		}
+		return {fst:might_be_affected, snd:collect_modified_locals};
 	}
 
 	public static function optimize_binop(e:core.Type.TExpr, op:core.Ast.Binop, e1:core.Type.TExpr, e2:core.Type.TExpr) : core.Type.TExpr {

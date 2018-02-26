@@ -3,23 +3,784 @@ package optimization;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 using ocaml.Cloner;
+using ocaml.Hashtbl;
 using ocaml.List;
+using ocaml.PMap;
+using ocaml.Ref;
+
+typedef In_local = {
+	i_var: core.Type.TVar,
+	i_subst: core.Type.TVar,
+	i_outside: Bool,
+	i_abstract_this: Bool,
+	i_captured: Bool,
+	i_write: Bool,
+	i_read: Int,
+	i_force_temp: Bool
+}
 
 class Optimizer {
 
 	// ----------------------------------------------------------------------
 	// API OPTIMIZATIONS
+	public static function mk_untyped_call (name:String, p:core.Globals.Pos, params:ImmutableList<core.Type.TExpr>) : core.Type.TExpr {
+		return {
+			eexpr: TCall({ eexpr: TIdent(name), etype:core.Type.t_dynamic, epos: p }, params),
+			etype: core.Type.t_dynamic,
+			epos: p
+		}
+	}
+
+	public static function api_inline2 (com:context.Common.Context, c:core.Type.TClass, field:String, params:ImmutableList<core.Type.TExpr>, p:core.Globals.Pos) : Option<core.Type.TExpr> {
+		return
+		switch [c.cl_path, field, params] {
+			case [{a:[], b:"Type"}, "enumIndex", [{eexpr:TField(_, FEnum(en, f))}]]:
+				switch (com.platform) {
+					case Cs if (en.e_extern && !core.Meta.has(HxGen, en.e_meta)):
+						// We don't want to optimize enums from external sources; as they might change unexpectedly
+						// and since native C# enums don't have the concept of index - they have rather a value,
+						// which can't be mapped to a native API - this kind of substitution is dangerous
+						None;
+					case _:
+						Some(core.Type.mk(TConst(TInt(f.ef_index)), com.basic.tint, p));
+				}
+			case [{a:[], b:"Type"}, "enumIndex", [{eexpr:TCall({eexpr:TField(_, FEnum(en, f))}, pl)}]] if (List.for_all(function (e) { return !OptimizerTexpr.has_side_effect(e); }, pl)):
+				switch (com.platform) {
+					case Cs if (en.e_extern && !core.Meta.has(HxGen, en.e_meta)):
+						// see comment above
+						None;
+					case _:
+						Some(core.Type.mk(TConst(TInt(f.ef_index)), com.basic.tint, p));
+				}
+			case [{a:[], b:"Std"}, "int", [e={eexpr:TConst(TInt(_))}]]:
+				var e = e.clone(); e.epos = p;
+				Some(e);
+			case [{a:[], b:"String"}, "fromCharCode", [{eexpr:TConst(TInt(i))}]] if (i > 0 && i < 128):
+				Some(core.Type.mk(TConst(TString(String.fromCharCode(i))), com.basic.tstring, p));
+			case [{a:[], b:"Std"}, "string", [{eexpr:TCast(e={eexpr:TConst(c)}, None)}]],
+				 [{a:[], b:"Std"}, "string", [e={eexpr:TConst(c)}]]:
+				switch (c) {
+					case TString(s):
+						var e = e.clone(); e.epos = p;
+						Some(e);
+					case TInt(i):
+						var e = e.clone(); e.eexpr = TConst(TString(Std.string(i))); e.epos = p; e.etype = com.basic.tstring;
+						Some(e);
+					case TBool(b):
+						var e = e.clone(); e.eexpr = TConst(TString((b) ? "true" : "false")); e.epos = p; e.etype = com.basic.tstring;
+						Some(e);
+					case _:
+						None;
+				}
+			case [{a:[], b:"Std"}, "string", [e={eexpr:TIf(_, {eexpr:TConst(TString(_))}, Some({eexpr:TConst(TString(_))}))}]]:
+				Some(e);
+			case [{a:[], b:"Std"}, "string", [ev={eexpr:(TLocal(v)|TField({eexpr:TLocal(v)}, _))}]] if ((com.platform == Js || com.platform == Flash) && !core.Meta.has(CompilerGenerated, v.v_meta)):
+				var pos = ev.epos;
+				function stringv () {
+					var to_str = core.Type.mk(TBinop(OpAdd, core.Type.mk(TConst(TString("")), com.basic.tstring, pos), ev), com.basic.tstring, p);
+					return
+					if (com.platform == Js || core.Type.is_nullable(ev.etype)) {
+						var chk_null = core.Type.mk(TBinop(OpEq, ev, core.Type.mk(TConst(TNull), core.Type.t_dynamic, pos)), com.basic.tbool, pos);
+						core.Type.mk(TIf(chk_null, core.Type.mk(TConst(TString("null")), com.basic.tstring, pos), Some(to_str)), com.basic.tstring, pos);
+					}
+					else {
+						to_str;
+					}
+				}
+				switch (core.Type.follow(ev.etype)) {
+					case TInst({cl_path:{a:[], b:"String"}}, []),
+						 TAbstract({a_path:{a:[], b:"Float"}}, []),
+						 TAbstract({a_path:{a:[], b:"Int"}}, []),
+						 TAbstract({a_path:{a:[], b:"UInt"}}, []),
+						 TAbstract({a_path:{a:[], b:"Bool"}}, []):
+						Some(stringv());
+					case _:
+						None;
+				}
+			case [{a:[], b:"Std"}, "int", [{eexpr:TConst(TFloat(f))}]]:
+				var f = ocaml.FloatUtils.float_of_string(f);
+				switch (ocaml.FloatUtils.classify_float(f)) {
+					case FP_infinite, FP_nan:
+						None;
+					case _ if (f <= ocaml.FloatUtils.min_int32 -1. || f >= ocaml.FloatUtils.max_int32 +1.):
+						None; // out range, keep platform-specific behavior
+					case _:
+						Some({eexpr:TConst(TInt(Std.int(f))), etype:com.basic.tint, epos:p});
+				}
+			case [{a:[], b:"Math"}, "ceil", [{eexpr:TConst(TFloat(f))}]]:
+				var f = ocaml.FloatUtils.float_of_string(f);
+				switch (ocaml.FloatUtils.classify_float(f)) {
+					case FP_infinite, FP_nan:
+						None;
+					case _ if (f <= ocaml.FloatUtils.min_int32 - 1 || f >= ocaml.FloatUtils.max_int32 +1):
+						None; // out range, keep platform-specific behavior
+					case _:
+						Some({eexpr:TConst(TInt(Math.ceil(f))), etype:com.basic.tint, epos:p});
+				}
+			case [{a:[], b:"Math"}, "floor", [{eexpr:TConst(TFloat(f))}]]:
+				var f = ocaml.FloatUtils.float_of_string(f);
+				switch (ocaml.FloatUtils.classify_float(f)) {
+					case FP_infinite, FP_nan:
+						None;
+					case _ if (f <= ocaml.FloatUtils.min_int32 - 1 || f >= ocaml.FloatUtils.max_int32 +1):
+						None; // out range, keep platform-specific behavior
+					case _:
+						Some({eexpr:TConst(TInt(Math.floor(f))), etype:com.basic.tint, epos:p});
+				}
+			case [{a:["cs"], b:"Lib"}, ("fixed"|"checked"|"unsafe"), [e]]:
+				Some(mk_untyped_call("__"+field+"__", p, [e]));
+			case [{a:["cs"], b:"Lib"}, ("lock"), [obj, block]]:
+				Some(mk_untyped_call("__lock__", p, [obj, core.Type.mk_block(block)]));
+			case [{a:["java"], b:"Lib"}, ("lock"), [obj, block]]:
+				Some(mk_untyped_call("__lock__", p, [obj, core.Type.mk_block(block)]));
+			case _:
+				None;
+		}
+	}
 
 	public static function api_inline (ctx:context.Typecore.Typer, c:core.Type.TClass, field:String, params:ImmutableList<core.Type.TExpr>, p:core.Globals.Pos) : Option<core.Type.TExpr> {
-		trace("Optimizer.api_inline");
-		throw false;
+		return switch [c.cl_path, field, params] {
+			case [{a:[], b:"Std"}, "is", [o, t]], [{a:["js"], b:"Boot"}, "__instanceof", [o, t]] if (ctx.com.platform == Js):
+				var tstring = ctx.com.basic.tstring;
+				var tbool = ctx.com.basic.tbool;
+				var tint = ctx.com.basic.tint;
+				var esyntax = {
+					var m = Hashtbl.find(ctx.g.modules, new core.Path(["js"], "Syntax"));
+					List.find_map(function (mt:core.Type.ModuleType) {
+						return switch (mt) {
+							case TClassDecl(cl={cl_path:{a:["js"], b:"Syntax"}}):
+								Some(context.Typecore.make_static_this(cl, p));
+							case _: None;
+						}
+					}, m.m_types);
+				}
+				function is_trivial (e:core.Type.TExpr) : Bool {
+					return switch (e.eexpr) {
+						case TConst(_), TLocal(_): true;
+						case _: false;
+					}
+				}
+				function typeof (t) : core.Type.TExpr {
+					var tof = core.Texpr.Builder.fcall(esyntax, "typeof", [o], tstring, p);
+					return core.Type.mk(TBinop(OpEq, tof, core.Type.mk(TConst(TString(t)), tstring, p)), tbool, p);
+				}
+				switch (t.eexpr) {
+					// generate simple typeof checks for basic types
+					case TTypeExpr(TClassDecl({cl_path:{a:[], b:"String"}})) : Some(typeof("string"));
+					case TTypeExpr(TAbstractDecl({a_path:{a:[], b:"Bool"}})) : Some(typeof("boolean"));
+					case TTypeExpr(TAbstractDecl({a_path:{a:[], b:"Float"}})) : Some(typeof("number"));
+					case TTypeExpr(TAbstractDecl({a_path:{a:[], b:"Int"}})) if (is_trivial(o)):
+						// generate typeof(o) == "number" && (o|0) === o check
+						var lhs = core.Type.mk(TBinop(OpOr, o, core.Type.mk(TConst(TInt(0)), tint, p)), tint, p);
+						var jscheck = core.Texpr.Builder.fcall(esyntax, "strictEq", [lhs, o], tbool, p);
+						Some(core.Type.mk(TBinop(OpBoolAnd, typeof("number"), jscheck), tbool, p));
+					case TTypeExpr(TClassDecl({cl_path:{a:[], b:"Array"}})):
+						// generate (o instanceof Array) && o.__enum__ == null check
+						var iof = core.Texpr.Builder.fcall(esyntax, "instanceof", [o,t], tbool, p);
+						var enum_ = core.Type.mk(TField(o, FDynamic("__enum__")), core.Type.mk_mono(), p);
+						var null_ = core.Type.mk(TConst(TNull), core.Type.mk_mono(), p);
+						var not_enum = core.Type.mk(TBinop(OpEq, enum_, null_), tbool, p);
+						Some(core.Type.mk(TBinop(OpBoolAnd, iof, not_enum), tbool, p));
+					case TTypeExpr(TClassDecl(cls)) if (!cls.cl_interface):
+						Some(core.Texpr.Builder.fcall(esyntax, "instanceof", [o, t], tbool, p));
+					case _: None;
+				}
+			case [{a:(["cs"] | ["java"]), b:"Lib"}, "nativeArray", [edecl={eexpr:TArrayDecl(args)}, _] ],
+				 [{a:["haxe", "ds", "_Vector"], b:"Vector_Impl_"}, "fromArrayCopy", [edecl={eexpr:TArrayDecl(args)}]] :
+				try {
+					var platf = switch (ctx.com.platform) {
+						case Cs: "cs";
+						case Java: "java";
+						case _: throw ocaml.Exit;
+					}
+					var mpath = (field == "fromArrayCopy") ? new core.Path(["haxe", "ds"], "Vector") : new core.Path([platf], "NativeArray");
+					var m = ctx.g.do_load_module(ctx, mpath, core.Globals.null_pos);
+					var main = List.find(function (mt:core.Type.ModuleType) { return mt.match(TClassDecl(_)|TAbstractDecl(_)); }, m.m_types);
+					var t:core.Type.T = switch [core.Type.follow(edecl.etype), main] {
+						case [TInst({cl_path:{a:[], b:"Array"}}, [t]), TClassDecl(cl)]: TInst(cl, [t]);
+						case [TInst({cl_path:{a:[], b:"Array"}}, [t]), TAbstractDecl(a)]: TAbstract(a, [t]);
+						case _: trace("Shall not be seen"); throw false;
+					}
+					var _tmp = mk_untyped_call("__array__", p, args);
+					_tmp.etype = t;
+					Some(_tmp);
+				}
+				catch (_:ocaml.Exit) { None; }
+			case _: api_inline2(ctx.com, c, field, params, p);
+		}
 	}
 
 	// ----------------------------------------------------------------------
 	// INLINING
+	public static function inline_default_config (cf:core.Type.TClassField, t:core.Type.T) : {fst:Bool, snd:core.Type.T->core.Type.T} {
+		// type substitution on both class and function type parameters
+		function get_params (c:core.Type.TClass, pl:core.Type.TParams) {
+			return switch (c.cl_super) {
+				case None: {fst:c.cl_params, snd:pl};
+				case Some({c:csup, params:spl}):
+					var spl = switch (core.Type.apply_params(c.cl_params, pl, TInst(csup, spl))) {
+						case TInst(_, pl): pl;
+						case _: trace("Shall not be seen"); throw false;
+					}
+					var _tmp = get_params(csup, spl);
+					var ct = _tmp.fst; var cpl = _tmp.snd;
+					{fst:List.append(c.cl_params, ct), snd:List.append(pl, cpl)};
+			}
+		}
+		var tparams = switch (core.Type.follow(t)) {
+			case TInst(c, pl): get_params(c, pl);
+			case _: {fst:Tl, snd:Tl};
+		}
+		var pmonos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
+		var tmonos = List.append(tparams.snd, pmonos);
+		var tparams = List.append(tparams.fst, cf.cf_params);
+		return {fst:tparams!=[], snd:core.Type.apply_params.bind(tparams, tmonos)};
+	}
 
 	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, tret:core.Type.T, config:Option<{fst:Bool, snd:core.Type.T->core.Type.T}>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {
-		trace("Optimizer.type_inline");
+		return
+		// perform some specific optimization before we inline the call since it's not possible to detect at final optimization time
+		try {
+			var cl = switch (core.Type.follow(ethis.etype)) {
+				case TInst(c, _): c;
+				case TAnon(a):
+					switch (a.a_status.get()) {
+						case Statics(c): c;
+						case _: throw ocaml.Exit.instance;
+					}
+				case _: throw ocaml.Exit.instance;
+			}
+			switch (api_inline(ctx, cl, cf.cf_name, params, p)) {
+				case None: throw ocaml.Exit.instance;
+				case Some(e): Some(e);
+			}
+		}
+		catch (_:ocaml.Exit) {
+			var _tmp = switch (config) {
+				case Some(config): config;
+				case None: inline_default_config(cf, ethis.etype);
+			}
+			var has_params = _tmp.fst; var map_type = _tmp.snd;
+			// locals substitution
+			var locals = new Map<Int, In_local>();//Hashtbl.create(0);
+			function local (v:core.Type.TVar) : In_local {
+				return
+				try {
+					Hashtbl.find(locals, v.v_id);
+				}
+				catch (_:ocaml.Not_found) {
+					var v_ = core.Type.alloc_var(v.v_name, v.v_type, v.v_pos);
+					v_.v_extra = v.v_extra.clone(); // clone or not ?
+					var i = {
+						i_var: v_,
+						i_subst: v_,
+						i_outside: false,
+						i_abstract_this: core.Meta.has(This, v.v_meta),
+						i_captured: false,
+						i_write: false,
+						i_force_temp: false,
+						i_read: 0
+					}
+					i.i_subst.v_meta = List.filter(function (meta:core.Ast.MetadataEntry) { var m = meta.name; return m != This; }, v.v_meta);
+					Hashtbl.add(locals, v.v_id, i);
+					Hashtbl.add(locals, i.i_subst.v_id, i);
+					i;
+				}
+			}
+			var in_local_fun = new Ref(false);
+			function read_local (v:core.Type.TVar) : In_local {
+				var l:In_local = try {
+					Hashtbl.find(locals, v.v_id);
+				}
+				catch (_:ocaml.Not_found) {
+					{
+						i_var: v,
+						i_subst: v,
+						i_outside: true,
+						i_abstract_this: core.Meta.has(This, v.v_meta),
+						i_captured: false,
+						i_write: false,
+						i_force_temp: false,
+						i_read: 0
+					}
+				}
+				if (in_local_fun.get()) {
+					l.i_captured = true;
+				}
+				return l;
+			}
+			// use default values for null/unset arguments
+			function loop (pl:ImmutableList<core.Type.TExpr>, al:ImmutableList<{v:core.Type.TVar, c:Option<core.Type.TConstant>}>, first:Bool) : ImmutableList<core.Type.TExpr> {
+				return
+				switch [pl, al] {
+					case [_, []]: [];
+					case [e::pl, {v:v, c:opt}::al]:
+						/*
+							if we pass a Null<T> var to an inlined method that needs a T.
+							we need to force a local var to be created on some platforms.
+						*/
+						if (ctx.com.config.pf_static && !core.Type.is_nullable(v.v_type) && core.Type.is_null(e.etype)) {
+							local(v).i_force_temp = true;
+						}
+						/*
+							if we cast from Dynamic, create a local var as well to do the cast
+							once and allow DCE to perform properly.
+						*/
+						var e = if (core.Type.follow(v.v_type) != core.Type.t_dynamic && core.Type.follow(e.etype) != core.Type.t_dynamic) {
+							core.Type.mk(TCast(e, None), v.v_type, e.epos);
+						}
+						else { e; }
+						var _tmp = switch [e.eexpr, opt] {
+							case [TConst(TNull), Some(c)]:
+								core.Type.mk(TConst(c), v.v_type, e.epos);
+							/*
+								This is really weird and should be reviewed again. The problem is that we cannot insert a TCast here because
+								the abstract `this` value could be written to, which is not possible if it is wrapped in a cast.
+
+								The original problem here is that we do not generate a temporary variable and thus mute the type of the
+								`this` variable, which leads to unification errors down the line. See issues #2236 and #3713.
+							*/
+							/* | _ when first && (Meta.has Meta.Impl cf.cf_meta) -> {e with etype = v.v_type} */
+							case _: e;
+						}
+						_tmp :: loop(pl, al, false);
+					case [[], {v:v, c:opt}::al]:
+						core.Type.mk(TConst(switch (opt) { case None: TNull; case Some(c): c;}), v.v_type, p) :: loop([], al, false);
+				}
+			}
+			/*
+				Build the expr/var subst list
+			*/
+			var ethis = switch (ethis.eexpr) {
+				case TConst(TSuper):
+					var _ethis = ethis.clone();
+					_ethis.eexpr = TConst(TThis);
+					_ethis;
+				case _:
+					ethis;
+			}
+			var vthis = core.Type.alloc_var("_this", ethis.etype, ethis.epos);
+			var _tmp = optimization.OptimizerTexpr.create_affection_checker();
+			var might_be_affected = _tmp.fst; var collected_modified_locals = _tmp.snd;
+			var has_side_effect_ = new Ref(false);
+			var inlined_vars = List.map2(function (e:core.Type.TExpr, arg:{v:core.Type.TVar, c:Option<core.Type.TConstant>}) {
+				var v = arg.v;
+				var l = local(v);
+				if (OptimizerTexpr.has_side_effect(e)) {
+					collected_modified_locals(e);
+					has_side_effect_.set(true);
+					l.i_force_temp = true;
+				}
+				if (l.i_abstract_this) {
+					l.i_subst.v_extra = Some({params:[], expr:Some(e)});
+				}
+				return {fst:l, snd:e};
+			}, (ethis::loop(params, f.tf_args, true)), ({v:vthis, c:None}::f.tf_args));
+			inlined_vars = List.rev(inlined_vars);
+			/*
+				here, we try to eliminate final returns from the expression tree.
+				However, this is not entirely correct since we don't yet correctly propagate
+				the type of returned expressions upwards ("return" expr itself being Dynamic).
+
+				We also substitute variables with fresh ones that might be renamed at later stage.
+			*/
+			function opt (f:core.Type.TExpr->core.Type.TExpr, o:Option<core.Type.TExpr>) : Option<core.Type.TExpr> {
+				return switch (o) {
+					case None: None;
+					case Some(e): Some(f(e));
+				}
+			}
+			var has_vars = new Ref(false);
+			var in_loop = new Ref(false);
+			var cancel_inlining = new Ref(false);
+			var has_return_value = new Ref(false);
+			function return_type (t, el) {
+				return
+				/* If the function return is Dynamic or Void, stick to it. */
+				if (core.Type.follow(f.tf_type) == core.Type.t_dynamic || core.Type.ExtType.is_void(core.Type.follow(f.tf_type))) {
+					f.tf_type;
+				}
+				/* If the expression is Void, find common type of its branches. */
+				else if (core.Type.ExtType.is_void(t)) {
+					typing.Typer.unify_min(ctx, el);
+				}
+				else { t; }
+			}
+			var map_pos = (self_calling_closure) ? function (e:core.Type.TExpr) { return e; } : function (e:core.Type.TExpr) { var e = e.clone(); e.epos = p; return e; };
+			function map (term:Bool, e:core.Type.TExpr) : core.Type.TExpr {
+				var po = e.epos;
+				var e = map_pos(e);
+				return
+				switch (e.eexpr) {
+					case TLocal(v):
+						var l = read_local(v);
+						l.i_read = l.i_read + ((in_loop.get()) ? 2 : 1);
+						/* never inline a function which contain a delayed macro because its bound
+							to its variables and not the calling method */
+						if (v.v_name == "$__delayed_call__") { cancel_inlining.set(true); }
+						var e = e.clone(); e.eexpr = TLocal(l.i_subst);
+						(l.i_abstract_this) ? core.Type.mk(TCast(e, None), v.v_type, e.epos) : e;
+					case TConst(TThis):
+						var l = read_local(vthis);
+						l.i_read = l.i_read + ((in_loop.get()) ? 2 : 1);
+						var e = e.clone(); e.eexpr = TLocal(l.i_subst); e;
+					case TVar(v, eo):
+						has_vars.set(true);
+						var e = e.clone(); e.eexpr = TVar(local(v).i_subst, opt(map.bind(false), eo)); e;
+					case TReturn(eo) if (!in_local_fun.get()):
+						if (!term) { core.Error.error("Cannot inline a not final return", po); }
+						switch (eo) {
+							case None: core.Type.mk(TConst(TNull), f.tf_type, p);
+							case Some(e):
+								has_return_value.set(true);
+								map(term, e);
+						}
+					case TFor(v, e1, e2):
+						var i = local(v);
+						var e1 = map(false, e1);
+						var old = in_loop.get();
+						in_loop.set(true);
+						var e2 = map(false, e2);
+						in_loop.set(old);
+						var e = e.clone(); e.eexpr = TFor(i.i_subst, e1, e2); e;
+					case TWhile(cond, eloop, flag):
+						var cond = map(false, cond);
+						var old = in_loop.get();
+						in_loop.set(true);
+						var eloop = map(false, eloop);
+						in_loop.set(old);
+						var e = e.clone(); e.eexpr = TWhile(cond, eloop, flag); e;
+					case TSwitch(e1, cases, def) if (term):
+						var term = term && (def != None || OptimizerTexpr.is_exhaustive(e1));
+						var cases = List.map(function (c:{values:ImmutableList<core.Type.TExpr>, e:core.Type.TExpr}) {
+							var el = c.values; var e = c.e;
+							var el = List.map(map.bind(false), el);
+							return {values:el, e:map(term, e)};
+						}, cases);
+						var def = opt(map.bind(term), def);
+						var t = return_type(e.etype, List.append(List.map(function(c) {return c.e; }, cases), switch (def) { case None: []; case Some(e): [e];}));
+						var e = e.clone(); e.eexpr = TSwitch(map(false, e1), cases, def); e.etype = t;
+						e;
+					case TTry(e1, catches):
+						var t = (!term) ? e.etype : return_type(e.etype, e1::List.map(function (c) { return c.e; }, catches));
+						var e = e.clone();
+						e.eexpr = TTry(map(term, e1), List.map(function (c) {
+							var v = c.v; var e = c.e;
+							var lv = local(v).i_subst;
+							var e = map(term, e);
+							return {v:lv, e:e};
+						}, catches));
+						e.etype = t;
+						e;
+					case TBlock(l):
+						var old = context.Typecore.save_locals(ctx);
+						var t = new Ref(e.etype);
+						function has_term_return(e:core.Type.TExpr) : Bool {
+							function loop (e:core.Type.TExpr) : Void {
+								var r = switch (e.eexpr) {
+									case TReturn(_): true;
+									case TFunction(_): false;
+									case TIf(_,_,None), TSwitch(_,_,None), TFor(_), TWhile(_,_,NormalWhile): false; // we might not enter this code at all
+									case TTry(a, catches): List.for_all(has_term_return, a::List.map(function (c) { return c.e; }, catches));
+									case TIf(cond, a, Some(b)): has_term_return(cond) || (has_term_return(a) && has_term_return(b));
+									case TSwitch(cond, cases, Some(def)): has_term_return(cond) || List.for_all(has_term_return, def::List.map(function (c) { return c.e; }, cases));
+									case TBinop(OpBoolAnd, a, b): has_term_return(a) && has_term_return(b);
+									case _: core.Type.iter(loop, e); false;
+								}
+								if (r) { throw ocaml.Exit.instance; }
+							}
+							return try { loop(e); false; } catch (_:ocaml.Exit) { true; }
+						}
+						function loop (l:ImmutableList<core.Type.TExpr>) : ImmutableList<core.Type.TExpr> {
+							return switch (l) {
+								case [] if (term):
+									t.set(core.Type.mk_mono());
+									[core.Type.mk(TConst(TNull), t.get(), p)];
+								case []: [];
+								case [e]:
+									var e = map(term, e);
+									if (term) { t.set(e.etype); }
+									[e];
+								case (e={eexpr:TIf(cond, e1, None)})::l if (term && has_term_return(e1)):
+									var _e = e.clone(); _e.eexpr = TIf(cond, e1, Some(core.Type.mk(TBlock(l), e.etype, e.epos)));
+									_e.epos = core.Ast.punion(e.epos, switch (List.rev(l)) { case e::_:e.epos; case []: throw false;});
+									loop([_e]);
+								case e::l:
+									var e = map(false, e);
+									e::loop(l);
+							}
+						}
+						var l = loop(l);
+						old();
+						var e = e.clone(); e.eexpr = TBlock(l); e.etype = t.get(); e;
+					case TIf(econd, eif, Some(eelse)) if (term):
+						var econd = map(false, econd);
+						var eif = map(term, eif);
+						var eelse = map(term, eelse);
+						var t = return_type(e.etype, [eif, eelse]);
+						var e = e.clone(); e.eexpr = TIf(econd, eif, Some(eelse)); e.etype = t; e;
+					case TParenthesis(e1):
+						var e1 = map(term, e1);
+						core.Type.mk(TParenthesis(e1), e1.etype, e.epos);
+					case TUnop(op=(OpIncrement|OpDecrement), flag, e1={eexpr:TLocal(v)}):
+						has_side_effect_.set(true);
+						var l = read_local(v);
+						l.i_write = true;
+						var e1 = e1.clone(); e1.eexpr = TLocal(l.i_subst);
+						var e = e.clone(); e.eexpr = TUnop(op, flag, e1); e;
+					case TBinop(op=(OpAssign|OpAssignOp(_)), e1={eexpr:TLocal(v)}, e2):
+						has_side_effect_.set(true);
+						var l = read_local(v);
+						l.i_write = true;
+						var e2 = map(false, e2);
+						var e1 = e1.clone(); e1.eexpr = TLocal(l.i_subst);
+						var e = e.clone(); e.eexpr = TBinop(op, e1, e2); e;
+					case TObjectDecl(fl):
+						var fl = List.map(function (of:core.Type.TObjectField) : core.Type.TObjectField {
+							var s = of.a; var e = of.expr;
+							return {a:s, expr:map(false, e)};
+						}, fl);
+						switch (core.Type.follow(e.etype)) {
+							case TAnon(an) if (an.a_status.get().match(Const)):
+								var e = e.clone(); e.eexpr = TObjectDecl(fl); e.etype = TAnon({a_fields:an.a_fields, a_status:new Ref(core.Type.AnonStatus.Closed)}); e;
+							case _:
+								var e = e.clone(); e.eexpr = TObjectDecl(fl); e;
+						}
+					case TFunction(f):
+						switch (f.tf_args) {
+							case []:
+							case _: has_vars.set(true);
+						}
+						var old = context.Typecore.save_locals(ctx);
+						var old_fun = in_local_fun.get();
+						var args = List.map(function (arg) { var v = arg.v; var c = arg.c; return {v:local(v).i_subst, c:c}; }, f.tf_args);
+						in_local_fun.set(true);
+						var expr = map(false, f.tf_expr);
+						in_local_fun.set(old_fun);
+						old();
+						var e = e.clone(); e.eexpr = TFunction({tf_args:args, tf_expr:expr, tf_type:f.tf_type}); e;
+					case TCall({eexpr:TConst(TSuper), etype:t}, el):
+						has_side_effect_.set(true);
+						switch (core.Type.follow(t)) {
+							case TInst(c={cl_constructor:Some({cf_kind:Method(MethInline), cf_expr:Some({eexpr:TFunction(tf)})})}, _):
+								switch (type_inline_ctor(ctx, c, cf, tf, ethis, el, po)) {
+									case Some(e): map(term, e);
+									case None: core.Error.error("Could not inline super constructor call", po);
+								}
+							case _: core.Error.error("Cannot inline function containing super", po);
+						}
+					case TConst(TSuper):
+						core.Error.error("Cannot inline function containing super", po);
+					case TMeta(m, e1):
+						var e1 = map(term, e1);
+						var e = e.clone(); e.eexpr = TMeta(m, e1); e;
+					case TNew(_), TCall(_), TBinop((OpAssignOp(_)|OpAssign), _, _), TUnop((OpIncrement|OpDecrement), _, _):
+						has_side_effect_.set(true);
+						core.Type.map_expr(map.bind(false), e);
+					case _:
+						core.Type.map_expr(map.bind(false), e);
+				}
+			}
+			var e = map(true, f.tf_expr);
+			if (has_side_effect_.get()) {
+				List.iter(function (iv:{fst:In_local, snd:core.Type.TExpr}) {
+					var l = iv.fst; var e = iv.snd;
+					if (might_be_affected(e)) {
+						l.i_force_temp = true;
+					}
+				}, inlined_vars);
+			}
+			/*
+				if variables are not written and used with a const value, let's substitute
+				with the actual value, either create a temp var
+			*/
+			var subst = new Ref(new Map<Int, core.Type.TExpr>());
+			function is_constant (e:core.Type.TExpr) : Bool {
+				function loop (e:core.Type.TExpr) : Void {
+					switch (e.eexpr) {
+						case TLocal(_), TConst(TThis): // not really, but should not be move inside a function body
+							throw ocaml.Exit.instance;
+						case TObjectDecl(_), TArrayDecl(_): throw ocaml.Exit.instance;
+						case TField(_, FEnum(_)), TTypeExpr(_), TConst(_):
+						case _: core.Type.iter(loop, e);
+					}
+				}
+				return try { loop(e); true; } catch (_:ocaml.Exit) { false; }
+			}
+			function is_writable (e:core.Type.TExpr) : Bool {
+				return switch (e.eexpr) {
+					case TField(_), TEnumParameter(_), TLocal(_), TArray(_): true;
+					case _: false;
+				}
+			}
+			var force = new Ref(force);
+			var vars = List.fold_left(function (acc:ImmutableList<{fst:core.Type.TVar, snd:Option<core.Type.TExpr>}>, iv:{fst:In_local, snd:core.Type.TExpr}) {
+				var i = iv.fst; var e = iv.snd;
+				var flag = !i.i_force_temp && (switch (e.eexpr) {
+					case TLocal(_) if (i.i_abstract_this) : true;
+					case TLocal(_), TConst(_): !i.i_write;
+					case TFunction(_) if (i.i_write):
+						core.Error.error("Cannot modify a closure parameter inside inline method", p);
+						true;
+					case _: !i.i_write && i.i_read <= 1;
+				});
+				var flag = flag && (!i.i_captured || is_constant(e));
+				// force inlining if we modify 'this'
+				if (i.i_write && i.i_abstract_this) { force.set(true); }
+				// force inlining of 'this' variable if it is written
+				var flag = if (!flag && i.i_abstract_this && i.i_write) {
+					if (!is_writable(e)) { core.Error.error("Cannot modify the abstract value, store it into a local first", p); }
+					true;
+				}
+				else { flag; }
+				return
+				if (flag) {
+					subst.set(PMap.add(i.i_subst.v_id, e, subst.get()));
+					acc;
+				}
+				else {
+					// mark the replacement local for the analyzer
+					if (i.i_read <= 1 && !i.i_write) {
+						i.i_subst.v_meta = ({name:CompilerGenerated, params:[], pos:p} : core.Ast.MetadataEntry) :: i.i_subst.v_meta;
+					}
+					{fst:i.i_subst, snd:Some(e)}::acc;
+				}
+			}, [], inlined_vars);
+			var subst = subst.get();
+			var inline_params:core.Type.TExpr->core.Type.TExpr;
+			inline_params = function (e:core.Type.TExpr) : core.Type.TExpr {
+				return switch (e.eexpr) {
+					case TLocal(v):
+						try {
+							PMap.find(v.v_id, subst);
+						}
+						catch (_:ocaml.Not_found) {
+							e;
+						}
+					case _:
+						core.Type.map_expr(inline_params, e);
+				}
+			}
+			var e = (PMap.is_empty(subst)) ? e : inline_params(e);
+			var init = switch (vars) { case []: None; case l: Some(l); }
+			/*
+				If we have local variables and returning a value, then this will result in
+				unoptimized JS code, so let's instead skip inlining.
+
+				This could be fixed with better post process code cleanup (planed)
+			*/
+			if (cancel_inlining.get()) {
+				None;
+			}
+			else {
+				function wrap(e:core.Type.TExpr) : core.Type.TExpr {
+					// we can't mute the type of the expression because it is not correct to do so
+					var etype = (has_params) ? map_type(e.etype) : e.etype;
+					// if the expression is "untyped" and we don't want to unify it accidentally !
+					return
+					try {
+						switch (core.Type.follow(e.etype)) {
+							case TMono(_), TInst({cl_kind:KTypeParameter(_)}, _):
+								switch (core.Type.follow(tret)) {
+									case TAbstract({a_path:{a:[], b:"Void"}}, _): e;
+									case _: throw new core.Type.Unify_error([]);
+								}
+							case _:
+								core.Type.type_eq((ctx.com.config.pf_static) ? EqDoNotFollowNull : EqStrict, etype, tret);
+								e;
+						}
+					}
+					catch (_:core.Type.Unify_error) {
+						core.Type.mk(TCast(e, None), tret, e.epos);
+					}
+				}
+				var e = switch [e.eexpr, init] {
+					case [_, None] if (!has_return_value.get()):
+						switch (e.eexpr) {
+							case TBlock(_):
+								var e = e.clone(); e.etype = tret; e;
+							case _: core.Type.mk(TBlock([e]), tret, e.epos);
+						}
+					case [TBlock([e]), None]: wrap(e);
+					case [_, None]: wrap(e);
+					case [TBlock(l), Some(vl)]:
+						var el_v = List.map(function (arg:{fst:core.Type.TVar, snd:Option<core.Type.TExpr>}) {
+							var v = arg.fst; var eo = arg.snd;
+							return core.Type.mk(TVar(v, eo), ctx.t.tvoid, e.epos);
+						}, vl);
+						core.Type.mk(TBlock(List.append(el_v, l)), tret, e.epos);
+					case [_, Some(vl)]:
+						var el_v = List.map(function (arg:{fst:core.Type.TVar, snd:Option<core.Type.TExpr>}) {
+							var v = arg.fst; var eo = arg.snd;
+							return core.Type.mk(TVar(v, eo), ctx.t.tvoid, e.epos);
+						}, vl);
+						core.Type.mk(TBlock(List.append(el_v, [e])), tret, e.epos);
+				};
+				function _inline_meta (e:core.Type.TExpr, meta:core.Ast.MetadataEntry) : core.Type.TExpr {
+					return switch (meta) {
+						case {name:(Deprecated|Pure)}: core.Type.mk(TMeta(meta, e), e.etype, e.epos);
+						case _:e;
+					}
+				}
+				var e = List.fold_left(_inline_meta, e, cf.cf_meta);
+				var e = context.display.Diagnostics.secure_generated_code(ctx, e);
+				if (core.Meta.has(Custom(":inlineDebug"), ctx.meta)) {
+					function se (t:String, e:core.Type.TExpr) {
+						return core.Type.s_expr_pretty(true, t, true, core.Type.s_type.bind(core.Type.print_context()), e);
+					}
+					Sys.println('Inline ${cf.cf_name}:\n\tArgs: ${List.join("", List.map(function (iv) {
+						var i = iv.fst; var e = iv.snd;
+						return '\n\t\t${i.i_subst.v_name}<${i.i_subst.v_id}> = ${se("\t\t", e)}';
+					}, inlined_vars))}\n\tExpr: ${se("\t", f.tf_expr)}\n\tResult: ${se("\t", e)}');
+				}
+				// we need to replace type-parameters that were used in the expression
+				if (!has_params) {
+					Some(e);
+				}
+				else {
+					var mt = map_type(cf.cf_type);
+					function unify_func () {
+						context.Typecore.unify_raise(ctx, mt, TFun({args:List.map(function (e):core.Type.TSignatureArg { return {name:"", opt:false, t:e.etype}; }, params), ret:tret}), p);
+					}
+					switch (core.Type.follow(ethis.etype)) {
+						case TAnon(a):
+							switch (a.a_status.get()) {
+								case Statics({cl_kind:KAbstractImpl(a)}) if (core.Meta.has(Impl, cf.cf_meta)):
+									if (cf.cf_name != "_new") {
+										// the first argument must unify with a_this for abstract implementation functions
+										var tb:core.Type.T = TFun({args:{name:"", opt:false, t:map_type(a.a_this)}::List.map(function (e) { return {name:"", opt:false, t:e.etype};}, List.tl(params)), ret:tret});
+										context.Typecore.unify_raise(ctx, mt, tb, p);
+									}
+								case _: unify_func();
+							}
+						case _: unify_func();
+					}
+					/*
+						this is very expensive since we are building the substitution list for
+						every expression, but hopefully in such cases the expression size is small
+					*/
+					var vars = new Map<Int, Bool>();
+					function map_var (v:core.Type.TVar) : core.Type.TVar{
+						if (!Hashtbl.mem(vars, v.v_id)) {
+							Hashtbl.add(vars, v.v_id, true);
+							if (!read_local(v).i_outside) {
+								v.v_type = map_type(v.v_type);
+							}
+						}
+						return v;
+					}
+					function map_expr_type (e:core.Type.TExpr) {
+						return core.Type.map_expr_type(map_expr_type, map_type, map_var, e);
+					}
+					Some(map_expr_type(e));
+				}
+			}
+		}
+	}
+
+	// Same as type_inline, but modifies the function body to add field inits
+	public static function type_inline_ctor (ctx:context.Typecore.Typer, c:core.Type.TClass, cf:core.Type.TClassField, tf:core.Type.TFunc, ethis:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, po:core.Globals.Pos) : Option<core.Type.TExpr> {
+		trace("TODO: type_inline_ctor");
 		throw false;
 	}
 

@@ -408,6 +408,11 @@ enum Eq_kind {
 	EqDoNotFollowNull; // like EqStrict, but does not follow Null<T>
 }
 
+class ExtType {
+	public static inline function is_void (t:core.Type.T) : Bool {
+		return t.match(TAbstract({a_path:{a:[], b:"Void"}}, _));
+	}
+}
 
 class Type {
 	static var mid:Int = 0;
@@ -1252,6 +1257,11 @@ class Type {
 		}
 	}
 
+	public static function s_expr_pretty (print_var_ids:Bool, tabs:String, top_level:Bool, s_type:T->String, e:TExpr) : String {
+		trace("TODO: s_expr_pretty");
+		throw false;
+	}
+
 	// ======= Unification =======
 	public static function link (e:ocaml.Ref<Option<T>>, a:T, b:T) : Bool {
 		// tell if setting a == b will create a type-loop
@@ -1629,6 +1639,7 @@ class Type {
 	}
 
 	public static var unify_stack = new Ref<ImmutableList<{fst:T, snd:T}>>([]);
+	public static var abstract_cast_stack = new Ref<ImmutableList<{fst:T, snd:T}>>([]);
 	public static var unify_new_monos = new Ref<ImmutableList<T>>([]);
 
 	public static function unify (a:T, b:T) : Void {
@@ -1968,23 +1979,108 @@ class Type {
 	}
 
 	public static function unify_abstracts (a:core.Type.T, b:core.Type.T, a1:core.Type.TAbstract, tl1:TParams, a2:core.Type.TAbstract, tl2:TParams) : Void {
-		trace("TODO: unify_abstracts");
-		throw false;
+		var f1 = unify_to.bind(a1, tl1, b, false);
+		var f2 = unify_from.bind(a2, tl2, a, b, false);
+		var f1_ = unify_to.bind(a1, tl1, b, true);
+		var f2_ = unify_from.bind(a2, tl2, a, b, true);
+		if ((List.exists(f1, a1.a_to)
+			|| List.exists(f2, a2.a_from)
+			|| core.Meta.has(CoreType, a1.a_meta) || core.Meta.has(CoreType, a2.a_meta)
+			) && (List.exists(f1_, a1.a_to) || List.exists(f2_, a2.a_from))
+		) {}
+		else {
+			error([cannot_unify(a, b)]);
+		}
 	}
 
 	public static function unify_anons (a:core.Type.T, b:core.Type.T, a1:core.Type.TAnon, a2:core.Type.TAnon) : Void {
-		trace("TODO: unify_anons");
-		throw false;
+		try {
+			PMap.iter(function (n:String, f2:core.Type.TClassField) {
+				try {
+					var f1 = PMap.find(n, a1.a_fields);
+					if (!unify_kind(f1.cf_kind, f2.cf_kind)) {
+						switch [a1.a_status.get(), f1.cf_kind, f2.cf_kind] {
+							case [Opened, Var({v_read:AccNormal, v_write:AccNo}), Var({v_read:AccNormal, v_write:AccNormal})]:
+								f1.cf_kind = f2.cf_kind;
+							case _:
+								error([invalid_kind(n, f1.cf_kind, f2.cf_kind)]);
+						}
+					}
+					if (f2.cf_public && !f1.cf_public) {
+						error([invalid_visibility(n)]);
+					}
+					try {
+						unify_with_access(field_type(f1), f2);
+						switch (a1.a_status.get()) {
+							case Statics(c) if (!core.Meta.has(MaybeUsed, f1.cf_meta)):
+								f1.cf_meta = ({name:MaybeUsed, params:[], pos:f1.cf_pos} : core.Ast.MetadataEntry) :: f1.cf_meta;
+							case _:
+						}
+					}
+					catch (ue:Unify_error) {
+						var l = ue.l;
+						error(invalid_field(n)::l);
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					switch (a1.a_status.get()) {
+						case Opened:
+							if (!link(new Ref(None), a, f2.cf_type)) {
+								error([]);
+							}
+							a1.a_fields = PMap.add(n, f2, a1.a_fields);
+						case Const if (core.Meta.has(Optional, f2.cf_meta)):
+						case _:
+							error([has_no_field(a, n)]);
+					}
+				}
+			}, a2.a_fields);
+			switch (a1.a_status.get()) {
+				case Const if (!PMap.is_empty(a2.a_fields)):
+					PMap.iter(function (n, _) {
+						if (!PMap.mem(n, a2.a_fields)) {
+							error([has_extra_field(a, n)]);
+						}
+					}, a1.a_fields);
+				case Opened:
+					a1.a_status.set(Closed);
+				case _:
+			}
+			switch (a2.a_status.get()) {
+				case Statics(c): switch (a1.a_status.get()) { case Statics(c2) if (c == c2): case _: error([]); }
+				case EnumStatics(e): switch (a1.a_status.get()) { case EnumStatics(e2) if (e == e2): case _: error([]); }
+				case AbstractStatics(a): switch (a1.a_status.get()) { case AbstractStatics(a2) if (a == a2): case _: error([]); }
+				case Opened: a2.a_status.set(Closed);
+				case Const, Extend(_), Closed:
+			}
+		}
+		catch (ue:Unify_error) {
+			var l = ue.l;
+			error(cannot_unify(a, b)::l);
+		}
 	}
 
 	public static function unify_from (ab:TAbstract, tl:TParams, a:T, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
-		trace("TODO: unify_from");
-		throw false;
+		return rec_stack_bool(abstract_cast_stack, {fst:a, snd:b},
+			function (arg) { var a2 = arg.fst; var b2 = arg.snd; return fast_eq(a, a2) && fast_eq(b, b2); },
+			function() {
+				var t = apply_params(ab.a_params, tl, t);
+				var unify_func = (allow_transitive_cast) ? unify : type_eq.bind(EqStrict);
+				return unify_func(a, t);
+			});
 	}
 
 	public static function unify_to (ab:TAbstract, tl:TParams, b:T, ?allow_transitive_cast:Bool=true, t:T) : Bool {
-		trace("TODO: unify_to");
-		throw false;
+		var t = apply_params(ab.a_params, tl, t);
+		var unify_func = (allow_transitive_cast) ? unify : type_eq.bind(EqStrict);
+		return
+		try {
+			unify_func(t, b);
+			true;
+		}
+		catch (_:Unify_error) {
+			false;
+		}
 	}
 
 	public static function unify_from_field (ab:TAbstract, tl:TParams, a:T, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
@@ -1999,9 +2095,74 @@ class Type {
 		throw false;
 	}
 
+	public static function unify_with_variance (f:(T,T)->Void, t1:T, t2:T) : Void {
+		function allows_variance_to(t:T, tf:T) {
+			return type_iseq(tf, t);
+		}
+		switch [follow(t1), follow(t2)] {
+			case [TInst(c1, tl1), TInst(c2, tl2)] if (c1.equals(c2)):
+				List.iter2(f, tl1, tl2);
+			case [TEnum(en1, tl1), TEnum(en2, tl2)] if (en1.equals(en2)):
+				List.iter2(f, tl1, tl2);
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1.equals(a2) && core.Meta.has(CoreType, a1.a_meta)):
+				List.iter2(f, tl1, tl2);
+			case [TAbstract(a1, pl1), TAbstract(a2, pl2)]:
+				if (core.Meta.has(CoreType, a1.a_meta) && core.Meta.has(CoreType, a2.a_meta)) {
+					var ta1 = apply_params(a1.a_params, pl1, a1.a_this);
+					var ta2 = apply_params(a2.a_params, pl2, a2.a_this);
+					type_eq(EqStrict, ta1, ta2);
+				}
+				if (!List.exists(allows_variance_to.bind(t2), a1.a_to) && !List.exists(allows_variance_to.bind(t1), a2.a_from)) {
+					error([cannot_unify(t1, t2)]);
+				}
+			case [TAbstract(a, pl), t]:
+				type_eq(EqBothDynamic, apply_params(a.a_params, pl, a.a_this), t);
+				if (!List.exists(function (t2) { return allows_variance_to(t, apply_params(a.a_params, pl, t2)); }, a.a_to)) {
+					error([cannot_unify(t1, t2)]);
+				}
+			case [t, TAbstract(a, pl)]:
+				type_eq(EqBothDynamic, t, apply_params(a.a_params, pl, a.a_this));
+				if (!List.exists(function (t2) { return allows_variance_to(t, apply_params(a.a_params, pl, t2)); }, a.a_from)) {
+					error([cannot_unify(t1, t2)]);
+				}
+			case [t1=TAnon(a1), t2=TAnon(a2)]:
+				rec_stack(unify_stack, {fst:t1, snd:t2},
+					function (pair) { var a = pair.fst; var b = pair.snd; return fast_eq(a, t1) && fast_eq(b, t2); },
+					function () { unify_anons(t1, t2, a1, a2); },
+					function (l) { error(l); }
+				);
+			case _:
+				error([cannot_unify(t1, t2)]);
+
+		}
+	}
+
 	public static function unify_type_params (a:core.Type.T, b:core.Type.T, tl1:TParams, tl2:TParams) : Void {
-		trace("TODO: unify_type_params");
-		throw false;
+		List.iter2 (function (t1:T, t2:T) {
+			try {
+				with_variance(type_eq.bind(EqRightDynamic), t1, t2);
+			}
+			catch (exc:Unify_error) {
+				var l = exc.l;
+				var err = cannot_unify(a, b);
+				error(err::(Invariant_parameter(t1, t2) :: l));
+			}
+		}, tl1, tl2);
+	}
+
+	public static function with_variance (f:(T, T)->Void, t1:T, t2:T) : Void {
+		try {
+			f(t1, t2);
+		}
+		catch(exc:Unify_error) {
+			var l = exc.l;
+			try {
+				unify_with_variance(with_variance.bind(f), t1, t2);
+			}
+			catch (_:Unify_error) {
+				throw new Unify_error(l);
+			}
+		}
 	}
 
 	public static function unify_with_access (t1:T, f2:TClassField) : Void {

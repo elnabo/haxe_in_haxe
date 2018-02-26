@@ -110,7 +110,7 @@ class List {
 				return Hd(f(v), map(f, tl));
 		}
 	}
-	
+
 	public static function rev_map<A, B> (f:A->B, l:ImmutableList<A>) : ImmutableList<B> {
 		var res = Tl;
 		var curr = l;
@@ -143,6 +143,16 @@ class List {
 		}
 	}
 
+	public static function find_map<A,B> (f:A->Option<B>, l:ImmutableList<A>): B {
+		return switch (l) {
+			case Tl: throw ocaml.Not_found.instance;
+			case Hd(v, tl):
+				switch (f(v)) {
+					case None: find_map(f, tl);
+					case Some(b): b;
+				}
+		}
+	}
 	public static function filter_map<A,B> (f:A->Option<B>, l:ImmutableList<A>): ImmutableList<B> {
 		return switch (l) {
 			case Tl: Tl;
@@ -211,7 +221,7 @@ class List {
 				(a.equals(v.fst)) ? v.snd : assoc(a, tl);
 		}
 	}
-	
+
 	public static function assq<A, B> (a:A, b:ImmutableList<{fst:A, snd:B}>) : B {
 		return switch (b) {
 			case Tl: throw ocaml.Not_found.instance;

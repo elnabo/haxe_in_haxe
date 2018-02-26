@@ -3,6 +3,10 @@ package ocaml;
 using equals.Equal;
 
 class Hashtbl {
+	// public static inline function create<A,B> (i:Int) : Map<A,B> {
+	// 	return cast new Map<Dynamic,Dynamic>();
+	// }
+
 	public static inline function add<A, B> (map:Map<A,B>, key:A, value:B) : Void {
 		map.set(key, value);
 	}
