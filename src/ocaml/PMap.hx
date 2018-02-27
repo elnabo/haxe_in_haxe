@@ -9,10 +9,12 @@ class PMap {
 	}
 
 	public static function add<A,B> (key:A, value:B, m:Map<A,B>) : Map<A,B> {
+		var m = m.copy();
 		m.set(key, value);
 		return m;
 	}
 	public static function remove<A,B> (key:A, m:Map<A,B>) : Map<A,B> {
+		var m = m.copy();
 		m.remove(key);
 		return m;
 	}

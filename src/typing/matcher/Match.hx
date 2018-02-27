@@ -4,10 +4,11 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
 import ocaml.List;
+using equals.Equal;
+using ocaml.Cloner;
 
 class Match {
 	public static function match_expr (ctx:context.Typecore.Typer, e:core.Ast.Expr, cases:ImmutableList<core.Ast.Case>, def:Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("typing.matcher.Match.match_expr");
 		var match_debug = core.Meta.has(Custom(":matchDebug"), ctx.curfield.cf_meta);
 		function loop (e:core.Ast.Expr) : {fst:core.Type.T, snd:ImmutableList<core.Type.TExpr>} {
 			return switch (e.expr) {
@@ -40,7 +41,65 @@ class Match {
 			case _: {fst:None, snd:with_type};
 		}
 		var tmono = _tmp.fst; var with_type = _tmp.snd;
-
-		throw false;
+		var cases = List.map(function (c:core.Ast.Case) : {fst:typing.matcher.Case.T, snd:ImmutableList<Any>, trd:ImmutableList<typing.matcher.Pattern>} {
+			var el = c.values; var eg = c.guard; var eo = c.expr; var p = c.pos;
+			var p = switch (eo) {
+				case Some(e) if (p.equals(core.Globals.null_pos)):
+					e.pos;
+				case _:
+					p;
+			}
+			var _tmp = typing.matcher.Case.make(ctx, t, el, eg, eo, with_type, p);
+			var case_ = _tmp.fst; var bindings = _tmp.snd; var pat = _tmp.trd;
+			return {fst:case_, snd:bindings, trd:[pat]};
+		}, cases);
+		function infer_switch_type () : core.Type.T {
+			return switch (with_type) {
+				case NoValue: core.Type.mk_mono();
+				case Value:
+					var el = List.map(function(c) {
+						var case_ = c.fst;
+						return switch (case_.case_expr) {
+							case Some(e): e;
+							case None: core.Type.mk(TBlock([]), ctx.t.tvoid, p);
+						}
+					}, cases);
+					typing.Typer.unify_min(ctx, el);
+				case WithType(t): t;
+			}
+		}
+		if (match_debug) {
+			Sys.println("CASES BEGIN");
+			List.iter(function (c) {
+				var patterns = c.trd;
+				Sys.println(List.join(",", List.map(typing.matcher.Pattern.to_string, patterns)));
+			}, cases);
+			Sys.println("CASES END");
+		}
+		var dt = typing.matcher.Compile.compile(ctx, match_debug, subjects, cases, p);
+		if (match_debug) {
+			Sys.println("DECISION TREE BEGIN");
+			Sys.println(typing.matcher.Decision_tree.to_string("", dt));
+			Sys.println("DECISION TREE END");
+		}
+		var e = try {
+			var t_switch = infer_switch_type();
+			switch (tmono) {
+				case Some(t): context.Typecore.unify(ctx, t_switch, t, p);
+				case _:
+			}
+			typing.matcher.TexprConverter.to_texpr(ctx, t_switch, match_debug, with_type, dt);
+		}
+		catch (_:typing.matcher.TexprConverter.Not_exhaustive) {
+			core.Error.error("Unmatched patterns: _", p);
+		}
+		if (match_debug) {
+			Sys.println("TEXPR BEGIN");
+			Sys.println(typing.Matcher.s_expr_pretty(e));
+			Sys.println("TEXPR END");
+		}
+		var e = e.clone();
+		e.epos = p;
+		return e;
 	}
 }

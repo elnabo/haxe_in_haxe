@@ -37,7 +37,7 @@ class Abort {
 class Initialize {
 	public static function set_platform (com:context.Common.Context, pf:core.Globals.Platform, file:String) {
 		if (com.platform != Cross) {
-			throw "Multiple targets";
+			throw new ocaml.Failure("Multiple targets");
 		}
 		context.Common.init_platform(com,pf);
 		com.file = file;
@@ -95,7 +95,7 @@ class Initialize {
 				}
 				if (es_version < 3 || es_version == 4) {
 					// we don't support ancient and there's no 4th
-					throw "Invalid -D js-es value";
+					throw new ocaml.Failure("Invalid -D js-es value");
 				}
 
 				if (es_version >= 5) {
@@ -721,15 +721,15 @@ class Main {
 					if (sys.FileSystem.exists(file)) {
 						var s_bytes = sys.io.File.getBytes(file);
 						if (s_bytes.length > 12000000) {
-							throw "Resource '" + file + "' excess the maximum size of 12MB";
+							throw new ocaml.Failure("Resource '" + file + "' excess the maximum size of 12MB");
 						}
 						data = s_bytes.toString();
 					}
 					else {
-						throw "Resource file not found : " + file;
+						throw new ocaml.Failure("Resource file not found : " + file);
 					}
 					if (com.resources.exists(name)) {
-						throw "Duplicate resource name " + name;
+						throw new ocaml.Failure("Duplicate resource name " + name);
 					}
 					com.resources.set(name, data);
 				}), doc:"<file>[@name] : add a named resource file"},
@@ -969,7 +969,7 @@ class Main {
 					if (ctx.has_next || ctx.has_error) {
 						throw new Abort();
 					}
-					throw "No completion point was found";
+					throw new ocaml.Failure("No completion point was found");
 				}
 
 				var t = core.Timer.timer(["filters"]);
@@ -1012,7 +1012,7 @@ class Main {
 				for (element in sdmc) {
 					var r = run_command(ctx, element);
 					if (r != 0) {
-						throw "Command failed with error " + r;
+						throw new ocaml.Failure("Command failed with error " + r);
 					}
 				}
 			}
@@ -1086,9 +1086,9 @@ class Main {
 		catch (e:ocaml.Arg.Help) {
 			message(ctx, CMInfo(e.s, core.Globals.null_pos));
 		}
-		catch (e:Failure) {
+		catch (e:ocaml.Failure) {
 			if (!Server.is_debug_run()) {
-				error(ctx, "Error: "+e.s, core.Globals.null_pos);
+				error(ctx, "Error: "+e.msg, core.Globals.null_pos);
 			}
 			else {
 				throw e;
@@ -1181,7 +1181,6 @@ class Main {
 		// 		std.Sys.exit(e.i);
 		// 	}
 		// }
-		catch (e:String) { throw e; }
 		catch (e:Bool) { throw e; }
 		catch (e:Dynamic) {
 			trace("Exception  Dynamic");
@@ -1205,9 +1204,10 @@ class Main {
 		var args = std.Sys.args();
 
 		try {
-			throw "Not found";
+			trace("TODO: HAXE_COMPILATION_SERVER handling code");
+			throw ocaml.Not_found.instance;
 		}
-		catch (e:String) {
+		catch (_:ocaml.Not_found) {
 			try {
 				process_params(Server.createContext, args);
 			}

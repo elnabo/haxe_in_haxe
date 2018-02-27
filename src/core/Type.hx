@@ -1257,6 +1257,11 @@ class Type {
 		}
 	}
 
+	public static function s_const (c:TConstant) : String {
+		trace("TODO: s_const");
+		throw false;
+	}
+
 	public static function s_expr_pretty (print_var_ids:Bool, tabs:String, top_level:Bool, s_type:T->String, e:TExpr) : String {
 		trace("TODO: s_expr_pretty");
 		throw false;

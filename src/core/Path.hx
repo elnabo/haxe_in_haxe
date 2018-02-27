@@ -66,7 +66,7 @@ class Path {
 		var cl = get_path_parts(f);
 		function error (msg) : Path {
 			var msg = "Could not process argument "+f+"\n"+msg;
-			throw msg;
+			throw new ocaml.Failure(msg);
 		}
 		function invalid_char (x:String) {
 			for (i in 1...x.length) {
@@ -85,7 +85,7 @@ class Path {
 		function loop (l:ImmutableList<String>) : core.Path {
 			return switch (l) {
 				case []: error("empty part");
-				case [x]: 
+				case [x]:
 					invalid_char(x);
 					new Path([], x);
 				case x::l:
@@ -110,10 +110,10 @@ class Path {
 
 	public static function check_uppercase (x:String) : Void {
 		if (x.length == 0) {
-			throw "empty part";
+			throw new ocaml.Failure("empty part");
 		}
 		else if (!starts_uppercase(x)) {
-			throw "Class name must start with uppercase character";
+			throw new ocaml.Failure("Class name must start with uppercase character");
 		}
 	}
 

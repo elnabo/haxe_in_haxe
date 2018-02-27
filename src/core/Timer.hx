@@ -50,7 +50,7 @@ class Timer {
 		t.total = t.total + dt;
 		function loop() {
 			switch (curtime.get()) {
-				case []: throw "Timer " + List.join(".", t.id) + " closed while not active";
+				case []: throw new ocaml.Failure("Timer " + List.join(".", t.id) + " closed while not active");
 				case tt::l:
 					curtime.set(l);
 					if (t != tt) {

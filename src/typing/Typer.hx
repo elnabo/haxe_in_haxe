@@ -1319,7 +1319,7 @@ class Typer {
 		}
 	}
 
-	public static function type_field (?resume:Bool=false, ctx:context.Typecore.Typer, e:core.Type.TExpr, i:String, p:core.Globals.Pos, mode:AccessMode) : Dynamic {
+	public static function type_field (?resume:Bool=false, ctx:context.Typecore.Typer, e:core.Type.TExpr, i:String, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
 		function no_field() : AccessKind {
 			if (resume) { throw ocaml.Not_found.instance; }
 			var t:core.Type.T = switch (core.Type.follow(e.etype)) {
