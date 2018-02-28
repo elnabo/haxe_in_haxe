@@ -5,6 +5,8 @@ import haxe.ds.Option;
 import ocaml.List;
 import ocaml.PMap;
 
+using ocaml.Cloner;
+
 typedef Pattern_context = {
 	ctx:context.Typecore.Typer,
 	or_locals: Option<Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>>,
@@ -49,7 +51,6 @@ class Pattern {
 	}
 
 	public static function make_(pctx:Pattern_context, toplevel:Bool, t:core.Type.T, e:core.Ast.Expr) : Pattern {
-		trace("TODO: Pattern.make_");
 		var ctx = pctx.ctx;
 		var p = e.pos;
 		function fail () : Dynamic {
@@ -290,7 +291,168 @@ class Pattern {
 						var s = bp.msg;
 						core.Error.error(s, p);
 					}
-				case _: trace("TODO: finish Pattern.make_"); throw false;
+				case EArrayDecl(el):
+					switch (core.Type.follow(t)) {
+						case TFun({args:tl, ret:tr}) if (tr.equals(typing.Matcher.fake_tuple_type)): // strict
+							function loop_(el:ImmutableList<core.Ast.Expr>, tl:ImmutableList<core.Type.TSignatureArg>) : ImmutableList<Pattern> {
+								return switch [el, tl] {
+									case [e::el, {t:t}::tl]:
+										var pat = make_(pctx, false, t, e);
+										pat::loop_(el, tl);
+									case [[], []]:
+										[];
+									case [[],_]: core.Error.error("Not enough arguments", p);
+									case [{pos:p}::_, []]: core.Error.error("Too many arguments", p);
+								}
+							}
+							var patterns = loop_(el, tl);
+							PatTuple(patterns);
+						case TInst({cl_path:{a:[], b:"Array"}}, [t2]), t2=TDynamic(_):
+							var patterns = List.map(function (e) { // real is mapi but i is unused
+								return make_(pctx, false, t2, e);
+							}, el);
+							PatConstructor(ConArray(List.length(patterns)), patterns);
+						case _: fail();
+					}
+				case EObjectDecl(fl):
+					function known_fields(t:core.Type.T) : ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}> {
+						return switch (core.Type.follow(t)) {
+							case TAnon(an):
+								PMap.fold(function (cf:core.Type.TClassField, acc:ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}>) {
+									return {fst:cf, snd:cf.cf_type}::acc;
+								}, an.a_fields, []);
+							case TInst(c, tl):
+								function loop (fields:ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}>, c:core.Type.TClass, tl:core.Type.TParams) {
+									var fields = List.fold_left(function (acc:ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}>, cf:core.Type.TClassField) {
+										return
+										if (context.Typecore.can_access(ctx, c, cf, false)) {
+											{fst:cf, snd:core.Type.apply_params(c.cl_params, tl, cf.cf_type)}::acc;
+										}
+										else {
+											acc;
+										}
+									}, fields, c.cl_ordered_fields);
+									return switch (c.cl_super) {
+										case None: fields;
+										case Some({c:csup, params:tlsup}): loop(fields, csup, List.map(core.Type.apply_params.bind(c.cl_params, tl), tlsup));
+									}
+								}
+								loop([], c, tl);
+							case TAbstract(a={a_impl:Some(c)}, tl):
+								var fields:ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}> = try {
+									var el = core.Meta.get(Forward, a.a_meta).params;
+									var sl = List.filter_map(function (e:core.Ast.Expr) {
+										return switch (e.expr) {
+											case EConst(CIdent(s)): Some(s);
+											case _: None;
+										}
+									}, el);
+									var fields = known_fields(core.Abstract.get_underlying_type(a, tl));
+									if (sl != []) {
+										fields;
+									}
+									else {
+										List.filter(function (arg:{fst:core.Type.TClassField, snd:core.Type.T}) {
+											var cf = arg.fst; var t = arg.snd;
+											return List.mem(cf.cf_name, sl);
+										}, fields);
+									}
+								}
+								catch (_:ocaml.Not_found) { Tl; } // []
+								var fields = List.fold_left(function (acc:ImmutableList<{fst:core.Type.TClassField, snd:core.Type.T}>, cf:core.Type.TClassField) {
+									return
+									if (core.Meta.has(Impl, cf.cf_meta)) {
+										{fst:cf, snd:core.Type.apply_params(a.a_params, tl, cf.cf_type)}::acc;
+									}
+									else {
+										acc;
+									}
+								}, fields, c.cl_ordered_statics);
+								fields;
+							case _: core.Error.error('Cannot field-match against ${typing.Matcher.s_type(t)}', e.pos);
+						}
+					}
+					var known_fields_ = known_fields(t);
+					function is_matchable(cf:core.Type.TClassField) : Bool {
+						return !cf.cf_kind.match(Method(_));
+					}
+					var _tmp = List.fold_left(function (arg1:{fst:ImmutableList<Pattern>, snd:ImmutableList<String>}, arg2) {
+						var patterns = arg1.fst; var fields = arg1.snd;
+						var cf = arg2.fst; var t = arg2.snd;
+						return
+						try {
+							if (pctx.in_reification && cf.cf_name == "pos") {
+								throw ocaml.Not_found.instance;
+							}
+							var e1 = core.ast.Expr.field_assoc(cf.cf_name, fl);
+							{fst:make_(pctx, false, t, e1)::patterns, snd:cf.cf_name::fields};
+						}
+						catch (_:ocaml.Not_found) {
+							if (is_matchable(cf)) {
+								{fst:({t:PatAny, pos:cf.cf_pos}: Pattern) :: patterns, snd:cf.cf_name::fields};
+							}
+							else {
+								{fst:patterns, snd:fields};
+							}
+						}
+					}, {fst:Tl, snd:Tl}, known_fields_);
+					var patterns = _tmp.fst; var fields =_tmp.snd;
+					List.iter(function (of:core.Ast.ObjectField) {
+						var s = of.name; var e = of.expr;
+						if (!List.mem(s, fields)) {
+							core.Error.error('${typing.Matcher.s_type(t)} has no field ${s}', e.pos);
+						}
+					}, fl);
+					PatConstructor(ConFields(fields), patterns);
+				case EBinop(OpOr, e1, e2):
+					var pctx1 = pctx.clone(); pctx1.current_locals = new Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>();
+					var pat1 = make_(pctx1, toplevel, t, e1);
+					var pctx2 = pctx.clone(); pctx2.current_locals = new Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>(); pctx2.or_locals = Some(pctx1.current_locals);
+					var pat2 = make_(pctx2, toplevel, t, e2);
+					PMap.iter (function (name:String, other:{fst:core.Type.TVar, snd:core.Globals.Pos}) {
+						var v = other.fst; var p = other.snd;
+						if (!PMap.mem(name, pctx2.current_locals)) {
+							verror(name, p);
+						}
+						pctx.current_locals = PMap.add(name, {fst:v, snd:p}, pctx.current_locals);
+					}, pctx1.current_locals);
+					PatOr(pat1, pat2);
+				case EBinop(OpAssign, e1, e2):
+					function loop (in_display:Bool, e:core.Ast.Expr) : typing.matcher.pattern.T {
+						return switch (e) {
+							case {expr:EConst(CIdent(s)), pos:p}:
+								var v = add_local(s, p);
+								if (in_display) {
+									typing.Typer.display_expr(ctx, e, core.Type.mk(TLocal(v), v.v_type, p), WithType(t), p);
+								}
+								var pat = make_(pctx, false, t, e2);
+								PatBind(v, pat);
+							case {expr:EParenthesis(e1)}: loop(in_display, e1);
+							case {expr:EDisplay(e1, _)}: loop(true, e1);
+							case _: fail();
+
+						}
+					}
+					loop(false, e1);
+				case EBinop(OpArrow, e1, e2):
+					var restore = context.Typecore.save_locals(ctx);
+					ctx.locals = pctx.ctx.locals;
+					var v = add_local("_", core.Globals.null_pos);
+					var e1 = typing.Typer.type_expr(ctx, e1, Value);
+					v.v_name = "tmp";
+					restore();
+					var pat = make_(pctx, toplevel, e1.etype, e2);
+					PatExtractor(v, e1, pat);
+				case EDisplay(e, iscall):
+					var pat = loop(e);
+					if (iscall) {
+						typing.Typer.handle_signature_display(ctx, e, WithType(t));
+					}
+					else {
+						typing.Typer.handle_display(ctx, e, WithType(t));
+					}
+					pat;
+				case _: fail();
 
 			}
 		}

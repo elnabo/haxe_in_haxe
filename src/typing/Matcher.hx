@@ -4,6 +4,11 @@ import ocaml.List;
 using ocaml.Cloner;
 using equals.Equal;
 
+class Internal_match_failure {
+	public static final instance = new Internal_match_failure();
+	function new () {}
+}
+
 class Matcher {
 	public static function s_type (t:core.Type.T) : String {
 		return core.Type.s_type(core.Type.print_context(), t);

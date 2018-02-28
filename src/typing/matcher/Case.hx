@@ -12,9 +12,13 @@ typedef T = {
 	case_pos: core.Globals.Pos
 }
 
+@:structInit
 class Case {
+	public var fst:typing.matcher.Case.T;
+	public var snd:ImmutableList<{v:core.Type.TVar, p:core.Globals.Pos, e:core.Type.TExpr}>;
+	public var trd:ImmutableList<typing.matcher.Pattern>;
 
-	public static function make(ctx:context.Typecore.Typer, t:core.Type.T, el:ImmutableList<core.Ast.Expr>, eg:Option<core.Ast.Expr>, eo_ast:Option<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : {fst:T, snd:ImmutableList<Any>, trd:typing.matcher.Pattern} {
+	public static function make(ctx:context.Typecore.Typer, t:core.Type.T, el:ImmutableList<core.Ast.Expr>, eg:Option<core.Ast.Expr>, eo_ast:Option<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : {fst:T, snd:ImmutableList<{v:core.Type.TVar, p:core.Globals.Pos, e:core.Type.TExpr}>, trd:typing.matcher.Pattern} {
 		function collapse_case (el:ImmutableList<core.Ast.Expr>) : core.Ast.Expr {
 			return switch (el) {
 				case e::[]:

@@ -5,6 +5,10 @@ import ocaml.List;
 using equals.Equal;
 
 class Builder {
+	public static function make_int (basic, i:haxe.Int32, p:core.Globals.Pos) : core.Type.TExpr{
+		return core.Type.mk(TConst(TInt(i)), basic.tint, p);
+	}
+
 	public static function field (e:core.Type.TExpr, name:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
 		return core.Type.mk(TField(e, try { core.Type.quick_field(e.etype, name); } catch (_:ocaml.Not_found) { throw false; }), t, p);
 	}

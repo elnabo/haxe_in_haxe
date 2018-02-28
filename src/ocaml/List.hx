@@ -40,6 +40,12 @@ class List {
 		}
 	}
 
+	public static function init<T> (length:Int, f:Int->T): ImmutableList<T> {
+		if (length < 0) { throw ocaml.Invalid_argument.instance; }
+		var arr = [for (i in 0...length) f(i)];
+		return arr;
+	}
+
 	public static function join<T> (sep:String, l:ImmutableList<T>) : String {
 		var buf = new StringBuf();
 		function loop (l:ImmutableList<T>) {
@@ -108,6 +114,13 @@ class List {
 			case Tl: Tl;
 			case Hd(v, tl):
 				return Hd(f(v), map(f, tl));
+		}
+	}
+	public static inline function mapi<A, B> (f:Int->A->B, l:ImmutableList<A>, ?index:Int=0) : ImmutableList<B> {
+		return switch (l) {
+			case Tl: Tl;
+			case Hd(v, tl):
+				return Hd(f(index, v), mapi(f, tl, index+1));
 		}
 	}
 

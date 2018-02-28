@@ -41,7 +41,7 @@ class Match {
 			case _: {fst:None, snd:with_type};
 		}
 		var tmono = _tmp.fst; var with_type = _tmp.snd;
-		var cases = List.map(function (c:core.Ast.Case) : {fst:typing.matcher.Case.T, snd:ImmutableList<Any>, trd:ImmutableList<typing.matcher.Pattern>} {
+		var cases = List.map(function (c:core.Ast.Case) : typing.matcher.Case { //{fst:typing.matcher.Case.T, snd:ImmutableList<Any>, trd:ImmutableList<typing.matcher.Pattern>} {
 			var el = c.values; var eg = c.guard; var eo = c.expr; var p = c.pos;
 			var p = switch (eo) {
 				case Some(e) if (p.equals(core.Globals.null_pos)):
@@ -57,7 +57,7 @@ class Match {
 			return switch (with_type) {
 				case NoValue: core.Type.mk_mono();
 				case Value:
-					var el = List.map(function(c) {
+					var el = List.map(function(c:typing.matcher.Case) {
 						var case_ = c.fst;
 						return switch (case_.case_expr) {
 							case Some(e): e;
@@ -70,7 +70,7 @@ class Match {
 		}
 		if (match_debug) {
 			Sys.println("CASES BEGIN");
-			List.iter(function (c) {
+			List.iter(function (c:typing.matcher.Case) {
 				var patterns = c.trd;
 				Sys.println(List.join(",", List.map(typing.matcher.Pattern.to_string, patterns)));
 			}, cases);

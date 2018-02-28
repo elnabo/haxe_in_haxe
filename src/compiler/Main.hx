@@ -1198,6 +1198,7 @@ class Main {
 		{
 			context.Typecore.make_call_ref.set(typing.Typer.make_call);
 			context.Typecore.match_expr_ref.set(typing.matcher.Match.match_expr);
+			context.Typecore.find_array_access_raise_ref.set(context.typecore.AbstractCast.find_array_access_raise);
 		}
 		var other = core.Timer.timer(["other"]);
 		typing.MacroContext.setup();

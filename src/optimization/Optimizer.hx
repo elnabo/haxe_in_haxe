@@ -8,6 +8,8 @@ using ocaml.List;
 using ocaml.PMap;
 using ocaml.Ref;
 
+using equals.Equal;
+
 typedef In_local = {
 	i_var: core.Type.TVar,
 	i_subst: core.Type.TVar,
@@ -787,8 +789,199 @@ class Optimizer {
 	// ----------------------------------------------------------------------
 	// LOOPS
 	public static function optimize_for_loop (ctx:context.Typecore.Typer, i:String, pi:core.Globals.Pos, e1:core.Type.TExpr, e2:core.Ast.Expr, p:core.Globals.Pos) : Option<core.Type.TExpr> {
-		trace("Optimizer.optimize_for_loop");
-		throw false;
+		var t_void = ctx.t.tvoid;
+		var t_int = ctx.t.tint;
+		function lblock(el) : Option<core.Type.TExpr> {
+			return Some(core.Type.mk(TBlock(el), t_void, p));
+		}
+		function mk_field (e, n) : core.Type.TExprExpr {
+			return TField(e, try {core.Type.quick_field(e.etype, n); } catch (_:ocaml.Not_found) { trace("Shall not be seen"); throw false; });
+		}
+		function gen_int_iter(pt:core.Type.T, f_get:(core.Type.TExpr, core.Type.TExpr, core.Type.T, core.Globals.Pos) -> core.Type.TExpr, f_length:(core.Type.TExpr, core.Globals.Pos)->core.Type.TExpr) : Option<core.Type.TExpr> {
+			var i = context.Typecore.add_local(ctx, i, pt, pi);
+			var index = context.Typecore.gen_local(ctx, t_int, pi);
+			index.v_meta = ({name:ForLoopVariable, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: index.v_meta;
+			var _tmp = switch (e1.eexpr) {
+				case TLocal(_): {fst:e1, snd:None};
+				case _:
+					var atmp = context.Typecore.gen_local(ctx, e1.etype, e1.epos);
+					{fst:core.Type.mk(TLocal(atmp), e1.etype, e1.epos), snd:Some({fst:atmp, snd:Some(e1)})};
+			}
+			var arr = _tmp.fst; var avars = _tmp.snd;
+			var iexpr = core.Type.mk(TLocal(index), t_int, p);
+			var e2 = typing.Typer.type_expr(ctx, e2, NoValue);
+			var aget= core.Type.mk(TVar(i, Some(f_get(arr, iexpr, pt, p))), t_void, pi);
+			var incr = core.Type.mk(TUnop(OpIncrement, Prefix, iexpr), t_int, p);
+			var block = switch (e2.eexpr) {
+				case TBlock(el):
+					core.Type.mk(TBlock(aget::incr::el), t_void, e2.epos);
+				case _:
+					core.Type.mk(TBlock([aget, incr, e2]), t_void, p);
+			}
+			var ivar = Some(core.Type.mk(TConst(TInt(0)), t_int, p));
+			var elength = f_length(arr, p);
+			var el:ImmutableList<core.Type.TExpr> = [ core.Type.mk(
+				TWhile(
+					core.Type.mk(TBinop(OpLt, iexpr, elength), ctx.t.tbool, p),
+					block,
+					NormalWhile
+				), t_void, p)
+			];
+			var el = switch (avars) {
+				case None: el;
+				case Some({fst:v, snd:eo}):
+					core.Type.mk(TVar(v, eo), t_void, p) :: el;
+			}
+			var el = core.Type.mk(TVar(index, ivar), t_void, p)::el;
+			return lblock(el);
+		}
+
+		function get_next_array_element(arr:core.Type.TExpr, iexpr:core.Type.TExpr, pt:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+			return core.Type.mk(TArray(arr, iexpr), pt, p);
+		}
+		function get_array_length(arr:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {
+			return core.Type.mk(mk_field(arr, "length"), ctx.com.basic.tint, p);
+		}
+		return switch [e1.eexpr, core.Type.follow(e1.etype)] {
+			case [TNew({cl_path:{a:[], b:"IntIterator"}}, [], [i1, i2]), _]:
+				var max = switch [i1.eexpr, i2.eexpr] {
+					case [TConst(TInt(a)), TConst(TInt(b))] if (b < a):
+						core.Error.error("Range operator can't iterate backwards", p);
+					case [_, TConst(_)]: None;
+					case _: Some(context.Typecore.gen_local(ctx, t_int, e1.epos));
+				}
+				var tmp = context.Typecore.gen_local(ctx, t_int, pi);
+				tmp.v_meta = ({name:ForLoopVariable, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: tmp.v_meta;
+				var i = context.Typecore.add_local(ctx, i, t_int, pi);
+				function check(e:core.Type.TExpr) : Void {
+					switch (e.eexpr) {
+						case TBinop(OpAssign, {eexpr:TLocal(l)}, _),
+							TBinop(OpAssignOp(_), {eexpr:TLocal(l)}, _),
+							TUnop(OpIncrement, _, {eexpr:TLocal(l)}),
+							TUnop(OpDecrement, _, {eexpr:TLocal(l)}) if (l.equals(i)):
+								core.Error.error("Loop variable cannot be modified", e.epos);
+						case _: core.Type.iter(check, e);
+					}
+				}
+				var e2 = context.Typecore.type_expr(ctx, e2, NoValue);
+				check(e2);
+				var etmp = core.Type.mk(TLocal(tmp), t_int, p);
+				var incr = core.Type.mk(TUnop(OpIncrement, Postfix, etmp), t_int, p);
+				var init = core.Type.mk(TVar(i, Some(incr)), t_void, pi);
+				var block = switch (e2.eexpr) {
+					case TBlock(el): core.Type.mk(TBlock(init::el), t_void, e2.epos);
+					case _: core.Type.mk(TBlock([init, e2]), t_void, p);
+				}
+				// force locals to be of Int type (to prevent Int/UInt issues)
+				var i2 = switch (core.Type.follow(i2.etype)) {
+					case TAbstract({a_path:{a:[], b:"Int"}}, []): i2;
+					case _:
+						var _i2 = i2.clone();
+						_i2.eexpr = TCast(i2, None);
+						_i2.etype = t_int;
+						_i2;
+				}
+				switch (max) {
+					case None:
+						lblock([
+							core.Type.mk(TVar(tmp, Some(i1)), t_void, p),
+							core.Type.mk(TWhile(
+								core.Type.mk(TBinop(OpLt, etmp, i2), ctx.t.tbool, p),
+								block,
+								NormalWhile
+							), t_void, p)
+						]);
+					case Some(max):
+						lblock([
+							core.Type.mk(TVar(tmp, Some(i1)), t_void, p),
+							core.Type.mk(TVar(max, Some(i2)), t_void, p),
+							core.Type.mk(TWhile(
+								core.Type.mk(TBinop(OpLt, etmp, core.Type.mk(TLocal(max), t_int, p)), ctx.t.tbool, p),
+								block,
+								NormalWhile
+							), t_void, p)
+						]);
+				}
+			case [TArrayDecl(el), TInst({cl_path:{a:[], b:"Array"}}, [pt])] if (false):
+				// Not doing unreachable code
+				trace("Shall not be seen"); throw false;
+			case [_, TInst({cl_path:{a:[], b:"Array"}}, [pt])],
+				[_, TInst({cl_path:{a:["flash"], b:"Vector"}}, [pt])]:
+				gen_int_iter(pt, get_next_array_element, get_array_length);
+			case [_, TInst(c={cl_array_access:Some(pt)}, pl)] if ((try {switch (core.Type.follow(PMap.find("length", c.cl_fields).cf_type)) { case TAbstract({a_path:{a:[], b:"Int"}}, []): true; case _: false; }} catch (_:ocaml.Not_found) { false; }) && !PMap.mem("iterator", c.cl_fields)):
+				gen_int_iter(core.Type.apply_params(c.cl_params, pl, pt), get_next_array_element, get_array_length);
+			case [_, TAbstract(a={a_impl:Some(c)}, tl)]:
+				try {
+					var cf_length = PMap.find("get_length", c.cl_statics);
+					function get_length (e:core.Type.TExpr, p:core.Globals.Pos) {
+						return context.Typecore.make_static_call(ctx, c, cf_length, core.Type.apply_params.bind(a.a_params, tl), [e], ctx.com.basic.tint, p);
+					}
+					switch (core.Type.follow(cf_length.cf_type)) {
+						case TFun({ret:tr}):
+							switch (core.Type.follow(tr)) {
+								case TAbstract({a_path:{a:[], b:"Int"}}, _):
+								case _: throw ocaml.Not_found.instance;
+							}
+						case _: throw ocaml.Not_found.instance;
+					}
+					try {
+						// first try: do we have an @:arrayAccess getter field?
+						var todo = core.Type.mk(TConst(TNull), ctx.t.tint, p);
+						var _tmp = context.Typecore.find_array_access_raise_ref.get()(ctx, a, tl, todo, None, p);
+						var cf = _tmp.cf; var r = _tmp.r;
+						function get_next (e_base:core.Type.TExpr, e_index:core.Type.TExpr, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+							return context.Typecore.make_static_call(ctx, c, cf, core.Type.apply_params.bind(a.a_params, tl), [e_base, e_index], r, p);
+						}
+						gen_int_iter(r, get_next, get_length);
+					}
+					catch (_:ocaml.Not_found) {
+						// second try: do we have @:arrayAccess on the abstract itself? *)
+						if (!core.Meta.has(ArrayAccess, a.a_meta)) {
+							throw ocaml.Not_found.instance;
+						}
+						// let's allow this only for core-type abstracts *)
+						if (!core.Meta.has(CoreType, a.a_meta)) {
+							throw ocaml.Not_found.instance;
+						}
+						// in which case we assume that a singular type parameter is the element type *)
+						var t = switch (tl) {
+							case [t]: t;
+							case _: throw ocaml.Not_found.instance;
+						}
+						gen_int_iter(t, get_next_array_element, get_length);
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					None;
+				}
+			case [_, TInst(c={cl_kind:KGenericInstance({cl_path:{a:["haxe", "ds"], b:"GenericStack"}}, [t])}, [])]:
+				var tcell = try {
+					PMap.find("head", c.cl_fields).cf_type;
+				}
+				catch (_:ocaml.Not_found) {
+					trace("Shall not be seen"); Sys.exit(255); throw false;
+				}
+				var i = context.Typecore.add_local(ctx, i, t, p);
+				var cell = context.Typecore.gen_local(ctx, tcell, p);
+				var cexpr = core.Type.mk(TLocal(cell), tcell, p);
+				var e2 = typing.Typer.type_expr(ctx, e2, NoValue);
+				var evar = core.Type.mk(TVar(i, Some(core.Type.mk(mk_field(cexpr, "elt"), t, p))), t_void, pi);
+				var enext = core.Type.mk(TBinop(OpAssign, cexpr, core.Type.mk(mk_field(cexpr, "next"), tcell, p)), tcell, p);
+				var block = switch (e2.eexpr) {
+					case TBlock(el): core.Type.mk(TBlock(evar::enext::el), t_void, e2.epos);
+					case _: core.Type.mk(TBlock([evar, enext, e2]), t_void, p);
+				}
+				lblock([
+					core.Type.mk(TVar(cell, Some(core.Type.mk(mk_field(e1, "head"), tcell, p))), t_void, p),
+					core.Type.mk(TWhile(
+						core.Type.mk(TBinop(OpNotEq, cexpr, core.Type.mk(TConst(TNull), tcell, p)), ctx.t.tbool, p),
+						block,
+						NormalWhile
+					), t_void, p)
+				]);
+			case _: None;
+
+		}
 	}
 
 	public static function optimize_for_loop_iterator (ctx:context.Typecore.Typer, v:core.Type.TVar, e1:core.Type.TExpr, e2:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {

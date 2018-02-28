@@ -13,4 +13,16 @@ class Constructor {
 			case ConArray(i): '<array ${i}>';
 		}
 	}
+
+	public static function arity (con:typing.matcher.constructor.T) : Int {
+		return switch (con) {
+			case ConEnum(_, {ef_type:TFun({args:args})}): List.length(args);
+			case ConEnum(_, _): 0;
+			case ConConst(_): 0;
+			case ConFields(fields): List.length(fields);
+			case ConArray(i): i;
+			case ConTypeExpr(_): 0;
+			case ConStatic(_):0;
+		}
+	}
 }

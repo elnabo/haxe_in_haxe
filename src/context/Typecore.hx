@@ -149,6 +149,7 @@ class Typecore {
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var match_expr_ref = new Ref<(context.Typecore.Typer, core.Ast.Expr, ImmutableList<core.Ast.Case>, Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>,context.Typecore.WithType,core.Globals.Pos)->core.Type.TExpr>(function(_,_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(context.typecore.AbstractCast.cast_or_unify_raise);
+	public static var find_array_access_raise_ref = new Ref<(Typer, core.Type.TAbstract, core.Type.TParams, core.Type.TExpr, Option<core.Type.TExpr>, core.Globals.Pos)->{cf:core.Type.TClassField, tf:core.Type.T, r:core.Type.T, e1:core.Type.TExpr, e2o:Option<core.Type.TExpr>}>(function (_,_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var analyser_run_on_expr_ref = new Ref<context.Common.Context-> core.Type.TExpr -> core.Type.TExpr>(function (_, _) { trace("Shall not be seen"); throw false; });
 
 	public static function display_error (ctx:Typer, msg:String, p:core.Globals.Pos) : Void {
