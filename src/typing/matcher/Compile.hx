@@ -13,7 +13,7 @@ typedef Matcher_context = {
 	dt_count: Int
 }
 
-typedef Var = {fst:core.Type.TVar, snd:core.Globals.Pos, trd:core.Type.TExpr};
+typedef Var = {v:core.Type.TVar, p:core.Globals.Pos, e:core.Type.TExpr};
 class Extractor {
 	public static final instance = new Extractor();
 	function new () {}
@@ -103,24 +103,50 @@ class Compile {
 	}
 
 	public static function specialize (subject:core.Type.TExpr, con:typing.matcher.constructor.T, cases:ImmutableList<Case>) : ImmutableList<Case> {
-		trace("TODO: Compile.specialize");
-		// var arity = typing.matcher.Constructor.arity(con);
-		// function loop(acc:ImmutableList<Case>, cases:ImmutableList<Case>) :ImmutableList<Case> {
-		// 	return switch (cases) {
-		// 		case {fst:case_, snd:bindings, trd:patterns}::cases:
-		// 			switch (patterns) {
-		// 				case {t:PatConstructor(con_, patterns1)}::patterns2 if ():
-		// 			}
-		// 		case []: List.rev(acc);
-		// 	}
-		// }
-		// return loop([], cases);
-		throw false;
+		var arity = typing.matcher.Constructor.arity(con);
+		function loop(acc:ImmutableList<Case>, cases:ImmutableList<Case>) :ImmutableList<Case> {
+			return switch (cases) {
+				case {fst:case_, snd:bindings, trd:patterns}::cases:
+					switch (patterns) {
+						case {t:PatConstructor(con_, patterns1)}::patterns2 if (Constructor.equal(con, con_)):
+							loop(({fst:case_, snd:bindings, trd:List.append(patterns1, patterns2)}:Case) :: acc, cases);
+						case {t:PatVariable(v), pos:p}::patterns2:
+							var patterns1 = List.make(arity, ({t:PatAny, pos:p}:Pattern));
+							loop(({fst:case_, snd:{v:v, p:p, e:subject}::bindings, trd:List.append(patterns1, patterns2)} : Case)::acc, cases);
+						case (pat={t:PatAny})::patterns2:
+							var patterns1 = List.make(arity, pat);
+							loop(({fst:case_, snd:bindings, trd:List.append(patterns1, patterns2)}:Case)::acc, cases);
+						case {t:PatBind(v, pat), pos:p}::patterns:
+							loop(acc, ({fst:case_, snd:{v:v, p:p, e:subject}::bindings, trd:pat::patterns}:Case)::cases);
+						case _:
+							loop(acc, cases);
+					}
+				case []: List.rev(acc);
+			}
+		}
+		return loop([], cases);
 	}
 
 	public static function default_ (subject:core.Type.TExpr, cases:ImmutableList<Case>) : ImmutableList<Case> {
-		trace("TODO: Compile.default_");
-		throw false;
+		function loop(acc:ImmutableList<Case>, cases:ImmutableList<Case>) :ImmutableList<Case> {
+			return switch (cases) {
+				case {fst:case_, snd:bindings, trd:patterns}::cases:
+					switch (patterns) {
+						case {t:PatConstructor(_,_)}::_:
+							loop(acc, cases);
+						case {t:PatVariable(v), pos:p}::patterns:
+							loop(({fst:case_, snd:{v:v, p:p, e:subject}::bindings, trd:patterns}:Case)::acc, cases);
+						case (pat={t:PatAny})::patterns:
+							loop(({fst:case_, snd:bindings, trd:patterns}:Case)::acc, cases);
+						case {t:PatBind(v, pat), pos:p}::patterns:
+							loop(acc, ({fst:case_, snd:{v:v, p:p, e:subject}::bindings, trd:pat::patterns}:Case)::cases);
+						case _:
+							loop(acc, cases);
+					}
+				case []: List.rev(acc);
+			}
+		}
+		return loop([], cases);
 	}
 
 	public static function is_wildcard_pattern (pat:Pattern) {
@@ -224,10 +250,35 @@ class Compile {
 		}
 	}
 
-	public static function compile_leaf (mctx:Matcher_context, subjects:ImmutableList<core.Type.TExpr>, _case:Case, cases:ImmutableList<Case>) : typing.matcher.decisiontree.Dt {
-		var case_ = _case.fst; var bindings = _case.snd; var patterns = _case.trd;
-		trace("TODO: Compile.compile_leaf");
-		throw false;
+	public static function compile_leaf (mctx:Matcher_context, subjects:ImmutableList<core.Type.TExpr>, c:Case, cases:ImmutableList<Case>) : typing.matcher.decisiontree.Dt {
+		var case_ = c.fst; var bindings = c.snd; var patterns = c.trd;
+		if (mctx.match_debug) {
+			Sys.println('compile_leaf:\n\tsubjects: ${s_subjects(subjects)}\n\tcase: ${s_case(c)}\n\tcases: ${s_cases(cases)}');
+		}
+		var dt = leaf(mctx, case_);
+		var dt = switch (case_.case_guard) {
+			case None: dt;
+			case Some(e):
+				var dt2 = compile_(mctx, subjects, cases);
+				guard(mctx, e, dt, dt2);
+		}
+		function loop(patterns:ImmutableList<Pattern>, el:ImmutableList<core.Type.TExpr>) : ImmutableList<Var>{
+			return switch [patterns, el] {
+				case [[{t:PatAny}], _]: [];
+				case [{t:PatVariable(v), pos:p}::patterns, e::el]:
+					{v:v, p:p, e:e}::loop(patterns, el);
+				case [_::patterns, _::el]:
+					loop(patterns, el);
+				case [[], []]:
+					[];
+				case [[], e::_]:
+					core.Error.error("Invalid match: Not enough patterns", e.epos);
+				case [{pos:p}::_, []]:
+					core.Error.error("Invalid match: Too many patterns", p);
+			}
+		}
+		var bindings = List.append(bindings, loop(patterns, subjects));
+		return (bindings == []) ? dt : bind(mctx, bindings, dt);
 	}
 
 	public static function compile_switch (mctx:Matcher_context, subjects:ImmutableList<core.Type.TExpr>, cases:ImmutableList<Case>) : typing.matcher.decisiontree.Dt {
@@ -313,7 +364,7 @@ class Compile {
 				case _:
 					var v = context.Typecore.gen_local(ctx, e.etype, e.epos);
 					var ev = core.Type.mk(TLocal(v), e.etype, e.epos);
-					{fst:ev::subjects, snd:{fst:v, snd:e.epos, trd:e}::vars};
+					{fst:ev::subjects, snd:{v:v, p:e.epos, e:e}::vars};
 			}
 		}, {fst:[], snd:[]}, subjects);
 		var subjects = _tmp.fst; var vars = _tmp.snd;

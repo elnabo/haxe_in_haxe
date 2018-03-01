@@ -46,6 +46,9 @@ class List {
 		return arr;
 	}
 
+	public static function make<T> (count:Int, x:T) : ImmutableList<T> {
+		return (count <= 0) ? Tl : Hd(x, make(count-1, x));
+	}
 	public static function join<T> (sep:String, l:ImmutableList<T>) : String {
 		var buf = new StringBuf();
 		function loop (l:ImmutableList<T>) {

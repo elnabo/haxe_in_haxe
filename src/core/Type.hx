@@ -89,7 +89,7 @@ typedef TypeParams = ImmutableList<{
 }>;
 
 enum TConstant {
-	TInt (i:Int);
+	TInt (i:haxe.Int32);
 	TFloat (s:String);
 	TString (s:String);
 	TBool (b:Bool);

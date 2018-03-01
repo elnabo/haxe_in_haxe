@@ -486,7 +486,7 @@ class Typeload {
 				var tpath = new core.Path(t.tpackage, tname);
 				return try {
 					List.find(function (t) {
-						return !(core.Type.t_infos(t).mt_private && core.Type.t_path(t).equals(tpath));
+						return !(core.Type.t_infos(t).mt_private) && core.Type.t_path(t).equals(tpath);
 					}, m.m_types);
 				}
 				catch (_:ocaml.Not_found) {

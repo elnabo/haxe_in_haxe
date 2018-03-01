@@ -343,7 +343,7 @@ class Main {
 		if (com.platform == Flash || com.platform == Cpp || com.platform == Hl) {
 			List.iter(codegen.Codegen.fix_overrides.bind(com), com.types);
 		}
-
+		throw false;
 	}
 
 	public static function get_std_class_paths () : ImmutableList<String> {
