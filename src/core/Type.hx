@@ -1212,18 +1212,82 @@ class Type {
 
 	// ======= Printing =======
 
-	/** not sure if ImmutableList<String> */
-	public static function print_context () : Ref<ImmutableList<String>> {
+	public static function print_context () : Ref<ImmutableList<{fst:T, snd:Int}>> {
 		return new Ref(Tl);
 	}
 
-	/** not sure if ctx is ImmutableList<String> */
-	public static function s_type (ctx:Ref<ImmutableList<String>>, t:T) : String {
-		trace("TODO core.Type.s_type");
-		throw false;
+	public static function s_type (ctx:Ref<ImmutableList<{fst:T, snd:Int}>>, t:T) : String {
+		return switch (t) {
+			case TMono(r):
+				switch (r.get()) {
+					case None:
+						var _tmp = try {
+							List.assq(t, ctx.get());
+						}
+						catch (_:ocaml.Not_found) {
+							var n = List.length(ctx.get());
+							ctx.set({fst:t, snd:n}::ctx.get());
+							n;
+						}
+						'Unknown<${_tmp}>';
+					case Some(t): s_type(ctx, t);
+				}
+			case TEnum(e, tl):
+				core.Globals.s_type_path(e.e_path) + s_type_params(ctx, tl);
+			case TInst(c, tl):
+				switch (c.cl_kind) {
+					case KExpr(e): core.Ast.s_expr(e);
+					case _: core.Globals.s_type_path(c.cl_path) + s_type_params(ctx, tl);
+				}
+			case TType(t, tl):
+				core.Globals.s_type_path(t.t_path) + s_type_params(ctx, tl);
+			case TAbstract(a, tl):
+				core.Globals.s_type_path(a.a_path) + s_type_params(ctx, tl);
+			case TFun({args:[], ret:t}):
+				"Void -> "+s_fun(ctx, t, false);
+			case TFun({args:l, ret:t}):
+				List.join(" -> ", List.map(function (arg:TSignatureArg) {
+					var s = arg.name; var b = arg.opt; var t = arg.t;
+					return ((b) ? "?" : "") + ((s=="") ? "" : s+" : ") + s_fun(ctx, t, true);
+				}, l)) + " -> " + s_fun(ctx, t, false);
+			case TAnon(a):
+				switch (a.a_status.get()) {
+					case Statics(c): '{ Statics ${core.Globals.s_type_path(c.cl_path)} }';
+					case EnumStatics(e): '{ EnumStatics ${core.Globals.s_type_path(e.e_path)} }';
+					case AbstractStatics(a): '{ AbstractStatics ${core.Globals.s_type_path(a.a_path)} }';
+					case _:
+						var fl = PMap.fold(function (f, acc) {
+							var _tmp = (core.Meta.has(Optional, f.cf_meta) ? " ?" : " ")
+								+ f.cf_name + " : " + s_type(ctx, f.cf_type);
+								return _tmp::acc;
+
+						}, a.a_fields, []);
+						"{" + (!is_closed(a) ? "+" : "") + List.join(",",fl)+"}";
+				}
+			case TDynamic(_.get()=>t2):
+				"Dynamic" + s_type_params(ctx, (t.equals(t2) ? [] : [t2]));
+			case TLazy(f):
+				s_type(ctx, lazy_type(f));
+		}
 	}
 
-	public static function s_type_params (ctx:Ref<ImmutableList<String>>, arr:ImmutableList<T>) : String {
+	public static function s_fun(ctx:Ref<ImmutableList<{fst:T, snd:Int}>>, t:T, void_:Bool) : String {
+		return switch (t) {
+			case TFun(_): "("+s_type(ctx, t)+")";
+			case TAbstract({a_path:{a:[], b:"Void"}}, []) if (void_):
+				"("+s_type(ctx, t)+")";
+			case TMono(r):
+				switch (r.get()) {
+					case None: s_type(ctx, t);
+					case Some(t): s_fun(ctx, t, void_);
+				}
+			case TLazy(f):
+				s_fun(ctx, lazy_type(f), void_);
+			case _: s_type(ctx, t);
+		}
+	}
+
+	public static function s_type_params (ctx:Ref<ImmutableList<{fst:T, snd:Int}>>, arr:ImmutableList<T>) : String {
 		return switch (arr) {
 			case []: "";
 			case l : "<" + List.join(", ", List.map(s_type.bind(ctx), l)) + ">";

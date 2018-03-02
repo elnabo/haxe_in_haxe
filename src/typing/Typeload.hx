@@ -1137,10 +1137,104 @@ class Typeload {
 	}
 	// ----------------------------------------------------------------------
 	// Structure check
+	public static function valid_redefinition (ctx:context.Typecore.Typer, f1:core.Type.TClassField, t1:core.Type.T, f2:core.Type.TClassField, t2:core.Type.T) : Void { // child, parent
+		trace("TODO: Typeload.valid_redefinition");
+		throw false;
+	}
 
 	public static function check_overriding (ctx:context.Typecore.Typer, c:core.Type.TClass, f:core.Type.TClassField) : Void {
-		trace("TODO: Typeload.check_overriding");
-		throw false;
+		switch (c.cl_super) {
+			case None:
+				if (List.memq(f, c.cl_overrides)) {
+					context.Typecore.display_error(ctx, "Field "+f.cf_name+" is declared 'override' but doesn't override any field", f.cf_pos);
+				}
+			case _ if (c.cl_extern && core.Meta.has(CsNative, c.cl_meta)): //-net-lib specific: do not check overrides on extern CsNative classes
+			case Some({c:csup, params:params}):
+				var p = f.cf_pos;
+				var i = f.cf_name;
+				function check_field(f, get_super_field:(core.Type.TClass, String)->{t:core.Type.T, cf:core.Type.TClassField}, is_overload) {
+					try {
+						if (is_overload && !core.Meta.has(Overload, f.cf_meta)) {
+							context.Typecore.display_error(ctx, "Missing @:overload declaration for field "+i, p);
+						}
+						var _tmp = get_super_field(csup, i);
+						var t = _tmp.t; var f2 = _tmp.cf;
+						// allow to define fields that are not defined for this platform version in superclass
+						switch (f2.cf_kind) {
+							case Var({v_read:AccRequire(_)}): throw ocaml.Not_found;
+							case _:
+						}
+						if (ctx.com.config.pf_overload && core.Meta.has(Overload, f2.cf_meta) && !core.Meta.has(Overload, f.cf_meta)) {
+							context.Typecore.display_error(ctx, "Field " + i + " should be declared with @:overload since it was already declared as @:overload in superclass", p);
+						}
+						else if (!List.memq(f, c.cl_overrides)) {
+							context.Typecore.display_error(ctx, "Field " + i + " should be declared with 'override' since it is inherited from superclass " + core.Globals.s_type_path(csup.cl_path), p);
+						}
+						else if (!f.cf_public && f2.cf_public) {
+							context.Typecore.display_error(ctx, "Field " + i + " has less visibility (public/private) than superclass one", p);
+						}
+						else {
+							switch [f.cf_kind, f2.cf_kind] {
+								case [_, Method(MethInline)]:
+									context.Typecore.display_error(ctx, "Field "+i+" is inlined and cannot be overridden", p);
+								case [a, b] if (a.equals(b)):
+								case [Method(MethInline), Method(MethNormal)]:
+									// allow to redefine a method as inlined
+								case _: context.Typecore.display_error(ctx, "Field "+i+" has different property access than in superclass", p);
+							}
+						}
+						if (core.Type.has_meta(Final, f2.cf_meta)) {
+							context.Typecore.display_error(ctx, "Cannot override final method "+i, p);
+						}
+						try {
+							var t = core.Type.apply_params(csup.cl_params, params, t);
+							valid_redefinition(ctx, f, f.cf_type, f2, t);
+						}
+						catch (ue:core.Type.Unify_error) {
+							var l = ue.l;
+							context.Typecore.display_error(ctx, "Field "+i+" overloads parent class with different or incomplete type", p);
+							context.Typecore.display_error(ctx, "Base field is defined here", f2.cf_pos);
+							context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+						}
+					}
+					catch (_:ocaml.Not_found) {
+						if (List.memq(f, c.cl_overrides)) {
+							var msg = (is_overload)
+								? "Field " + i + " is declared 'override' but no compatible overload was found"
+								: "Field " + i + " is declared 'override' but doesn't override any field";
+							context.Typecore.display_error(ctx, msg, p);
+						}
+					}
+				}
+				if (ctx.com.config.pf_overload && core.Meta.has(Overload, f.cf_meta)) {
+					var overloads = codegen.Overloads.get_overloads(csup, i);
+					List.iter(function (o:{t:core.Type.T, cf:core.Type.TClassField}) {
+						var t = o.t; var f2 = o.cf;
+						// check if any super class fields are vars
+						switch (f2.cf_kind) {
+							case Var(_):
+								context.Typecore.display_error(ctx, "A variable named '"+f2.cf_name+"' was already declared in a superclass", f.cf_pos);
+							case _:
+						}
+					}, overloads);
+					List.iter(function (f:core.Type.TClassField) {
+						// find the exact field being overridden
+						check_field(f, function (csup:core.Type.TClass, i:String) {
+							return List.find(function (o:{t:core.Type.T, cf:core.Type.TClassField}) {
+								var t = o.t; var f2 = o.cf;
+								return codegen.Overloads.same_overload_args(f.cf_type, core.Type.apply_params(csup.cl_params, params, t), f, f2);
+							}, overloads);
+						}, true);
+					}, (f::f.cf_overloads));
+				}
+				else {
+					check_field(f, function (csup:core.Type.TClass, i:String) {
+						var _tmp = core.Type.raw_class_field(function (f:core.Type.TClassField) { return f.cf_type; }, csup, params, i);
+						var t = _tmp.snd; var f2 = _tmp.trd;
+						return {t:t, cf:f2};
+					}, false);
+				}
+		}
 	}
 
 	public static function return_flow (ctx:context.Typecore.Typer, e:core.Type.TExpr) {
@@ -1621,7 +1715,7 @@ class Typeload {
 		}
 		e = if (fmode != FunConstructor) { e; }
 		else {
-			var final_vars = new Map<String, core.Type.TClassField>();
+			var final_vars = new Hashtbl<String, core.Type.TClassField>();
 			List.iter(function (cf:core.Type.TClassField) {
 				switch (cf.cf_kind) {
 					case Var(_) if (core.Meta.has(Final, cf.cf_meta) && cf.cf_expr==None):
@@ -1633,7 +1727,7 @@ class Typeload {
 				function find_inits(e:core.Type.TExpr) {
 					switch (e.eexpr) {
 						case TBinop(OpAssign, {eexpr:TField({eexpr:TConst(TThis)}, fa)}, e2):
-							final_vars.remove(core.Type.field_name(fa));
+							Hashtbl.remove(final_vars, core.Type.field_name(fa));
 							find_inits(e2);
 						case _:
 							core.Type.iter(find_inits, e);
@@ -3220,7 +3314,7 @@ class Typeload {
 	}
 
 	public static function generic_substitute_expr (gctx:Generic_context, e:core.Type.TExpr) : core.Type.TExpr {
-		var vars = new Map<Int, core.Type.TVar>();
+		var vars = new Hashtbl<Int, core.Type.TVar>();
 		function build_var (v:core.Type.TVar) : core.Type.TVar {
 			return try {
 				Hashtbl.find(vars, v.v_id);

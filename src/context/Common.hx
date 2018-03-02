@@ -141,8 +141,8 @@ class Context {
 	public var print : String -> Void;
 	public var get_macros : Void -> Option<Context>;
 	public var run_command : String -> Int;
-	public var file_lookup_cache : Map<String, Option<String>>;
-	public var parser_cache : Map<String, ImmutableList<core.Ast.TypeDecl>>;
+	public var file_lookup_cache : Hashtbl<String, Option<String>>;
+	public var parser_cache : Hashtbl<String, ImmutableList<core.Ast.TypeDecl>>;
 	public var cached_macros : Map<
 		{path:core.Path, s:String},
 		{
@@ -331,7 +331,7 @@ class Common {
 				tstring : m,
 				tarray : function (t:core.Type.T) { trace("Shall not be seen"); throw false; }
 			},
-			file_lookup_cache : new Map<String, Option<String>>(),
+			file_lookup_cache : new Hashtbl<String, Option<String>>(),
 			stored_typed_exprs : new Map<Int, core.Type.TExpr>(),
 			cached_macros : new Map<
 				{path:core.Path, s:String},
@@ -343,7 +343,7 @@ class Common {
 				}
 			>(),
 			memory_marker : memory_marker(),
-			parser_cache : new Map<String, ImmutableList<core.Ast.TypeDecl>>()
+			parser_cache : new Hashtbl<String, ImmutableList<core.Ast.TypeDecl>>()
 		};
 
 		return ctx;
@@ -370,7 +370,7 @@ class Common {
 		clone.basic = t;
 		clone.main_class = None;
 		clone.features = new Map<String, Bool>();
-		clone.file_lookup_cache = new Map<String, Option<String>>();
+		clone.file_lookup_cache = new Hashtbl<String, Option<String>>();
 		clone.callbacks = create_callbacks();
 		clone.display_information = {
 			unresolved_identifiers:[],

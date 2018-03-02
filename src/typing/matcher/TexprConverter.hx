@@ -24,12 +24,140 @@ enum Match_kind {
 
 class TexprConverter {
 	public static function unify_constructor (ctx:context.Typecore.Typer, params:core.Type.TParams, t:core.Type.T, con:typing.matcher.constructor.T) : Option<{con:typing.matcher.constructor.T, params:core.Type.TParams}> {
-		trace("TODO: unify_constructors");
-		throw false;
+		return switch (con) {
+			case ConEnum(en, ef):
+				var t_ef = switch (core.Type.follow(ef.ef_type)) {
+					case TFun({ret:t}): t;
+					case _: ef.ef_type;
+				}
+				var t_ef = core.Type.apply_params(ctx.type_params, params, core.Type.monomorphs(en.e_params, core.Type.monomorphs(ef.ef_params, t_ef)));
+				var monos = List.map(function (t) {
+					return switch (core.Type.follow(t)) {
+						case TInst({cl_kind:KTypeParameter(_)}, _), TMono(_):
+							core.Type.mk_mono();
+						case _: t;
+					}
+				}, params);
+				function duplicate_monos(t) {
+					return switch(core.Type.follow(t)) {
+						case TMono(_): core.Type.mk_mono();
+						case _: core.Type.map(duplicate_monos, t);
+					}
+				}
+				var t_e = core.Type.apply_params(ctx.type_params, monos, duplicate_monos(t));
+				try {
+					core.Type.unify(t_ef, t_e);
+					Some({con:con, params:monos});
+				}
+				catch (_:core.Type.Unify_error) {
+					None;
+				}
+			case _: Some({con:con, params:params});
+		}
 	}
 	public static function all_ctors (ctx:context.Typecore.Typer, e:core.Type.TExpr, cases:ImmutableList<{fst:typing.matcher.constructor.T, snd:Bool, trd:typing.matcher.decisiontree.Dt}>) : {fst:core.Type.TExpr, snd:ImmutableList<typing.matcher.constructor.T>, trd:Match_kind, frth:typing.matcher.Decision_tree.Type_finiteness} {
-		trace("TODO: all_ctors");
-		throw false;
+		function infer_type () {
+			return switch (cases) {
+				case []: {fst:e, snd:e.etype, trd:false};
+				case {fst:con}::__:
+					function fail() {
+						// error "Could not determine switch kind, make sure the type is known" e.epos;
+						return core.Type.t_dynamic;
+					}
+					var t:core.Type.T = switch (con) {
+						case ConEnum(en,_):
+							TEnum(en, List.map(function (ep) { return ep.t; }, en.e_params));
+						case ConArray(_): ctx.t.tarray(core.Type.t_dynamic);
+						case ConConst(ct):
+							switch (ct) {
+								case TString(_): ctx.t.tstring;
+								case TInt(_): ctx.t.tint;
+								case TFloat(_): ctx.t.tfloat;
+								case TBool(_): ctx.t.tbool;
+								case _: fail();
+							}
+						case ConStatic({cl_kind:KAbstractImpl(a)}, _):
+							TAbstract(a, List.map(function (ap) { return ap.t; }, a.a_params));
+						case ConTypeExpr(mt): typing.Matcher.get_general_module_type(ctx, mt, e.epos);
+						case ConFields(_), ConStatic(_): fail();
+					}
+					{fst:core.Type.mk(TCast(e, None), t, e.epos), snd:t, trd:true};
+			}
+		}
+		var _tmp = switch (core.Type.follow(e.etype)) {
+			case TDynamic(_), TMono(_): infer_type();
+			case _: {fst:e, snd:e.etype, trd:false};
+		}
+		var e = _tmp.fst; var t = _tmp.snd; var inferred = _tmp.trd;
+		var h = new Hashtbl<typing.matcher.constructor.T, Bool>();
+		function add(constructor:typing.matcher.constructor.T) {
+			Hashtbl.replace(h, constructor, true);
+		}
+		function loop (t:core.Type.T) : {fst:Match_kind, snd:Decision_tree.Type_finiteness}{
+			return switch (core.Type.follow(t)) {
+				case TAbstract({a_path:{a:[], b:"Bool"}}, _):
+					add(ConConst(TBool(true)));
+					add(ConConst(TBool(false)));
+					{fst:SKValue, snd:RunTimeFinite};
+				case TAbstract(a={a_impl:Some(c)}, pl) if (core.Meta.has(Enum, a.a_meta)):
+					List.iter(function (cf:core.Type.TClassField) {
+						core.Type.follow(cf.cf_type);
+						if (core.Meta.has(Impl, cf.cf_meta) && core.Meta.has(Enum, cf.cf_meta)) {
+							switch (cf.cf_expr) {
+								case Some({eexpr:(TConst(ct) | TCast({eexpr:TConst(ct)}, None))}):
+									if (ct != TNull) { add(ConConst(ct)); }
+								case _: add(ConStatic(c, cf));
+							}
+						}
+					}, c.cl_ordered_statics);
+					{fst:SKValue, snd:CompileTimeFinite};
+				case TAbstract(a, pl) if (!core.Meta.has(CoreType, a.a_meta)):
+					loop(core.Abstract.get_underlying_type(a, pl));
+				case TInst({cl_path:{a:[], b:"String"}}, _),
+					TInst({cl_kind:KTypeParameter(_)}, _):
+					{fst:SKValue, snd:Infinite};
+				case TInst({cl_path:{a:[], b:"Array"}}, _):
+					{fst:SKLength, snd:Infinite};
+				case TEnum(en, pl):
+					PMap.iter(function (_, ef) {
+						add(ConEnum(en, ef));
+					}, en.e_constrs);
+					if (core.Meta.has(FakeEnum, en.e_meta)) {
+						{fst:SKFakeEnum, snd:CompileTimeFinite};
+					}
+					else {
+						{fst:SKEnum, snd:RunTimeFinite};
+					}
+				case TAnon(_):
+					{fst:SKValue, snd:CompileTimeFinite};
+				case TInst(_, _):
+					{fst:SKValue, snd:CompileTimeFinite};
+				case _:
+					{fst:SKValue, snd:Infinite};
+			}
+		}
+		var _tmp = loop(t);
+		var kind = _tmp.fst; var finiteness = _tmp.snd;
+		function compatible_kind (con:typing.matcher.constructor.T) {
+			return switch(con) {
+				case ConEnum(_): kind.match(SKEnum|SKFakeEnum);
+				case ConArray(_): kind.match(SKLength);
+				case _: kind.match(SKValue);
+			}
+		}
+		List.iter(function (c) {
+			var con = c.fst; var unguarded = c.snd; var dt = c.trd;
+			if (!compatible_kind(con)) {
+				core.Error.error("Incompatible pattern", dt.dt_pos);
+			}
+			if (unguarded) {
+				Hashtbl.remove(h, con);
+			}
+		}, cases);
+		var unmatched = Hashtbl.fold(function (con, _, acc:ImmutableList<typing.matcher.constructor.T>) {
+			return con::acc;
+		}, h, []);
+		return {fst:e, snd:unmatched, trd:kind, frth:finiteness};
 	}
 
 	public static function report_not_exhaustive (e_subject:core.Type.TExpr, unmatched:ImmutableList<{con:typing.matcher.constructor.T, params:Dynamic}>) : Dynamic { // real = void always throw
@@ -102,7 +230,7 @@ class TexprConverter {
 						}
 					}, cases);
 					function group (cases:ImmutableList<TCase>) {
-						var h = new Map<typing.matcher.decisiontree.T, {fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}>();
+						var h = new Hashtbl<typing.matcher.decisiontree.T, {fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}>();
 						List.iter(function (c:TCase) {
 							var con = c.fst; var dt = c.snd; var params = c.trd;
 							var l = try {
@@ -112,6 +240,7 @@ class TexprConverter {
 								Tl;
 							}
 							Hashtbl.replace(h, dt.dt_t, {fst:con::l, snd:dt, trd:params});
+							// trace(Hashtbl.)
 						}, cases);
 						return Hashtbl.fold(function (_, c, acc) {
 							var cons = c.fst; var dt = c.snd; var params = c.trd;
@@ -119,7 +248,8 @@ class TexprConverter {
 						}, h, []);
 					}
 					var cases = group(cases);
-					var cases = List.sort(function (c1:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}, c2:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}) {
+					var cases = List.sort(function (c1:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}
+							, c2:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}) {
 						var cons1 = c1.fst; var cons2 = c2.fst;
 						return switch [cons1, cons2] {
 							case [con1::_, con2::_]:

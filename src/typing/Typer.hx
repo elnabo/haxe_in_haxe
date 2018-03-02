@@ -234,8 +234,31 @@ class Typer {
 	}
 
 	public static function add_constraint_check (ctx:context.Typecore.Typer, ctypes:core.Type.TypeParams, pl:core.Type.TParams, f:core.Type.TClassField, tl:core.Type.TParams, p:core.Globals.Pos) : Void{
-		trace("TODO: add_constraint_check");
-		throw false;
+		List.iter2(function (m:core.Type.T, tp:{name:String, t:core.Type.T}) {
+			var name = tp.name; var t = tp.t;
+			switch (core.Type.follow(t)) {
+				case TInst({cl_kind:KTypeParameter(constr)},_) if (constr!=[]):
+					var constr = List.map(function (t) {
+						var t = core.Type.apply_params(f.cf_params, tl, t);
+						// only apply params if not static : in that case no param is passed
+						var t = (pl == []) ? t : core.Type.apply_params(ctypes, pl, t);
+						return t;
+					}, constr);
+					context.Typecore.delay(ctx, PCheckConstraint, function () {
+						List.iter(function (ct) {
+							try {
+								// if has_mono m then raise (Unify_error [Unify_custom "Could not resolve full type for constraint checks"; Unify_custom ("Type was " ^ (s_type (print_context()) m))]);
+								core.Type.unify(m, ct);
+							}
+							catch (ue:core.Type.Unify_error) {
+								var l = ue.l;
+								context.Typecore.display_error(ctx, core.Error.error_msg(Unify(core.Type.UnifyError.Constraint_failure(f.cf_name+"."+name)::l)), p);
+							}
+						}, constr);
+					});
+				case _:
+			}
+		}, tl, f.cf_params);
 	}
 
 	public static function field_type (ctx:context.Typecore.Typer, c:core.Type.TClass, pl:core.Type.TParams, f:core.Type.TClassField, p:core.Globals.Pos) : core.Type.T {
@@ -1656,8 +1679,66 @@ class Typer {
 	}
 
 	public static function unify_int (ctx:context.Typecore.Typer, e:core.Type.TExpr, k:Type_class) : Bool {
-		trace("TODO: typing.Typer.unify_int");
-		throw false;
+		function is_dynamic(t:core.Type.T) : Bool {
+			return core.Type.follow(t).match(TDynamic(_));
+		}
+		function is_dynamic_array(t:core.Type.T) : Bool {
+			return switch (core.Type.follow(t)) {
+				case TInst(_, [p]): is_dynamic(p);
+				case _: true;
+			}
+		}
+		function is_dynamic_field(t:core.Type.T, f:String) : Bool {
+			return switch (core.Type.follow(t)) {
+				case TAnon(a):
+					try {
+						is_dynamic(PMap.find(f, a.a_fields).cf_type);
+					}
+					catch (_:ocaml.Not_found) { false; }
+				case TInst(c, tl):
+					try {
+						is_dynamic(core.Type.apply_params(c.cl_params, tl, core.Type.class_field(c, tl, f).snd));
+					}
+					catch (_:ocaml.Not_found) { false; }
+				case _: true;
+			}
+		}
+		function is_dynamic_return(t:core.Type.T) : Bool {
+			return switch(core.Type.follow(t)) {
+				case TFun({ret:r}): is_dynamic(r);
+				case _: true;
+			}
+		}
+
+		// This is some quick analysis that matches the most common cases of dynamic-to-mono convertions
+		function maybe_dynamic_mono(e:core.Type.TExpr) : Bool {
+			function maybe_dynamic_rec(e:core.Type.TExpr, t:core.Type.T) : Bool {
+				return switch (core.Type.follow(t)) {
+					case TMono(_), TDynamic(_): maybe_dynamic_mono(e);
+					// we might have inferenced a tmono into a single field
+					case TAnon(a) if (a.a_status.get() == Opened):
+						maybe_dynamic_mono(e);
+					case _: false;
+				}
+			}
+			return switch (e.eexpr) {
+				case TLocal(_): is_dynamic(e.etype);
+				case TArray(e={etype:t}, _): is_dynamic_array(t) || maybe_dynamic_rec(e, t);
+				case TField(e={etype:t}, f): is_dynamic_field(t, core.Type.field_name(f)) || maybe_dynamic_rec(e, t);
+				case TCall(e={etype:t}, _): is_dynamic_return(t) || maybe_dynamic_rec(e, t);
+				case TParenthesis(e), TMeta(_, e): maybe_dynamic_mono(e);
+				case TIf(_, a, Some(b)): maybe_dynamic_mono(a) || maybe_dynamic_mono(b);
+				case _: false;
+			}
+		}
+		return switch(k) {
+			case KUnk, KDyn if (maybe_dynamic_mono(e)):
+				context.Typecore.unify(ctx, e.etype, ctx.t.tfloat, e.epos);
+				false;
+			case _:
+				context.Typecore.unify(ctx, e.etype, ctx.t.tint, e.epos);
+				true;
+		}
 	}
 
 	public static function type_generic_function (ctx:context.Typecore.Typer, _efa:{fst:core.Type.TExpr, snd:core.Type.TFieldAccess}, el:ImmutableList<core.Ast.Expr>, ?using_param:Option<core.Type.TExpr>=null, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -3872,10 +3953,10 @@ class Typer {
 		throw false;
 	}
 
-	public static function sort_types(com:context.Common.Context, modules:Map<core.Path, core.Type.ModuleDef>) : {types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>} {
+	public static function sort_types(com:context.Common.Context, modules:Hashtbl<core.Path, core.Type.ModuleDef>) : {types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>} {
 		// var types = new Ref<ImmutableList<core.Type.ModuleType>>([]);
 		var types:ImmutableList<core.Type.ModuleType> = [];
-		var states = new Map<core.Path, typing.Typer.State>();
+		var states = new Hashtbl<core.Path, typing.Typer.State>();
 
 		function state (p:core.Path) {
 			if (states.exists(p)) {
@@ -4022,9 +4103,9 @@ class Typer {
 			g : {
 				core_api : None,
 				macros : None,
-				modules : new Map<core.Path, core.Type.ModuleDef>(),
-				types_module : new Map<core.Path, core.Path>(),
-				type_patches : new Map<core.Path, {map:Map<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>(),
+				modules : new Hashtbl<core.Path, core.Type.ModuleDef>(),
+				types_module : new Hashtbl<core.Path, core.Path>(),
+				type_patches : new Hashtbl<core.Path, {map:Hashtbl<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>(),
 				global_metadata : [],
 				module_check_policies : [],
 				delayed : [],

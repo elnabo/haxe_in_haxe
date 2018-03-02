@@ -1,15 +1,38 @@
 package core;
 
 import haxe.ds.ImmutableList;
+import ocaml.Hashtbl;
 import ocaml.List;
+import ocaml.Ref;
 using equals.Equal;
+using ocaml.Cloner;
 
 class Builder {
-	public static function make_int (basic, i:haxe.Int32, p:core.Globals.Pos) : core.Type.TExpr{
+	public static function make_static_this (c:core.Type.TClass, p:core.Globals.Pos) : core.Type.TExpr {
+		var ta:core.Type.T = TAnon({a_fields:c.cl_statics, a_status:new Ref<core.Type.AnonStatus>(Statics(c))});
+		return core.Type.mk(TTypeExpr(TClassDecl(c)), ta, p);
+	}
+
+	public static function make_static_field (c:core.Type.TClass, cf:core.Type.TClassField, p:core.Globals.Pos) : core.Type.TExpr {
+		var e_this = make_static_this(c, p);
+		return core.Type.mk(TField(e_this, FStatic(c, cf)), cf.cf_type, p);
+	}
+
+	public static function make_int (basic:core.Type.BasicTypes, i:haxe.Int32, p:core.Globals.Pos) : core.Type.TExpr{
 		return core.Type.mk(TConst(TInt(i)), basic.tint, p);
 	}
 	public static function make_null (t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr{
 		return core.Type.mk(TConst(TNull), t, p);
+	}
+	public static function make_const_texpr (basic:core.Type.BasicTypes, ct:core.Type.TConstant, p:core.Globals.Pos) : core.Type.TExpr{
+		return switch (ct) {
+			case TString(s): core.Type.mk(TConst(TString(s)), basic.tstring, p);
+			case TInt(i): core.Type.mk(TConst(TInt(i)), basic.tint, p);
+			case TFloat(f): core.Type.mk(TConst(TFloat(f)), basic.tfloat, p);
+			case TBool(b): core.Type.mk(TConst(TBool(b)), basic.tbool, p);
+			case TNull: core.Type.mk(TConst(TNull), basic.tnull(core.Type.mk_mono()), p);
+			case _: core.Error.error("Unsupported constant", p);
+		}
 	}
 
 	public static function field (e:core.Type.TExpr, name:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
@@ -106,8 +129,64 @@ class Texpr {
 	}
 
 	public static function duplicate_tvars (e:core.Type.TExpr) : core.Type.TExpr {
-		trace("TODO: core.Texpr.duplicate_tvars");
-		throw false;
+		var vars = new Hashtbl<Int, core.Type.TVar>();
+		function copy_var(v:core.Type.TVar) : core.Type.TVar {
+			var v2 = core.Type.alloc_var(v.v_name, v.v_type, v.v_pos);
+			v2.v_meta = v.v_meta;
+			v2.v_extra = v.v_extra;
+			Hashtbl.add(vars, v.v_id, v2);
+			return v2;
+		}
+		function build_expr(e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TVar(v, eo):
+					var v2 = copy_var(v);
+					var e = e.clone();
+					e.eexpr = TVar(v2, ocaml.Option.map(build_expr, eo));
+					e;
+				case TFor(v, e1, e2):
+					var v2 = copy_var(v);
+					var e = e.clone();
+					e.eexpr = TFor(v2, build_expr(e1), build_expr(e2));
+					e;
+				case TTry(e1, cl):
+					var cl = List.map(function (arg) {
+						var v = arg.v; var e = arg.e;
+						var v2 = copy_var(v);
+						return {v:v2, e:build_expr(e)};
+					}, cl);
+					var e = e.clone();
+					e.eexpr = TTry(build_expr(e1), cl);
+					e;
+				case TFunction(f):
+					var args = List.map(function (arg) {
+						var v = arg.v; var c = arg.c;
+						return {v:copy_var(v), c:c};
+					}, f.tf_args);
+					var f = {
+						tf_args: args,
+						tf_type: f.tf_type,
+						tf_expr: build_expr(f.tf_expr)
+					};
+					var e = e.clone();
+					e.eexpr = TFunction(f);
+					e;
+				case TLocal(v):
+					try {
+						var v2 = Hashtbl.find(vars, v.v_id);
+						var e = e.clone();
+						e.eexpr = TLocal(v2);
+						e;
+					}
+					catch (_:Bool) { trace("Shall not be seen"); throw false; }
+					catch (_:Any) {
+						e;
+					}
+				case _: core.Type.map_expr(build_expr,e);
+
+			}
+		}
+		return build_expr(e);
 	}
 
 	public static function skip (e:core.Type.TExpr) : core.Type.TExpr {

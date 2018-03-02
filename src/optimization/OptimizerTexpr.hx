@@ -126,7 +126,7 @@ class OptimizerTexpr {
 	}
 
 	public static function create_affection_checker () : {fst:core.Type.TExpr->Bool, snd:core.Type.TExpr->Void} {
-		var modified_locals = new Map<Int,Bool>();
+		var modified_locals = new Hashtbl<Int,Bool>();
 		function might_be_affected (e:core.Type.TExpr) : Bool {
 			function loop (e:core.Type.TExpr) : Void {
 				return switch (e.eexpr) {

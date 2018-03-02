@@ -492,7 +492,7 @@ class Main {
 			var cmds = [];
 			var config_macros: ImmutableList<String> = [];
 			var cp_libs = new Ref<ImmutableList<String>>([]);
-			var added_libs = new Map<String, Bool>();
+			var added_libs = new Hashtbl<String, Bool>();
 			var no_output = false;
 			var did_something = false;
 			var force_typing = false;
@@ -1183,7 +1183,7 @@ class Main {
 		// }
 		catch (e:Bool) { throw e; }
 		catch (e:Dynamic) {
-			trace("Exception  Dynamic");
+			trace("Exception  Dynamic", e);
 			var orp = std.Sys.getEnv("OCAMLRUNPARAM");
 			if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
 				error(ctx, ""+e, core.Globals.null_pos);

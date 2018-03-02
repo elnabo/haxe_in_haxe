@@ -7,7 +7,7 @@ import ocaml.Ref;
 
 typedef Matcher_context = {
 	ctx:context.Typecore.Typer,
-	dt_table:Map<typing.matcher.decisiontree.T, typing.matcher.decisiontree.Dt>, // dt DtTable.t;
+	dt_table:Hashtbl<typing.matcher.decisiontree.T, typing.matcher.decisiontree.Dt>, // dt DtTable.t;
 	match_pos: core.Globals.Pos,
 	match_debug: Bool,
 	dt_count: Int
@@ -288,8 +288,8 @@ class Compile {
 		}
 		var subject = _tmp.fst; var subjects = _tmp.snd;
 		function get_column_sigma (cases:ImmutableList<Case>) {
-			var sigma = new Map<typing.matcher.constructor.T, Bool>();
-			var unguarded = new Map<typing.matcher.constructor.T, Bool>();
+			var sigma = new Hashtbl<typing.matcher.constructor.T, Bool>();
+			var unguarded = new Hashtbl<typing.matcher.constructor.T, Bool>();
 			var null_ = new Ref<ImmutableList<Case>>([]);
 			List.iter(function (c:Case) {
 				var case_ = c.fst; var bindings = c.snd; var patterns = c.trd;
@@ -352,7 +352,7 @@ class Compile {
 		var mctx:Matcher_context = {
 			ctx: ctx,
 			match_debug: match_debug,
-			dt_table: new Map<typing.matcher.decisiontree.T, typing.matcher.decisiontree.Dt>(),
+			dt_table: new Hashtbl<typing.matcher.decisiontree.T, typing.matcher.decisiontree.Dt>(),
 			match_pos: p,
 			dt_count: 0
 		};

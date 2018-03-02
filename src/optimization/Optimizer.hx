@@ -264,7 +264,7 @@ class Optimizer {
 			}
 			var has_params = _tmp.fst; var map_type = _tmp.snd;
 			// locals substitution
-			var locals = new Map<Int, In_local>();//Hashtbl.create(0);
+			var locals = new Hashtbl<Int, In_local>();//Hashtbl.create(0);
 			function local (v:core.Type.TVar) : In_local {
 				return
 				try {
@@ -761,7 +761,7 @@ class Optimizer {
 						this is very expensive since we are building the substitution list for
 						every expression, but hopefully in such cases the expression size is small
 					*/
-					var vars = new Map<Int, Bool>();
+					var vars = new Hashtbl<Int, Bool>();
 					function map_var (v:core.Type.TVar) : core.Type.TVar{
 						if (!Hashtbl.mem(vars, v.v_id)) {
 							Hashtbl.add(vars, v.v_id, true);

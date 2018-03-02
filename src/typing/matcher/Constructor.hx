@@ -74,8 +74,24 @@ class Constructor {
 	}
 
 	public static function to_texpr (ctx:context.Typecore.Typer, match_debug:Bool, p:core.Globals.Pos, con:typing.matcher.constructor.T) : core.Type.TExpr {
-		trace("TODO Constructor.to_texpr");
-		throw false;
+		return switch (con) {
+			case ConEnum(en, ef):
+				if (core.Meta.has(FakeEnum, en.e_meta)) {
+					var e_mt = context.Typecore.type_module_expr_ref.get()(ctx, TEnumDecl(en), None, p);
+					core.Type.mk(TField(e_mt, FEnum(en, ef)), ef.ef_type, p);
+				}
+				else if (match_debug) {
+					core.Type.mk(TConst(TString(ef.ef_name)), ctx.t.tstring, p);
+				}
+				else {
+					core.Type.mk(TConst(TInt(ef.ef_index)), ctx.t.tint, p);
+				}
+			case ConConst(ct): core.Texpr.Builder.make_const_texpr(ctx.com.basic, ct, p);
+			case ConArray(i): core.Texpr.Builder.make_int(ctx.com.basic, i, p);
+			case ConTypeExpr(mt): typing.Typer.type_module_type(ctx, mt, None, p);
+			case ConStatic(c, cf): core.Texpr.Builder.make_static_field(c, cf, p);
+			case ConFields(_): core.Error.error("Something went wrong", p);
+		}
 	}
 
 	static function compareInt(i1:Int, i2:Int) : Int {

@@ -3,6 +3,7 @@ package context;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.DynArray;
+import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
@@ -80,8 +81,8 @@ typedef TyperModule = {
 
 @:structInit
 class TyperGlobals {
-	public var types_module : Map<core.Path, core.Path>;
-	public var modules : Map<core.Path, core.Type.ModuleDef>;
+	public var types_module : Hashtbl<core.Path, core.Path>;
+	public var modules : Hashtbl<core.Path, core.Type.ModuleDef>;
 	public var delayed : ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>;
 	public var debug_delayed : ImmutableList<{fst:TyperPass, snd:ImmutableList<{f:Void->Void, s:String, t:context.Typecore.Typer}>}>;
 	public var doinline : Bool;
@@ -89,7 +90,7 @@ class TyperGlobals {
 	public var macros : Option<{f:Void->Void, t:Typer}>;
 	public var std : core.Type.ModuleDef;
 	public var hook_generate : ImmutableList<Void->Void>;
-	public var type_patches : Map<core.Path, {map:Map<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>;
+	public var type_patches : Hashtbl<core.Path, {map:Hashtbl<{s:String, b:Bool}, context.Typecore.TypePatch>, tp:context.Typecore.TypePatch}>;
 	public var global_metadata : ImmutableList<{l:ImmutableList<String>, me:core.Ast.MetadataEntry, bs:{a:Bool, b:Bool, c:Bool}}>;
 	public var module_check_policies : ImmutableList<{l:ImmutableList<String>, mcps:ImmutableList<core.Type.ModuleCheckPolicy>, b:Bool}>;
 	public var get_build_infos : Void->Option<{mt:core.Type.ModuleType, l:core.Type.TParams, cfs: ImmutableList<core.Ast.ClassField>}>;
@@ -147,6 +148,7 @@ typedef Typer = {
 class Typecore {
 	public static var make_call_ref = new Ref<Typer -> core.Type.TExpr -> ImmutableList<core.Type.TExpr> -> core.Type.T -> core.Globals.Pos -> core.Type.TExpr>(function (_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var type_expr_ref = new Ref<Typer -> core.Ast.Expr -> WithType -> core.Type.TExpr>(function (_,_,_) { trace("Shall not be seen"); throw false; });
+	public static var type_module_expr_ref = new Ref<Typer -> core.Type.ModuleType -> Option<ImmutableList<core.Type.T>> -> core.Globals.Pos -> core.Type.TExpr>(function (_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var match_expr_ref = new Ref<(context.Typecore.Typer, core.Ast.Expr, ImmutableList<core.Ast.Case>, Option<{e:Option<core.Ast.Expr>, pos:core.Globals.Pos}>,context.Typecore.WithType,core.Globals.Pos)->core.Type.TExpr>(function(_,_,_,_,_,_) { trace("Shall not be seen"); throw false; });
 	public static var cast_or_unify_ref = new Ref<Typer-> core.Type.T -> core.Type.TExpr -> core.Globals.Pos -> core.Type.TExpr>(context.typecore.AbstractCast.cast_or_unify_raise);
 	public static var find_array_access_raise_ref = new Ref<(Typer, core.Type.TAbstract, core.Type.TParams, core.Type.TExpr, Option<core.Type.TExpr>, core.Globals.Pos)->{cf:core.Type.TClassField, tf:core.Type.T, r:core.Type.T, e1:core.Type.TExpr, e2o:Option<core.Type.TExpr>}>(function (_,_,_,_,_,_) { trace("Shall not be seen"); throw false; });

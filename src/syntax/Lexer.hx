@@ -406,7 +406,7 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 		};
 	}
 	public static var cur = make_file("");
-	public static var all_files = new Map<String, LexerFile>();
+	public static var all_files = new Hashtbl<String, LexerFile>();
 
 	public static function init (file:String, do_add:Bool) {
 		var f = make_file(file);
