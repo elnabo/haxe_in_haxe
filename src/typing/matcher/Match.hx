@@ -98,8 +98,6 @@ class Match {
 			Sys.println(typing.Matcher.s_expr_pretty(e));
 			Sys.println("TEXPR END");
 		}
-		var e = e.clone();
-		e.epos = p;
-		return e;
+		return e.with({epos:p});
 	}
 }

@@ -141,23 +141,17 @@ class Texpr {
 			return switch (e.eexpr) {
 				case TVar(v, eo):
 					var v2 = copy_var(v);
-					var e = e.clone();
-					e.eexpr = TVar(v2, ocaml.Option.map(build_expr, eo));
-					e;
+					e.with({eexpr:core.Type.TExprExpr.TVar(v2, ocaml.Option.map(build_expr, eo))});
 				case TFor(v, e1, e2):
 					var v2 = copy_var(v);
-					var e = e.clone();
-					e.eexpr = TFor(v2, build_expr(e1), build_expr(e2));
-					e;
+					e.with({eexpr:core.Type.TExprExpr.TFor(v2, build_expr(e1), build_expr(e2))});
 				case TTry(e1, cl):
 					var cl = List.map(function (arg) {
 						var v = arg.v; var e = arg.e;
 						var v2 = copy_var(v);
 						return {v:v2, e:build_expr(e)};
 					}, cl);
-					var e = e.clone();
-					e.eexpr = TTry(build_expr(e1), cl);
-					e;
+					e.with({eexpr:core.Type.TExprExpr.TTry(build_expr(e1), cl)});
 				case TFunction(f):
 					var args = List.map(function (arg) {
 						var v = arg.v; var c = arg.c;
@@ -168,15 +162,11 @@ class Texpr {
 						tf_type: f.tf_type,
 						tf_expr: build_expr(f.tf_expr)
 					};
-					var e = e.clone();
-					e.eexpr = TFunction(f);
-					e;
+					e.with({eexpr:core.Type.TExprExpr.TFunction(f)});
 				case TLocal(v):
 					try {
 						var v2 = Hashtbl.find(vars, v.v_id);
-						var e = e.clone();
-						e.eexpr = TLocal(v2);
-						e;
+						e.with({eexpr:core.Type.TExprExpr.TLocal(v2)});
 					}
 					catch (_:Bool) { trace("Shall not be seen"); throw false; }
 					catch (_:Any) {

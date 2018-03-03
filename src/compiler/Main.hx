@@ -77,7 +77,7 @@ class Initialize {
 				add_std("neko");
 				"n";
 			case Js:
-				if (! com.defines.values.exists(core.Define.infos(JqueryVer).a)) {
+				if (! PMap.exists(core.Define.infos(JqueryVer).a, com.defines.values)) {
 					context.Common.define_value(com, JqueryVer, "11204");
 				}
 				var es_version:Int = try {
@@ -782,7 +782,7 @@ class Main {
 					if (split.length == 1) {
 						throw new ocaml.Arg.Bad("Invalid remap format, expected source:target");
 					}
-					com.package_rules.set(split.shift(), Remap(split.join(":")));
+					com.package_rules = PMap.add(split.shift(), Remap(split.join(":")), com.package_rules);
 				}), doc:"<package:target> : remap a package to another one"},
 				{arg:"--interp", spec:S_Unit(function() {
 					context.Common.define(com,Interp);
@@ -915,15 +915,13 @@ class Main {
 			// if we are at the last compilation step, allow all packages accesses - in case of macros or opening another project file
 			if (com.display.dms_display) {
 				if (!ctx.has_next) {
-					var map = new Map<String, context.Common.PackageRule>();
-					for (p in com.package_rules.keys()) {
-						var r = com.package_rules.get(p);
-						switch (r) {
+					com.package_rules = PMap.foldi(function (p:String, r:PackageRule, acc) {
+						return switch (r) {
 							case Forbidden:
-							default: map.set(p, r);
+								acc;
+							case _: PMap.add(p, r, acc);
 						}
-					}
-					com.package_rules = map;
+					}, com.package_rules, PMap.empty());
 				}
 			}
 			com.config = context.Common.get_config(com); // make sure to adapt all flags changes defined after platform

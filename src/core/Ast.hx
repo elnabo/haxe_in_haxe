@@ -477,19 +477,19 @@ class Ast {
 		throw false;
 	}
 
-	public static function get_value_meta (meta:core.Ast.Metadata) : Map<String, Expr> {
+	public static function get_value_meta (meta:core.Ast.Metadata) : PMap<String, Expr> {
 		return try {
 			switch (core.Meta.get(Value, meta)) {
 				case {params:[{expr:EObjectDecl(values)}]}:
-					List.fold_left(function (acc:Map<String, Expr>, a:ObjectField) {
+					List.fold_left(function (acc:PMap<String, Expr>, a:ObjectField) {
 						var s = a.name; var e = a.expr;
 						return PMap.add(s, e, acc);
-					}, new Map<String, Expr>(), values);
+					}, PMap.empty(), values);
 				case _: throw ocaml.Not_found.instance;
 			}
 		}
 		catch (_:ocaml.Not_found) {
-			new Map<String, Expr>();
+			PMap.empty();
 		}
 	}
 

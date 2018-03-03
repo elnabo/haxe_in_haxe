@@ -38,7 +38,7 @@ class Printer {
 		}
 	}
 
-	public static inline function s_pmap<K,V> (fk:K->String, fv:V->String, pm:Map<K, V>) : String {
+	public static inline function s_pmap<K,V> (fk:K->String, fv:V->String, pm:PMap<K, V>) : String {
 		return '{${List.join(", ", PMap.foldi(function (k, v, acc:ImmutableList<String>) : ImmutableList<String> {
 			return ('${fk(k)} = ${fv(v)}') :: acc; }, pm, []))
 		}';

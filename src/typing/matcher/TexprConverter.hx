@@ -284,8 +284,7 @@ class TexprConverter {
 					}
 					switch (cases) {
 						case [{e:e2}] if (e_default.match(None) && finiteness.match(RunTimeFinite)):
-							var e2 = e2.clone(); e2.etype = t_switch;
-							e2;
+							e2.with({etype:t_switch});
 						case [{values:[e1], e:e2}] if ((with_type.match(NoValue) || !e_default.match(None)) && ctx.com.platform != Java) /* TODO: problem with TestJava.hx:285 */:
 							var e_op = core.Type.mk(TBinop(OpEq, e_subject, e1), ctx.t.tbool, e_subject.epos);
 							core.Type.mk(TIf(e_op, e2, e_default), t_switch, dt.dt_pos);

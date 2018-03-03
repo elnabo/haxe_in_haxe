@@ -3,7 +3,7 @@ package core;
 import haxe.ds.ImmutableList;
 import ocaml.List;
 import ocaml.PMap;
-import ocaml.Ref;
+// import ocaml.Ref;
 
 enum StrictDefined {
 	AbsolutePath;
@@ -121,7 +121,7 @@ enum DefineParameter {
 
 @:structInit
 class Define {
-	public var values : Map<String,String>;
+	public var values : PMap<String,String>;
 	public var defines_signature : haxe.ds.Option<String>;
 
 	// public function new (values:Map<String,String>, defines_signature:haxe.ds.Option<String>) {

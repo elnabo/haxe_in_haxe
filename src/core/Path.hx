@@ -9,7 +9,6 @@ class Path {
 
 	public var a : ImmutableList<String>;
 	public var b : String;
-	@:structInit
 	public function new (a:ImmutableList<String>, b:String) {
 		this.a = a;
 		this.b = b;

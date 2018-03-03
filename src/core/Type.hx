@@ -131,7 +131,7 @@ enum AnonStatus {
 }
 
 typedef TAnon = {
-	a_fields : Map<String, TClassField>,
+	a_fields : PMap<String, TClassField>,
 	a_status : ocaml.Ref<AnonStatus>
 }
 
@@ -243,8 +243,8 @@ typedef TClass = {
 	cl_interface : Bool,
 	cl_super : Option<{c:TClass, params:TParams}>,//(tclass * tparams) option;
 	cl_implements : ImmutableList<{c:TClass, params:TParams}>,//(tclass * tparams) list;
-	cl_fields : Map<String, TClassField>,
-	cl_statics : Map<String, TClassField>,
+	cl_fields : PMap<String, TClassField>,
+	cl_statics : PMap<String, TClassField>,
 	cl_ordered_statics : ImmutableList<TClassField>,
 	cl_ordered_fields : ImmutableList<TClassField>,
 	cl_dynamic : Option<T>,
@@ -285,7 +285,7 @@ typedef TEnum = {
 	// do not insert any fields above
 	e_type : TDef,
 	e_extern : Bool,
-	e_constrs : Map<String, TEnumField>,
+	e_constrs : PMap<String, TEnumField>,
 	e_names : ImmutableList<String>
 }
 
@@ -477,7 +477,7 @@ class Type {
 		return t_dynamic_internal;
 	}
 
-	public static function mk_anon (fl:Map<String, TClassField>) : T {
+	public static function mk_anon (fl:PMap<String, TClassField>) : T {
 		return TAnon({a_fields:fl, a_status:new Ref(Closed)});
 	}
 
@@ -500,7 +500,7 @@ class Type {
 	public static function mk_class (m:core.Type.ModuleDef, path:core.Path, pos:core.Globals.Pos, name_pos:core.Globals.Pos) : core.Type.TClass {
 		return {
 			cl_path: path,
-			cl_module: m.clone(),
+			cl_module: m,
 			cl_pos: pos,
 			cl_name_pos: name_pos,
 			cl_doc: None,
@@ -512,10 +512,10 @@ class Type {
 			cl_params: [],
 			cl_super: None,
 			cl_implements: [],
-			cl_fields: new Map<String, TClassField>(),
+			cl_fields: PMap.empty(), //<String, TClassField>
 			cl_ordered_statics: [],
 			cl_ordered_fields: [],
-			cl_statics: new Map<String, TClassField>(),
+			cl_statics: PMap.empty(), //<String, TClassField>
 			cl_dynamic: None,
 			cl_array_access: None,
 			cl_constructor: None,
@@ -647,10 +647,11 @@ class Type {
 	}
 
 	public static function is_parent (csup:TClass, c:TClass) : Bool {
-		if(c.equals(csup) || ocaml.List.exists(function (imp:{c:TClass, params:TParams}) { return is_parent(csup, imp.c); }, c.cl_implements)) {
+		if(ocaml.List.exists(function (imp:{c:TClass, params:TParams}) {var i = imp.c; return is_parent(csup, i); }, c.cl_implements) || c.equals(csup)) {
 			return true;
 		}
 		else {
+			// trace(c.cl_super);
 			return switch (c.cl_super) {
 				case None: false;
 				case Some({c:c}): is_parent(csup, c);
@@ -713,9 +714,7 @@ class Type {
 				TFun({args:List.map(function (arg) { return {name:arg.name, opt:arg.opt, t:loop(arg.t)}; }, tl), ret:loop(r)});
 			case TAnon(a):
 				var fields = PMap.map(function(f:TClassField) {
-					var clone = f.clone();
-					clone.cf_type = loop(f.cf_type);
-					return clone;
+					return f.with({cf_type:loop(f.cf_type)});
 				}, a.a_fields);
 				switch (a.a_status.get()) {
 					case Opened:
@@ -830,9 +829,7 @@ class Type {
 						ret:loop(r)});
 				case TAnon(a):
 					var fields = PMap.map(function (f:TClassField) : TClassField {
-						var clone = f.clone();
-						clone.cf_type = loop(f.cf_type);
-						return clone;
+						return f.with({cf_type:loop(f.cf_type)});
 					}, a.a_fields);
 					switch (a.a_status.get()) {
 						case Opened:
@@ -1658,7 +1655,7 @@ class Type {
 								if (!link(new Ref(None), b, f1.cf_type)) {
 									error([cannot_unify(a, b)]);
 								}
-								a2.a_fields.set(n, f1);
+								a2.a_fields = PMap.add(n, f1, a2.a_fields);
 
 							}
 						}, a1.a_fields);
@@ -1670,7 +1667,7 @@ class Type {
 								if (!link(new Ref(None), a, f2.cf_type)) {
 									error([cannot_unify(a, b)]);
 								}
-								a1.a_fields.set(n, f2);
+								a1.a_fields = PMap.add(n, f2, a1.a_fields);
 							}
 						}, a2.a_fields);
 					}
@@ -2287,119 +2284,129 @@ class Type {
 	}
 
 	public static function map_expr (f:TExpr->TExpr, e:TExpr) : TExpr {
-		var _e = e.clone();
-		switch (e.eexpr) {
+		return switch (e.eexpr) {
 			case TConst(_), TLocal(_), TBreak, TContinue, TTypeExpr(_), TIdent(_):
-				return e;
+				e;
 			case TArray(e1, e2):
 				var e1 = f(e1);
-				_e.eexpr = TArray(e1, f(e2));
+				e.with({eexpr:core.TExprExpr.TArray(e1, f(e2))});
 			case TBinop(op, e1, e2):
 				var e1 = f(e1);
-				_e.eexpr = TBinop(op, e1, f(e2));
+				e.with({eexpr:core.TExprExpr.TBinop(op, e1, f(e2))});
 			case TFor(v, e1, e2):
 				var e1 = f(e1);
-				_e.eexpr = TFor(v, e1, f(e2));
+				e.with({eexpr:core.TExprExpr.TFor(v, e1, f(e2))});
 			case TWhile(e1, e2, flags):
 				var e1 = f(e1);
-				_e.eexpr = TWhile(e1, f(e2), flags);
+				e.with({eexpr:core.TExprExpr.TWhile(e1, f(e2), flags)});
 			case TThrow(e1):
-				_e.eexpr = TThrow(f(e1));
+				e.with({eexpr:core.TExprExpr.TThrow(f(e1))});
 			case TEnumParameter(e1, ef, i):
-				_e.eexpr = TEnumParameter(f(e1), ef, i);
+				e.with({eexpr:core.TExprExpr.TEnumParameter(f(e1), ef, i)});
 			case TEnumIndex(e1):
-				_e.eexpr = TEnumIndex(f(e1));
+				e.with({eexpr:core.TExprExpr.TEnumIndex(f(e1))});
 			case TField(e1, v):
-				_e.eexpr = TField(f(e1), v);
+				e.with({eexpr:core.TExprExpr.TField(f(e1), v)});
 			case TParenthesis(e1):
-				_e.eexpr = TParenthesis(f(e1));
+				e.with({eexpr:core.TExprExpr.TParenthesis(f(e1))});
 			case TUnop(op, pre, e1):
-				_e.eexpr = TUnop(op, pre, f(e1));
+				e.with({eexpr:core.TExprExpr.TUnop(op, pre, f(e1))});
 			case TArrayDecl(el):
-				_e.eexpr = TArrayDecl(List.map(f, el));
+				e.with({eexpr:core.TExprExpr.TArrayDecl(List.map(f, el))});
 			case TNew(t, pl, el):
-				_e.eexpr = TNew(t, pl, List.map(f, el));
+				e.with({eexpr:core.TExprExpr.TNew(t, pl, List.map(f, el))});
 			case TBlock(el):
-				_e.eexpr = TBlock(List.map(f, el));
+				e.with({eexpr:core.TExprExpr.TBlock(List.map(f, el))});
 			case TObjectDecl(el):
-				_e.eexpr = TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el));
+				e.with({eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el))});
 			case TCall(e1, el):
 				var e1 = f(e1);
-				_e.eexpr = TCall(e1, List.map(f, el));
+				e.with({eexpr:core.TExprExpr.TCall(e1, List.map(f, el))});
 			case TVar(v, eo):
-				_e.eexpr = TVar(v, switch (eo) {
+				e.with({eexpr:core.TExprExpr.TVar(v, switch (eo) {
 					case None:None;
 					case Some(e): Some(f(e));
-				});
+				})});
 			case TFunction (fu):
-				var _fu = fu.clone();
-				_fu.tf_expr = f(fu.tf_expr);
-				_e.eexpr = TFunction(_fu);
+				e.with({eexpr:core.TExprExpr.TFunction(fu.with({tf_expr:f(fu.tf_expr)}))});
 			case TIf(ec, e1, e2):
 				var ec = f(ec);
 				var e1 = f(e1);
-				_e.eexpr = TIf(ec, e1, switch (e2) {
+				e.with({eexpr:core.TExprExpr.TIf(ec, e1, switch (e2) {
 					case None: None;
 					case Some(e): Some(f(e));
-				});
+				})});
 			case TSwitch (e1, cases, def):
 				var e1 = f(e1);
 				var cases = List.map(function (c) { return {values:List.map(f, c.values), e:f(c.e)}}, cases);
-				_e.eexpr = TSwitch(e1, cases, switch (def) {
+				e.with({eexpr:core.TExprExpr.TSwitch(e1, cases, switch (def) {
 					case None: None;
 					case Some(e): Some(f(e));
-				});
+				})});
 			case TTry (e1, catches):
 				var e1 = f(e1);
-				_e.eexpr = TTry(e1, List.map(function (c) { return {v:c.v, e:f(c.e)};}, catches));
+				e.with({eexpr:core.TExprExpr.TTry(e1, List.map(function (c) { return {v:c.v, e:f(c.e)};}, catches))});
 			case TReturn (eo):
-				_e.eexpr = TReturn (switch (eo) {
+				e.with({eexpr:core.TExprExpr.TReturn (switch (eo) {
 					case None: None;
 					case Some(e): Some(f(e));
-				});
+				})});
 			case TCast (e1, t):
-				_e.eexpr = TCast(f(e1),t);
+				e.with({eexpr:core.TExprExpr.TCast(f(e1),t)});
 			case TMeta (m, e1):
-				_e.eexpr = TMeta(m, f(e1));
+				e.with({eexpr:core.TExprExpr.TMeta(m, f(e1))});
 		}
-		return _e;
 	}
 
 	public static function map_expr_type (f:TExpr->TExpr, ft:T->T, fv:TVar->TVar, e:TExpr) : TExpr {
-		var _e = e.clone();
-		switch (e.eexpr) {
+		return switch (e.eexpr) {
 			case TConst(_), TBreak, TContinue, TTypeExpr(_), TIdent(_):
-				_e.etype = ft(e.etype);
+				e.with({etype:ft(e.etype)});
 			case TLocal(v):
-				_e.eexpr = TLocal(fv(v));
-				_e.etype = ft(e.etype);
-				_e;
+				e.with({
+					eexpr: core.TExprExpr.TLocal(fv(v)),
+					etype: ft(e.etype)
+				});
 			case TArray(e1, e2):
 				var e1 = f(e1);
-				_e.eexpr = TArray(e1, f(e2));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TArray(e1, f(e2)),
+					etype: ft(e.etype)
+				});
 			case TBinop(op, e1, e2):
 				var e1 = f(e1);
-				_e.eexpr = TBinop(op, e1, f(e2));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TBinop(op, e1, f(e2)),
+					etype: ft(e.etype)
+				});
 			case TFor(v, e1, e2):
 				var v = fv(v);
 				var e1 = f(e1);
-				_e.eexpr = TFor(v, e1, f(e2));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TFor(v, e1, f(e2)),
+					etype: ft(e.etype)
+				});
 			case TWhile(e1, e2, flags):
 				var e1 = f(e1);
-				_e.eexpr = TWhile(e1, f(e2), flags);
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TWhile(e1, f(e2), flags),
+					etype: ft(e.etype)
+				});
 			case TThrow(e1):
-				_e.eexpr = TThrow(f(e1));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TThrow(f(e1)),
+					etype: ft(e.etype)
+				});
 			case TEnumParameter(e1, ef, i):
-				_e.eexpr = TEnumParameter(f(e1), ef, i);
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TEnumParameter(f(e1), ef, i),
+					etype: ft(e.etype)
+				});
 			case TEnumIndex(e1):
-				_e.eexpr = TEnumIndex(f(e1));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TEnumIndex(f(e1)),
+					etype: ft(e.etype)
+				});
 			case TField(e1, v):
 				var e1 = f(e1);
 				var v = try {
@@ -2414,17 +2421,25 @@ class Type {
 				catch (_:ocaml.Not_found) {
 					v;
 				}
-				_e.eexpr = TField(f(e1), v);
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TField(f(e1), v),
+					etype: ft(e.etype)
+				});
 			case TParenthesis(e1):
-				_e.eexpr = TParenthesis(f(e1));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TParenthesis(f(e1)),
+					etype: ft(e.etype)
+				});
 			case TUnop(op, pre, e1):
-				_e.eexpr = TUnop(op, pre, f(e1));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TUnop(op, pre, f(e1)),
+					etype: ft(e.etype)
+				});
 			case TArrayDecl(el):
-				_e.eexpr = TArrayDecl(List.map(f, el));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TArrayDecl(List.map(f, el)),
+					etype: ft(e.etype)
+				});
 			case TNew(c, pl, el):
 				var et = ft(e.etype);
 				// make sure that we use the class corresponding to the replaced type
@@ -2440,66 +2455,88 @@ class Type {
 						c = _c; pl = _pl;
 					case t: error([has_no_field(t, "new")]);
 				}
-				_e.eexpr = TNew(c, pl, List.map(f, el));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TNew(c, pl, List.map(f, el)),
+					etype: ft(e.etype)
+				});
 			case TBlock(el):
-				_e.eexpr = TBlock(List.map(f, el));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TBlock(List.map(f, el)),
+					etype: ft(e.etype)
+				});
 			case TObjectDecl(el):
-				_e.eexpr = TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el)),
+					etype: ft(e.etype)
+				});
 			case TCall(e1, el):
 				var e1 = f(e1);
-				_e.eexpr = TCall(e1, List.map(f, el));
-				_e.etype = ft(e.etype);
-			case TVar(v, eo):
-				_e.eexpr = TVar(fv(v), switch (eo) {
-					case None:None;
-					case Some(e): Some(f(e));
+				e.with({
+					eexpr:core.TExprExpr.TCall(e1, List.map(f, el)),
+					etype: ft(e.etype)
 				});
-				_e.etype = ft(e.etype);
+			case TVar(v, eo):
+				e.with({
+					eexpr:core.TExprExpr.TVar(fv(v), switch (eo) {
+						case None:None;
+						case Some(e): Some(f(e));
+					}),
+					etype: ft(e.etype)
+				});
 			case TFunction (fu):
-				var _fu = {
-					tf_expr: f(fu.tf_expr),
-					tf_args: List.map(function (a) { return {v:fv(a.v), c:a.c};}, fu.tf_args),
-					tf_type: ft(fu.tf_type)
-				}
-				_e.eexpr = TFunction(_fu);
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TFunction(fu.with({
+						tf_expr: f(fu.tf_expr),
+						tf_args: List.map(function (a) { return {v:fv(a.v), c:a.c};}, fu.tf_args),
+						tf_type: ft(fu.tf_type)
+					})),
+					etype: ft(e.etype)
+				});
 			case TIf(ec, e1, e2):
 				var ec = f(ec);
 				var e1 = f(e1);
-				_e.eexpr = TIf(ec, e1, switch (e2) {
-					case None: None;
-					case Some(e): Some(f(e));
+				e.with({
+					eexpr:core.TExprExpr.TIf(ec, e1, switch (e2) {
+						case None: None;
+						case Some(e): Some(f(e));
+					}),
+					etype: ft(e.etype)
 				});
-				_e.etype = ft(e.etype);
 			case TSwitch (e1, cases, def):
 				var e1 = f(e1);
 				var cases = List.map(function (c) { return {values:List.map(f, c.values), e:f(c.e)}}, cases);
-				_e.eexpr = TSwitch(e1, cases, switch (def) {
-					case None: None;
-					case Some(e): Some(f(e));
+				e.with({
+					eexpr:core.TExprExpr.TSwitch(e1, cases, switch (def) {
+						case None: None;
+						case Some(e): Some(f(e));
+					}),
+					etype: ft(e.etype)
 				});
-				_e.etype = ft(e.etype);
 			case TTry (e1, catches):
 				var e1 = f(e1);
-				_e.eexpr = TTry(e1, List.map(function (c) { return {v:fv(c.v), e:f(c.e)};}, catches));
-				_e.etype = ft(e.etype);
-			case TReturn (eo):
-				_e.eexpr = TReturn (switch (eo) {
-					case None: None;
-					case Some(e): Some(f(e));
+				e.with({
+					eexpr:core.TExprExpr.TTry(e1, List.map(function (c) { return {v:fv(c.v), e:f(c.e)};}, catches)),
+					etype: ft(e.etype)
 				});
-				_e.etype = ft(e.etype);
+			case TReturn (eo):
+				e.with({
+					eexpr:core.TExprExpr.TReturn (switch (eo) {
+						case None: None;
+						case Some(e): Some(f(e));
+					}),
+					etype: ft(e.etype)
+				});
 			case TCast (e1, t):
-				_e.eexpr = TCast(f(e1),t);
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TCast(f(e1),t),
+					etype: ft(e.etype)
+				});
 			case TMeta (m, e1):
-				_e.eexpr = TMeta(m, f(e1));
-				_e.etype = ft(e.etype);
+				e.with({
+					eexpr:core.TExprExpr.TMeta(m, f(e1)),
+					etype: ft(e.etype)
+				});
 		}
-		return _e;
 	}
 
 	public static function resolve_typedef (t:core.Type.ModuleType) {
@@ -2554,7 +2591,7 @@ class Type {
 			t_pos: a.a_pos,
 			t_name_pos: core.Globals.null_pos,
 			t_type: TAnon({
-				a_fields: new Map<String, TClassField>(),
+				a_fields: PMap.empty(), //<String, TClassField>
 				a_status: new Ref(AbstractStatics(a))
 			}),
 			t_private: true,

@@ -829,8 +829,9 @@ class Typer {
 								PMap.find(f.cf_name, c2.cl_statics);
 							}
 							catch (_:ocaml.Not_found) {
-								var cf = f.clone();
-								cf.cf_kind = Method(MethNormal);
+								var cf = f.with({
+									cf_kind: core.Type.FieldKind.Method(MethNormal)
+								});
 								c2.cl_statics = PMap.add(cf.cf_name, cf, c2.cl_statics);
 								c2.cl_ordered_statics = cf :: c2.cl_ordered_statics;
 								cf;
@@ -856,9 +857,7 @@ class Typer {
 						}
 					case Some(e):
 						function loop (e:core.Type.TExpr) {
-							var _e = e.clone();
-							_e.epos = p;
-							return core.Type.map_expr(loop, _e);
+							return core.Type.map_expr(loop, e.with({epos:p}));
 						}
 						loop(e);
 				}
@@ -951,7 +950,7 @@ class Typer {
 				switch [ctx.curfun, e.eexpr] {
 					case [(FunMemberAbstract | FunMemberAbstractLocal), TTypeExpr(TClassDecl(c={cl_kind:KAbstractImpl(a)}))] if (c.equals(ctx.curclass) && core.Meta.has(Impl, f.cf_meta)):
 						var e = core.Type.mk(TField(e, fmode), t, p);
-						var ethis = get_this(ctx, p).clone();
+						var ethis = get_this(ctx, p);
 						ethis.etype = TAbstract(a, List.map(function (param) { return param.t; }, a.a_params));
 						AKUsing(e, ctx.curclass, f, ethis);
 					case _:
@@ -980,16 +979,14 @@ class Typer {
 			case Var(v):
 				switch ( switch (mode) { case MGet, MCall: v.v_read; case MSet: v.v_write; }) {
 					case AccNo if (!core.Meta.has(PrivateAccess, ctx.meta)):
-						var _f = f.clone();
-						_f.cf_public = false;
 						switch (core.Type.follow(e.etype)) {
-							case TInst(c, _) if (core.Type.is_parent(c, ctx.curclass) || context.Typecore.can_access(ctx, c, _f, false)): normal();
+							case TInst(c, _) if (core.Type.is_parent(c, ctx.curclass) || context.Typecore.can_access(ctx, c, f.with({cf_public:false}), false)): normal();
 							case TAnon(a):
 								switch (a.a_status.get()) {
 									case Opened if (mode == MSet):
 										f.cf_kind = Var({v_read:v.v_read, v_write:AccNormal});
 										normal();
-									case Statics(c2) if (ctx.curclass.equals(c2) || context.Typecore.can_access(ctx, c2, _f, true)): normal();
+									case Statics(c2) if (ctx.curclass.equals(c2) || context.Typecore.can_access(ctx, c2, f.with({cf_public:false}), true)): normal();
 									case _: (ctx.untyped_) ? normal() : AKNo(f.cf_name);
 								}
 							case _:
@@ -1227,7 +1224,7 @@ class Typer {
 											var cf = core.Type.mk_field(v.v_name, v.v_type, e.epos, core.Globals.null_pos);
 											cf.cf_params = params; cf.cf_expr = Some(e); cf.cf_kind = Method(MethInline);
 											c.cl_extern = true;
-											c.cl_fields = PMap.add(cf.cf_name, cf, new Map<String, core.Type.TClassField>());
+											c.cl_fields = PMap.add(cf.cf_name, cf, PMap.empty()); // PMap<String, core.Type.TClassField>
 											AKInline(core.Type.mk(TConst(TNull), TInst(c, []), p), cf, FInstance(c, [], cf), t);
 									}
 								case _:
@@ -1546,7 +1543,7 @@ class Typer {
 				var f = core.Type.mk_field(i, core.Type.mk_mono(), p, core.Globals.null_pos);
 				f.cf_kind = Var({v_read:AccNormal, v_write:switch (mode) {case MSet:AccNormal; case MGet, MCall:AccNo;}});
 				var x = new Ref<core.Type.AnonStatus>(Opened);
-				var t:core.Type.T = TAnon({a_fields:PMap.add(i, f, new Map<String, core.Type.TClassField>()), a_status:x});
+				var t:core.Type.T = TAnon({a_fields:PMap.add(i, f, PMap.empty()), a_status:x}); // <String, core.Type.TClassField>
 				ctx.opened = x :: ctx.opened;
 				r.set(Some(t));
 				field_access(ctx, mode, f, FAnon(f), core.Type.field_type(f), e, p);
@@ -1616,9 +1613,7 @@ class Typer {
 				catch (_:ocaml.Not_found) {
 					try {
 						if (does_forward(a, false)) {
-							var _e = e.clone();
-							_e.etype = core.Type.apply_params(a.a_params, pl, a.a_this);
-							type_field(true, ctx, _e, i, p, mode);
+							type_field(true, ctx, e.with({etype:core.Type.apply_params(a.a_params, pl, a.a_this)}), i, p, mode);
 						}
 						else {
 							throw ocaml.Not_found.instance;
@@ -1632,9 +1627,7 @@ class Typer {
 							try {
 								switch [ctx.curfun, e.eexpr] {
 									case [FunMemberAbstract, TConst(TThis)]:
-										var _e = e.clone();
-										_e.etype = core.Type.apply_params(a.a_params, pl, a.a_this);
-										type_field(ctx, _e, i, p, mode);
+										type_field(ctx, e.with({etype:core.Type.apply_params(a.a_params, pl, a.a_this)}), i, p, mode);
 									case _: throw ocaml.Not_found.instance;
 								}
 							}
@@ -1821,8 +1814,7 @@ class Typer {
 										var ev1 = core.Type.mk(TLocal(v1), v1.v_type, p);
 										var v2 = context.Typecore.gen_local(ctx, ea2.etype, ea2.epos);
 										var ev2 = core.Type.mk(TLocal(v2), v2.v_type, p);
-										var e = e.clone();
-										e.eexpr = TArray(ev1, ev2);
+										var e = e.with({eexpr: core.Type.TExprExpr.TArray(ev1, ev2)});
 										core.Type.mk(TBlock([
 											core.Type.mk(TVar(v1, Some(ea1)), ctx.t.tvoid, p),
 											core.Type.mk(TVar(v2, Some(ea2)), ctx.t.tvoid, p),
@@ -1832,8 +1824,7 @@ class Typer {
 									case TField(ea1, fa) if (has_side_effect):
 										var v1 = context.Typecore.gen_local(ctx, ea1.etype, ea1.epos);
 										var ev1 = core.Type.mk(TLocal(v1), v1.v_type, p);
-										var e = e.clone();
-										e.eexpr = TField(ev1, fa);
+										var e = e.with({eexpr: core.Type.TExprExpr.TField(ev1, fa)});
 										core.Type.mk(TBlock([
 											core.Type.mk(TVar(v1, Some(ea1)), ctx.t.tvoid, p),
 											core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
@@ -1987,11 +1978,9 @@ class Typer {
 						var std = type_type(ctx, new core.Path([], "std"), e.epos);
 						var acc = acc_get(ctx, type_field(ctx, std, "string", e.epos, MCall), e.epos);
 						core.Type.follow(acc.etype);
-						var acc = switch (acc.eexpr) {
+						var acc:core.Type.TExpr = switch (acc.eexpr) {
 							case TField(e, FClosure(Some({c:c, params:tl}), f)):
-								var _acc = acc.clone();
-								_acc.eexpr = TField(e, FInstance(c, tl, f));
-								_acc;
+								acc.with({eexpr: core.Type.TExprExpr.TField(e, FInstance(c, tl, f))});
 							case _: acc;
 						}
 						make_call(ctx, acc, [e], ctx.t.tstring, e.epos);
@@ -2174,10 +2163,8 @@ class Typer {
 					}
 					if (!core.Meta.has(CoreType, a.a_meta)) {
 						// for non core-types we require that the return type is compatible to the native result type
-						var _e1 = e1.clone();
-						_e1.etype = core.Abstract.follow_with_abstracts(e1.etype);
-						var _e2 = e1.clone();
-						_e2.etype = core.Abstract.follow_with_abstracts(e2.etype);
+						var _e1 = e1.with({etype:core.Abstract.follow_with_abstracts(e1.etype)});
+						var _e2 = e2.with({etype: core.Abstract.follow_with_abstracts(e2.etype)});
 						var e_ = make(_e1, _e2);
 						var t_expected = e_.etype;
 						try {
@@ -2352,10 +2339,141 @@ class Typer {
 	}
 
 	public static function type_unop (ctx:context.Typecore.Typer, op:core.Ast.Unop, flag:core.Ast.UnopFlag, e:core.Ast.Expr, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_unop");
 		var set = op.match(OpIncrement | OpDecrement); // (op == OpIncrement || op == OpDecrement);
 		var acc = type_access(ctx, e.expr, e.pos, (set) ? MSet : MGet);
-		throw false;
+		function access (e:core.Type.TExpr) : core.Type.TExpr {
+			function make (e:core.Type.TExpr) : core.Type.TExpr {
+				var t = switch (op) {
+					case OpNot:
+						if (flag == Postfix) {
+							core.Error.error("Postfix ! is not supported", p);
+						}
+						context.Typecore.unify(ctx, e.etype, ctx.t.tbool, e.epos);
+						ctx.t.tbool;
+					case OpNegBits:
+						context.Typecore.unify(ctx, e.etype, ctx.t.tint, e.epos);
+						ctx.t.tint;
+					case OpIncrement, OpDecrement, OpNeg:
+						if (set) { check_assign(ctx, e); }
+						switch (classify(e.etype)) {
+							case KFloat: ctx.t.tfloat;
+							case KParam(t):
+								context.Typecore.unify(ctx, e.etype, ctx.t.tfloat, e.epos);
+								t;
+							case k:
+								(unify_int(ctx, e, k)) ? ctx.t.tint : ctx.t.tfloat;
+						}
+				}
+				return core.Type.mk(TUnop(op, flag, e), t, p);
+			}
+			return
+			try {
+				switch (core.Type.follow(e.etype)) {
+					case TAbstract(a={a_impl:Some(c)}, pl):
+						function loop (opl:ImmutableList<{op:core.Ast.Unop, flag:core.Ast.UnopFlag, cf:core.Type.TClassField}>) : {fst:core.Type.TClassField, snd:core.Type.T, trd:core.Type.T} {
+							return switch (opl) {
+								case []: throw ocaml.Not_found;
+								case {op:op2, flag:flag2, cf:cf}::opl if (op.equals(op2) && flag.equals(flag2)):
+									var m = core.Type.mk_mono();
+									var tcf = core.Type.apply_params(a.a_params, pl, core.Type.monomorphs(cf.cf_params, cf.cf_type));
+									if (core.Meta.has(Impl, cf.cf_meta)) {
+										(core.Type.type_iseq(core.Type.tfun([core.Type.apply_params(a.a_params, pl, a.a_this)], m), tcf)) ? {fst:cf, snd:tcf, trd:m} : loop(opl);
+									}
+									else {
+										(core.Type.type_iseq(core.Type.tfun([e.etype], m), tcf)) ? {fst:cf, snd:tcf, trd:m} : loop(opl);
+									}
+								case _::opl: loop(opl);
+							}
+						}
+						var _tmp = try { loop(a.a_unops); } catch (_:ocaml.Not_found) { throw ocaml.Not_found.instance; }
+						var cf = _tmp.fst; var t = _tmp.snd; var r = _tmp.trd;
+						switch (cf.cf_expr) {
+							case None:
+								var e = e.with({etype: core.Type.apply_params(a.a_params, pl, a.a_this)});
+								var e = core.Type.mk(TUnop(op, flag, e), r, p);
+								// unify ctx r e.etype p; *) (* TODO: I'm not sure why this was here (related to #2295)
+								e;
+							case Some(_):
+								var et = type_module_type(ctx, TClassDecl(c), None, p);
+								var ef = core.Type.mk(TField(et, FStatic(c, cf)), t, p);
+								make_call(ctx, ef, [e], r, p);
+						}
+					case _: throw ocaml.Not_found.instance;
+				}
+			}
+			catch (_:ocaml.Not_found) {
+				make(e);
+			}
+		}
+		function loop(acc:AccessKind) {
+			return switch (acc) {
+				case AKExpr(e): access(e);
+				case AKInline(_), AKUsing(_) if (!set):
+					access(acc_get(ctx, acc, p));
+				case AKNo(s):
+					core.Error.error("The field or identifier " + s + " is not accessible for " + ((set) ? "writing" : "reading"), p);
+				case AKAccess(a, tl, c, ebase, ekey):
+					try {
+						switch (op) { case OpIncrement, OpDecrement: case _: throw ocaml.Not_found.instance; }
+						var v_key = core.Type.alloc_var("tmp", ekey.etype, ekey.epos);
+						var evar_key = core.Type.mk(TVar(v_key, Some(ekey)), ctx.com.basic.tvoid, ekey.epos);
+						var ekey = core.Type.mk(TLocal(v_key), ekey.etype, ekey.epos);
+						// get
+						var e_get = mk_array_get_call(ctx, context.typecore.AbstractCast.find_array_access_raise(ctx, a, tl, ekey, None, p), c, ebase, p);
+						var v_get = core.Type.alloc_var("tmp", e_get.etype, e_get.epos);
+						var ev_get = core.Type.mk(TLocal(v_get), v_get.v_type, p);
+						var evar_get = core.Type.mk(TVar(v_get, Some(e_get)), ctx.com.basic.tvoid, p);
+						// op
+						var e_one = core.Type.mk(TConst(TInt(1)), ctx.com.basic.tint, p);
+						var e_op = core.Type.mk(TBinop((op==OpIncrement) ? OpAdd : OpSub, ev_get, e_one), ev_get.etype, p);
+						// set
+						var e_set = mk_array_set_call(ctx, context.typecore.AbstractCast.find_array_access_raise(ctx, a, tl, ekey, Some(e_op), p), c, ebase, p);
+						var el = evar_key :: evar_get :: e_set :: ((flag == Postfix) ? [ev_get] : []);
+						core.Type.mk(TBlock(el), e_set.etype, p);
+					}
+					catch (_:ocaml.Not_found) {
+						var e = mk_array_get_call(ctx, context.typecore.AbstractCast.find_array_access(ctx, a, tl, ekey, None, p), c, ebase, p);
+						loop(AKExpr(e));
+					}
+				case AKInline(_), AKUsing(_), AKMacro(_):
+					core.Error.error("This kind of operation is not supported", p);
+				case AKSet(e, t, cf):
+					var l = context.Typecore.save_locals(ctx);
+					var v = context.Typecore.gen_local(ctx, e.etype, p);
+					var ev = core.Type.mk(TLocal(v), e.etype, p);
+					var op:core.Ast.Binop = switch (op) {
+						case OpIncrement: OpAdd;
+						case OpDecrement: OpSub;
+						case _: trace("Shall not be seen"); throw false;
+					}
+					var one:core.Ast.Expr = {expr:EConst(CInt("1")), pos:p};
+					var eget:core.Ast.Expr = {expr:EField({expr:EConst(CIdent(v.v_name)), pos:p}, cf.cf_name), pos:p};
+					switch (flag) {
+						case Prefix:
+							var get = type_binop(ctx, op, eget, one, false, Value, p);
+							context.Typecore.unify(ctx, get.etype, t, p);
+							l();
+							core.Type.mk(TBlock([
+								core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
+								make_call(ctx, core.Type.mk(TField(ev, core.Type.quick_field_dynamic(ev.etype, "set_"+cf.cf_name)), core.Type.tfun([t], t), p), [get], t, p)
+							]), t, p);
+						case Postfix:
+							var v2 = context.Typecore.gen_local(ctx, t, p);
+							var ev2 = core.Type.mk(TLocal(v2), t, p);
+							var get = type_expr(ctx, eget, Value);
+							var plusone = type_binop(ctx, op, {expr:EConst(CIdent(v2.v_name)), pos:p}, one, false, Value, p);
+							context.Typecore.unify(ctx, get.etype, t, p);
+							l();
+							core.Type.mk(TBlock([
+								core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p),
+								core.Type.mk(TVar(v2, Some(get)), ctx.t.tvoid, p),
+								make_call(ctx, core.Type.mk(TField(ev, core.Type.quick_field_dynamic(ev.etype, "set_"+cf.cf_name)), core.Type.tfun([plusone.etype], t), p), [plusone], t, p),
+								ev2
+							]), t, p);
+					}
+			}
+		}
+		return  loop(acc);
 	}
 
 	public static function type_ident(ctx:context.Typecore.Typer, i:String, p:core.Globals.Pos, mode:AccessMode) : AccessKind {
@@ -3099,8 +3217,129 @@ class Typer {
 	}
 
 	public static function type_local_function (ctx:context.Typecore.Typer, name:Option<String>, f:core.Ast.Func, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_local_function");
-		throw false;
+		var params = typing.Typeload.type_function_params(ctx, f, switch (name) { case None: "localfun"; case Some(n): n;}, p);
+		if (params != []) {
+			if (name == None) {
+				context.Typecore.display_error(ctx, "Type parameters not supported in unnamed local functions", p);
+			}
+			if (with_type != NoValue) {
+				core.Error.error("Type parameters are not supported for rvalue functions", p);
+			}
+		}
+		List.iter (function (tp:core.Ast.TypeParam) {
+			if (tp.tp_constraints != []) {
+				context.Typecore.display_error(ctx, "Type parameter constraints are not supported for local functions", p);
+			}
+		}, f.f_params);
+		var _tmp = switch(name) {
+			case None: {fst:false, snd:None};
+			case Some(v) if (StringTools.startsWith(v, "inline_")): {fst:true, snd:Some(v.substr(7))};
+			case Some(v): {fst:false, snd:Some(v)};
+		}
+		var inline_ = _tmp.fst; var v = _tmp.snd;
+		var old_tp = ctx.type_params; var old_in_loop = ctx.in_loop;
+		ctx.type_params = List.append(params, ctx.type_params);
+		if (!inline_) { ctx.in_loop = false; }
+		var rt = typing.Typeload.load_type_hint(ctx, p, f.f_type);
+		var args = List.map(function (arg:core.Ast.FunArg) : {name:String, opt:Option<core.Ast.Expr>, t:core.Type.T} {
+			var s = arg.name.pack; var opt = arg.opt; var t = arg.type; var c = arg.value;
+			var t = typing.Typeload.load_type_hint(ctx, p, t);
+			var _tmp = typing.Typeload.type_function_arg(ctx, t, c, opt, p);
+			var t = _tmp.fst; var c = _tmp.snd;
+			return {name:s, opt:c, t:t};
+		}, f.f_args);
+		switch (with_type) {
+			case WithType(t):
+				function loop (t:core.Type.T) {
+					switch (core.Type.follow(t)) {
+						case TFun({args:args2, ret:tr}) if (List.length(args2) == List.length(args)):
+							List.iter2(function (a1:{name:String, opt:Option<core.Ast.Expr>, t:core.Type.T}, a2:core.Type.TSignatureArg) {
+								var t1 = a1.t; var t2 = a2.t;
+								switch (core.Type.follow(t1)) {
+									case TMono(_): context.Typecore.unify(ctx, t2, t1, p);
+									case _:
+								}
+							}, args, args2);
+							// unify for top-down inference unless we are expecting Void
+							switch [core.Type.follow(tr), core.Type.follow(rt)] {
+								case [TAbstract({a_path:{a:[], b:"Void"}}, _), _]:
+								case [_, TMono(_)]: context.Typecore.unify(ctx, rt, tr, p);
+								case _:
+							}
+						case TAbstract(a, tl):
+							loop(core.Abstract.get_underlying_type(a, tl));
+						case _:
+					}
+				}
+				loop(t);
+			case NoValue:
+				if (name == None) {
+					context.Typecore.display_error(ctx, "Unnamed lvalue functions are not supported", p);
+				}
+			case _:
+		}
+		var ft:core.Type.T = TFun({args:core.Type.fun_args(args), ret:rt});
+		var v = switch (v) {
+			case None: None;
+			case Some(v):
+				if (v.charAt(0) == "$") {
+					context.Typecore.display_error(ctx, "Variable names starting with a dollar are not allowed", p);
+				}
+				Some(context.Typecore.add_local(ctx, v, ft, p)); // TODO: var pos;
+		}
+		var curfun:context.Typecore.CurrentFun = switch (ctx.curfun) {
+			case FunStatic: FunStatic;
+			case FunMemberAbstract: FunMemberAbstractLocal;
+			case _: FunMemberClassLocal;
+		}
+		var _tmp = typing.Typeload.type_function(ctx, args, rt, curfun, f, ctx.in_display, p);
+		var e = _tmp.fst; var fargs = _tmp.snd;
+		ctx.type_params = old_tp;
+		ctx.in_loop = old_in_loop;
+		var f = {
+			tf_args: fargs,
+			tf_type: rt,
+			tf_expr: e
+		};
+		var e = core.Type.mk(TFunction(f), ft, p);
+		return switch (v) {
+			case None: e;
+			case Some(v):
+				if (params != [] || inline_) {
+					v.v_extra = Some({params:params, expr:(inline_) ? Some(e) : None});
+				}
+				function loop (u:filters.LocalUsage.Usage) {
+					switch (u) {
+						case Block(f), Loop(f), Function(f): f(loop);
+						case Use(v2), Assign(v2) if (v.equals(v2)): throw ocaml.Exit.instance;
+						case Use(_), Assign(_), Declare(_):
+					}
+				}
+				var is_rec = try { filters.LocalUsage.local_usage(loop, e); false; } catch (_:ocaml.Exit) { true; }
+				var decl = if (is_rec) {
+					if (inline_) {
+						context.Typecore.display_error(ctx, "Inline function cannot be recursive", e.epos);
+					}
+					var vnew = context.Typecore.add_local(ctx, v.v_name, ft, v.v_pos);
+					core.Type.mk(TVar(vnew, Some(core.Type.mk(TBlock([
+						core.Type.mk(TVar(v, Some(core.Type.mk(TConst(TNull), ft, p))), ctx.t.tvoid, p),
+						core.Type.mk(TBinop(OpAssign, core.Type.mk(TLocal(v), ft, p), e), ft, p),
+						core.Type.mk(TLocal(v), ft, p)
+					]), ft, p))), ctx.t.tvoid, p);
+				}
+				else if (inline_) {
+					core.Type.mk(TBlock([]), ctx.t.tvoid, p); // do not add variable since it will be inlined
+				}
+				else {
+					core.Type.mk(TVar(v, Some(e)), ctx.t.tvoid, p);
+				}
+				if (with_type != NoValue && !inline_) {
+					core.Type.mk(TBlock([decl, core.Type.mk(TLocal(v), v.v_type, p)]), v.v_type, p);
+				}
+				else {
+					decl;
+				}
+		}
 	}
 
 	public static function type_array_decl (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -3376,7 +3615,7 @@ class Typer {
 			case EFunction(name, f):
 				type_local_function(ctx, name, f, with_type, p);
 			case EUntyped(e):
-				var old = ctx.untyped_.clone();
+				var old = ctx.untyped_;
 				ctx.untyped_ = true;
 				if (!core.Meta.has(HasUntyped, ctx.curfield.cf_meta)) {
 					ctx.curfield.cf_meta = ({name:HasUntyped,params:[],pos:p} : core.Ast.MetadataEntry) :: ctx.curfield.cf_meta;
@@ -3450,7 +3689,7 @@ class Typer {
 				if (ctx.is_display_file) {
 					context.display.DisplayEmitter.check_display_metadata(ctx, [m]);
 				}
-				var old = ctx.meta.clone();
+				var old = ctx.meta;
 				ctx.meta = m :: ctx.meta;
 				function e_ () {
 					return type_expr(ctx, e1, with_type);
@@ -3793,7 +4032,7 @@ class Typer {
 				}
 				ctx.macro_depth--;
 				ctx.with_type_stack = List.tl(ctx.with_type_stack);
-				var old = ctx.on_error.clone();
+				var old = ctx.on_error;
 				ctx.on_error = function (ctx, msg, ep) {
 					// display additional info in the case the error is not part of our original call
 					if (ep.pfile != p.pfile || ep.pmax < p.pmin || ep.pmin > p.pmax) {
@@ -3908,7 +4147,7 @@ class Typer {
 					var p = core.Globals.null_pos;
 					var _et = core.Type.mk(
 						core.Type.TExprExpr.TTypeExpr(et),
-						core.Type.T.TAnon({a_fields: new Map<String, core.Type.TClassField>(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
+						core.Type.T.TAnon({a_fields: PMap.empty(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
 						p
 					);
 					var call = core.Type.mk(
@@ -3964,7 +4203,7 @@ class Typer {
 			}
 			return NotYet;
 		}
-		var statics = new Map<{path:core.Path, s:String}, Bool>();
+		var statics:PMap<{path:core.Path, s:String}, Bool> = PMap.empty();
 
 		var walk_static_field:core.Path->core.Type.TClass->core.Type.TClassField->Void;
 		var walk_expr:core.Path->core.Type.TExpr->Void;
@@ -4130,7 +4369,7 @@ class Typer {
 				curmod : core.Type.null_module,
 				module_types : [],
 				module_using : [],
-				module_globals : new Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>(),
+				module_globals : PMap.empty(), // <String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>
 				wildcard_packages : [],
 				module_imports : [],
 			},
@@ -4147,7 +4386,7 @@ class Typer {
 			in_display : false,
 			in_macro : context.Common.defined(com, Macro),
 			ret : core.Type.mk_mono(),
-			locals : new Map<String, core.Type.TVar>(),
+			locals : PMap.empty(), // <String, core.Type.TVar>
 			type_params : [],
 			curclass : core.Type.null_class(),
 			curfield : core.Type.null_field(),

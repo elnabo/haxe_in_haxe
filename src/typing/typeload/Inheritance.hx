@@ -20,9 +20,10 @@ class Inheritance {
 
 	public static function set_heritance (ctx:context.Typecore.Typer, c:core.Type.TClass, herits:ImmutableList<core.Ast.ClassFlag>, p:core.Globals.Pos) : ImmutableList<Void->Void> {
 		var is_lib = core.Meta.has(LibType, c.cl_meta);
-		var ctx = ctx.clone();
-		ctx.curclass = c;
-		ctx.type_params = c.cl_params;
+		var ctx = ctx.with({
+			curclass:c,
+			type_params: c.cl_params
+		});
 		var old_meta = c.cl_meta;
 		function process_meta (csup:core.Type.TClass) {
 			List.iter(function (m:core.Ast.MetadataEntry) {
@@ -69,9 +70,7 @@ class Inheritance {
 							context.display.ImportHandling.mark_import_position(ctx.com, pi);
 							t;
 						}
-						var _t = t.clone();
-						_t.tpackage = core.Type.t_path(lt).a;
-						{tp:_t, pos:p};
+						{tp:t.with({tpackage:core.Type.t_path(lt).a}), pos:p};
 					}
 					catch (_:ocaml.Not_found) {
 						{tp:t, pos:p};

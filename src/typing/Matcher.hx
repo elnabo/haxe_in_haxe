@@ -19,7 +19,7 @@ class Matcher {
 
 	public static var fake_tuple_type:core.Type.T = TInst(core.Type.mk_class(core.Type.null_module, new core.Path([], "-Tuple"), core.Globals.null_pos, core.Globals.null_pos), []);
 	public static function tuple_type (tl:core.Type.TParams) : core.Type.T {
-		return core.Type.tfun(tl, fake_tuple_type.clone());
+		return core.Type.tfun(tl, fake_tuple_type);
 	}
 
 	public static function type_field_access (ctx:context.Typecore.Typer, ?resume:Bool=false, e:core.Type.TExpr, name:String) : core.Type.TExpr {

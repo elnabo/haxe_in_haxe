@@ -74,7 +74,7 @@ typedef TyperModule = {
 	curmod : core.Type.ModuleDef,
 	module_types : ImmutableList<{mt:core.Type.ModuleType, pos:core.Globals.Pos}>,
 	module_using : ImmutableList<{tc:core.Type.TClass, pos:core.Globals.Pos}>,
-	module_globals : Map<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>,
+	module_globals : PMap<String, {a:core.Type.ModuleType, b:String, pos:core.Globals.Pos}>,
 	wildcard_packages : ImmutableList<{l:ImmutableList<String>, pos:core.Globals.Pos}>,
 	module_imports : ImmutableList<core.Ast.Import>
 }
@@ -137,7 +137,7 @@ typedef Typer = {
 	macro_depth : Int,
 	curfun : CurrentFun,
 	ret : core.Type.T,
-	locals : Map<String, core.Type.TVar>,
+	locals : PMap<String, core.Type.TVar>,
 	opened : ImmutableList<Ref<core.Type.AnonStatus>>,
 	vthis : Option<core.Type.TVar>,
 	in_call_args : Bool,
@@ -233,7 +233,7 @@ class Typecore {
 	}
 
 	public static function save_locals (ctx:Typer) : Void->Void {
-		var locals = ctx.locals.clone();
+		var locals = ctx.locals;
 		return function() { ctx.locals = locals; }
 	}
 
@@ -247,7 +247,7 @@ class Typecore {
 			}
 			catch (_:ocaml.Not_found) {}
 		}
-		ctx.locals.set(n, v);
+		ctx.locals = PMap.add(n, v, ctx.locals);
 		return v;
 	}
 
@@ -406,7 +406,7 @@ class Typecore {
 				function loop (l:core.Ast.Metadata) : Bool {
 					return switch (l) {
 						case {name:m2, params:el} :: l if (m.equals(m2)):
-							List.exists(function (e) {
+							loop(l) || List.exists(function (e) {
 								var p = expr_path([], e);
 								return p != [] && chk_path(p, path);
 							}, el);
@@ -414,7 +414,8 @@ class Typecore {
 						case []: false;
 					}
 				}
-				return loop(c.cl_meta) || loop(f.cf_meta);
+				// return loop(c.cl_meta) || loop(f.cf_meta);
+				return loop(f.cf_meta) || loop(c.cl_meta);
 			}
 			var cur_paths = new Ref([]);
 			function loop (c:core.Type.TClass) : Void {
@@ -428,29 +429,30 @@ class Typecore {
 			loop(ctx.curclass);
 			var is_constr = cf.cf_name == "new";
 			function loop_(c:core.Type.TClass) : Bool {
-				var _tmp = try {
-					// if our common ancestor declare/override the field, then we can access it
-					var f = if (is_constr) {
-						switch (c.cl_constructor) {
-							case None: throw ocaml.Not_found.instance;
-							case Some(c): c;
+				return has(Access, ctx.curclass, ctx.curfield, make_path(c, cf)) ||
+					(switch (c.cl_super) {
+						case Some({c:csup}): trace(csup.cl_path); loop_(csup);
+						case None: false;
+					}) || (
+						try {
+							// if our common ancestor declare/override the field, then we can access it
+							var f = if (is_constr) {
+								switch (c.cl_constructor) {
+									case None: throw ocaml.Not_found.instance;
+									case Some(c): c;
+								}
+							}
+							else {
+								PMap.find(cf.cf_name, (stat) ? c.cl_statics : c.cl_fields);
+							}
+							List.exists(has.bind(Allow, c, f), cur_paths.get()) || core.Type.is_parent(c, ctx.curclass);
 						}
-					}
-					else {
-						PMap.find(cf.cf_name, (stat) ? c.cl_statics : c.cl_fields);
-					}
-					core.Type.is_parent(c, ctx.curclass) || List.exists(has.bind(Allow, c, f), cur_paths.get());
-				}
-				catch (_:ocaml.Not_found) {
-					false;
-				}
-				_tmp = _tmp || (switch (c.cl_super) {
-					case Some({c:csup}): loop_(csup);
-					case None: false;
-				});
-				return _tmp || has(Access, ctx.curclass, ctx.curfield, make_path(c, cf));
+						catch (_:ocaml.Not_found) {
+							false;
+						}
+					);
 			}
-			var b = loop_(c);
+			var b = core.Meta.has(PrivateAccess, ctx.meta);
 			// access is also allowed of we access a type parameter which is constrained to our (base) class
 			b = b || (switch (c.cl_kind) {
 				case KTypeParameter(tl):
@@ -462,7 +464,7 @@ class Typecore {
 					}, tl);
 				case _: false;
 			});
-			b = b || core.Meta.has(PrivateAccess, ctx.meta);
+			b = b || loop_(c);
 			// TODO: find out what this does and move it to genas3
 			if (b && context.Common.defined(ctx.com, As3) && !core.Meta.has(Public, cf.cf_meta)) {
 				cf.cf_meta = ({name:Public, params:[], pos:cf.cf_pos} : core.Ast.MetadataEntry) :: cf.cf_meta;
@@ -483,9 +485,7 @@ class Typecore {
 							var tfo = core.Type.apply_params(cfo.cf_params, List.map(function (p) {return p.t; }, cfo.cf_params), tfo);
 							// ignore overloads which have a different first argument
 							if (core.Type.type_iseq(tf, tfo)) {
-								var _cfo = cfo.clone();
-								_cfo.cf_type = TFun({args:args, ret:ret});
-								loop(_cfo::acc, l);
+								loop(cfo.with({cf_type:core.Type.T.TFun({args:args, ret:ret})})::acc, l);
 							}
 							else {
 								loop(acc, l);
@@ -495,10 +495,10 @@ class Typecore {
 						case []: acc;
 					}
 				}
-				var _cf = cf.clone();
-				_cf.cf_overloads = loop([], cf.cf_overloads);
-				_cf.cf_type = TFun({args:args, ret:ret});
-				_cf;
+				cf.with({
+					cf_overloads: loop([], cf.cf_overloads),
+					cf_type: core.Type.T.TFun({args:args, ret:ret})
+				});
 			case _: cf;
 		}
 	}

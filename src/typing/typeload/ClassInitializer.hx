@@ -91,27 +91,28 @@ class ClassInitializer {
 			case KAbstractImpl(a): Some(a);
 			case _: None;
 		}
-		var _ctx = ctx.clone();
-		_ctx.curclass = c;
-		_ctx.type_params = c.cl_params.clone();
-		_ctx.pass = PBuildClass;
-		_ctx.tthis = switch (_abstract) {
-			case Some(a):
-				switch (a.a_this) {
-					case TMono(_.get()=>r) if (r == None):
-						TAbstract(a, List.map(function (p) { return p.t; }, c.cl_params));
-					case t: t;
+		var ctx = ctx.with({
+			curclass: c,
+			type_params: c.cl_params,
+			pass: context.Typecore.TyperPass.PBuildClass,
+			tthis: switch (_abstract) {
+				case Some(a):
+					switch (a.a_this) {
+						case TMono(_.get()=>r) if (r == None):
+							core.Type.T.TAbstract(a, List.map(function (p) { return p.t; }, c.cl_params));
+						case t: t;
+					}
+				case None:
+					core.Type.T.TInst(c, List.map(function (p) { return p.t; }, c.cl_params));
+			},
+			on_error: function (ctx, msg, ep) {
+				ctx.com.error(msg, ep);
+				// macros expressions might reference other code, let's recall which class we are actually compiling
+				if (typing.Typeload.locate_macro_error.get() && (ep.pfile!=c.cl_pos.pfile || ep.pmax < c.cl_pos.pmin || ep.pmin > c.cl_pos.pmax)) {
+					ctx.com.error("Defined in this class", c.cl_pos);
 				}
-			case None:
-				TInst(c, List.map(function (p) { return p.t; }, c.cl_params));
-		};
-		_ctx.on_error = function (ctx, msg, ep) {
-			ctx.com.error(msg, ep);
-			// macros expressions might reference other code, let's recall which class we are actually compiling
-			if (typing.Typeload.locate_macro_error.get() && (ep.pfile!=c.cl_pos.pfile || ep.pmax < c.cl_pos.pmin || ep.pmin > c.cl_pos.pmax)) {
-				ctx.com.error("Defined in this class", c.cl_pos);
 			}
-		};
+		});
 		// a lib type will skip most checks
 		var is_lib = core.Meta.has(LibType, c.cl_meta);
 		if (is_lib && !c.cl_extern) {
@@ -138,12 +139,11 @@ class ClassInitializer {
 			uninitialized_final: None,
 			delayed_expr: []
 		}
-		return {fst:_ctx, snd:cctx};
+		return {fst:ctx, snd:cctx};
 	}
 
 	public static function create_field_context (ctx:context.Typecore.Typer, cctx:Class_init_ctx, c:core.Type.TClass, cff:core.Ast.ClassField) : {fst:context.Typecore.Typer, snd:Field_init_ctx} {
-		var ctx = ctx.clone();
-		ctx.pass = PBuildClass; // will be set later to PTypeExpr
+		var ctx = ctx.with({pass:context.Typecore.TyperPass.PBuildClass}); // will be set later to PTypeExpr
 		var is_static = List.mem(core.Ast.Access.AStatic, cff.cff_access);
 		var is_extern = core.Meta.has(Extern, cff.cff_meta) || c.cl_extern;
 		var allow_inline = cctx._abstract != None || switch (cff.cff_kind) {
@@ -206,11 +206,11 @@ class ClassInitializer {
 
 	public static function add_field (c:core.Type.TClass, cf:core.Type.TClassField, is_static:Bool) : Void {
 		if (is_static) {
-			c.cl_statics.set(cf.cf_name, cf);
+			c.cl_statics = PMap.add(cf.cf_name, cf, c.cl_statics);
 			c.cl_ordered_statics = cf :: c.cl_ordered_statics;
 		}
 		else {
-			c.cl_fields.set(cf.cf_name, cf);
+			c.cl_fields = PMap.add(cf.cf_name, cf, c.cl_fields);
 			c.cl_ordered_fields = cf :: c.cl_ordered_fields;
 		}
 	}
@@ -383,9 +383,7 @@ class ClassInitializer {
 						return switch ({fst:e.eexpr, snd:core.Type.follow(cf.cf_type)}) {
 							case {fst:TConst(TInt(i)), snd:TAbstract({a_path:{a:[], b:"Float"}}, _)}:
 								// turn int constant to float constant if expected type is float *)
-								var _e = e.clone();
-								_e.eexpr = TConst(TFloat(Std.string(i)));
-								return _e;
+								e.with({eexpr:core.Type.TExprExpr.TConst(TFloat(Std.string(i)))});
 							case _:
 								core.Type.mk_cast(e, cf.cf_type, e.epos);
 						}
@@ -736,12 +734,11 @@ class ClassInitializer {
 		}
 		var fd:core.Ast.Func = if (fctx.is_macro && !ctx.in_macro && !fctx.is_static) {
 			// remove display of first argument which will contain the "this" expression
-			var _fd = fd.clone();
-			_fd.f_args = switch (fd.f_args) {
-				case []: [];
-				case _::l: l;
-			}
-			_fd;
+			fd.with({f_args:switch (fd.f_args) {
+					case []: Tl;
+					case _::l: l;
+				}
+			});
 		}
 		else {
 			fd;
@@ -778,10 +775,10 @@ class ClassInitializer {
 								case None: Some({ct:texpr, pos:core.Globals.null_pos});
 								case Some(t): no_expr_of(t);
 							},
-							value:arg.value.clone()
+							value:arg.value
 						};
 					}, fd.f_args),
-					f_expr: fd.f_expr.clone()
+					f_expr: fd.f_expr
 				};
 			}
 			else {
@@ -947,9 +944,9 @@ class ClassInitializer {
 							if v.v_name <> "_" && has_mono v.v_type then ctx.com.warning "Uninferred function argument, please add a type-hint" v.v_pos;
 						) fargs; */
 						var tf:core.Type.TFunc = {
-							tf_args: fargs.clone(),
-							tf_type: ret.clone(),
-							tf_expr: e.clone()
+							tf_args: fargs,
+							tf_type: ret,
+							tf_expr: e
 						};
 						if (fctx.field_kind == FKInit) {
 							switch (e.eexpr) {

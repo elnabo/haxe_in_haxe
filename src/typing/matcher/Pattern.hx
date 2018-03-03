@@ -9,9 +9,9 @@ using ocaml.Cloner;
 
 typedef Pattern_context = {
 	ctx:context.Typecore.Typer,
-	or_locals: Option<Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>>,
-	ctx_locals:Map<String, core.Type.TVar>,
-	current_locals: Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>,
+	or_locals: Option<PMap<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>>,
+	ctx_locals:PMap<String, core.Type.TVar>,
+	current_locals: PMap<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>,
 	in_reification:Bool
 }
 
@@ -151,10 +151,10 @@ class Pattern {
 			var save = {
 				var old = ctx.locals;
 				ctx.locals = try {
-					PMap.add("this", PMap.find("this", old), new Map<String, core.Type.TVar>());
+					PMap.add("this", PMap.find("this", old), PMap.empty()); // PMap<String, core.Type.TVar>
 				}
 				catch (_:ocaml.Not_found) {
-					new Map<String, core.Type.TVar>();
+					PMap.empty(); // <String, core.Type.TVar>
 				}
 				function () { ctx.locals = old; }
 			}
@@ -405,9 +405,12 @@ class Pattern {
 					}, fl);
 					PatConstructor(ConFields(fields), patterns);
 				case EBinop(OpOr, e1, e2):
-					var pctx1 = pctx.clone(); pctx1.current_locals = new Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>();
+					var pctx1 = pctx.with({current_locals:PMap.empty()});
 					var pat1 = make_(pctx1, toplevel, t, e1);
-					var pctx2 = pctx.clone(); pctx2.current_locals = new Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>(); pctx2.or_locals = Some(pctx1.current_locals);
+					var pctx2 = pctx.with({
+						current_locals: PMap.empty(),
+						or_locals: Some(pctx1.current_locals)
+					});
 					var pat2 = make_(pctx2, toplevel, t, e2);
 					PMap.iter (function (name:String, other:{fst:core.Type.TVar, snd:core.Globals.Pos}) {
 						var v = other.fst; var p = other.snd;
@@ -462,7 +465,7 @@ class Pattern {
 	public static function make(ctx:context.Typecore.Typer, t:core.Type.T, e:core.Ast.Expr) : Pattern {
 		var pctx = {
 			ctx:ctx,
-			current_locals: new Map<String, {fst:core.Type.TVar, snd:core.Globals.Pos}>(),
+			current_locals: PMap.empty(),
 			ctx_locals: ctx.locals,
 			or_locals:None,
 			in_reification: false

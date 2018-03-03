@@ -1,81 +1,127 @@
 package ocaml;
 
+import haxe.ds.ImmutableList;
 using equals.Equal;
 
-class PMap {
-
-	public static inline function is_empty<A,B> (map:Map<A,B>) : Bool {
-		return map.iterator().hasNext();
+class PMap<K, V> {
+	public final keys:ImmutableList<K>;
+	public final values:ImmutableList<V>;
+	public function new(keys:ImmutableList<K>, values:ImmutableList<V>) {
+		this.keys = keys;
+		this.values = values;
+	}
+	public static inline function empty<K,V> () : PMap<K,V> {
+		return new PMap<K,V>(Tl, Tl);
 	}
 
-	public static function add<A,B> (key:A, value:B, m:Map<A,B>) : Map<A,B> {
-		var m = m.copy();
-		m.set(key, value);
-		return m;
-	}
-	public static function remove<A,B> (key:A, m:Map<A,B>) : Map<A,B> {
-		var m = m.copy();
-		m.remove(key);
-		return m;
+	public static inline function is_empty<K,V> (pmap:PMap<K,V>) : Bool {
+		return pmap.keys == Tl;
 	}
 
-	public static function fold<A,B,C> (f:B->C->C, map:Map<A,B>, c:C) : C {
-		var res = c;
-		for (value in map) {
-			res = f(value, res);
-		}
-		return res;
+	public static function add<K,V> (key:K, value:V, pmap:PMap<K,V>) : PMap<K,V> {
+		var m = remove(key, pmap);
+		return new PMap<K, V>(key::m.keys, value::m.values);
 	}
-	public static function foldi<A,B,C> (f:A->B->C->C, map:Map<A,B>, c:C) : C {
-		var res = c;
-		for (key in map.keys()) {
-			var value = map.get(key);
-			res = f(key, value, res);
-		}
-		return res;
-	}
-
-	public static function map<A,B, C:{}> (f:A->B, m:Map<C,A>) : Map<C, B> {
-		var res = new Map<C,B>();
-		for (key in m.keys()) {
-			res.set(key, f(m.get(key)));
-		}
-		return res;
-	}
-
-	public static function iter<A,B> (f:A->B->Void, m:Map<A,B>) : Void {
-		for (key in m.keys()) {
-			f(key, m.get(key));
-		}
-	}
-
-	public static inline function exists<A,B> (key:A, m:Map<A,B>) : Bool {
-		return mem(key, m);
-	}
-
-	public static function mem<A,B> (key:A, m:Map<A,B>) : Bool {
-		// TODO fix map
-		for (k in m.keys()) {
-			if (key.equals(k)) {
-				return true;
+	public static function remove<K,V> (key:K, pmap:PMap<K,V>) : PMap<K,V> {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		var resKeys:ImmutableList<K> = Tl;
+		var resValues:ImmutableList<V> = Tl;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: break;
+				case [Hd(k, kl), Hd(_, vl)] if (key.equals(k)):
+					keys = List.append(keys, kl);
+					values = List.append(values, vl);
+					break;
+				case [Hd(k, kl), Hd(v, vl)]:
+					keys = kl; values = vl;
+					resKeys = k :: resKeys;
+					resValues = v :: resValues;
+				case _: throw "Invalid PMap";
 			}
 		}
-		return false;
-		// throw ocaml.Not_found.instance;
-		// return m.exists(key);
+		return new PMap(resKeys, resValues);
 	}
 
-	public static function find<A, B> (key:A, m:Map<A,B>) : B {
-		// TODO fix map
-		// if (m.exists(key)) {
-		// 	return m.get(key);
-		// }
-		for (k in m.keys()) {
-			if (key.equals(k)) {
-				return m.get(k);
+	public static function fold<K,V,C> (f:V->C->C, pmap:PMap<K,V>, c:C) : C {
+		var values = pmap.values;
+		var res = c;
+		while (true) {
+			switch (values) {
+				case Tl: break;
+				case Hd(v, tl):
+					values = tl;
+					res = f(v, res);
 			}
 		}
-		throw ocaml.Not_found.instance;
+		return res;
+	}
+	public static function foldi<K,V,C> (f:K->V->C->C, pmap:PMap<K,V>, c:C) : C {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		var res = c;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: break;
+				case [Hd(k, kl), Hd(v, vl)]:
+					keys = kl; values = vl;
+					res = f(k, v, res);
+				case _: throw "Invalid PMap";
+			}
+		}
+		return res;
+	}
+
+	public static function map<A, B, C> (f:A->B, pmap:PMap<C,A>) : PMap<C, B> {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		var resKeys:ImmutableList<C> = Tl;
+		var resValues:ImmutableList<B> = Tl;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: break;
+				case [Hd(k, kl), Hd(v, vl)]:
+					keys = kl; values = vl;
+					resKeys = k :: resKeys;
+					resValues = f(v) :: resValues;
+				case _: throw "Invalid PMap";
+			}
+		}
+		return new PMap(resKeys, resValues);
+	}
+
+	public static function iter<A,B> (f:A->B->Void, pmap:PMap<A,B>) : Void {
+		List.iter2(f, pmap.keys, pmap.values);
+	}
+
+	public static function exists<A,B> (key:A, pmap:PMap<A,B>) : Bool {
+		var keys = pmap.keys;
+		while (true) {
+			switch (keys) {
+				case Tl: return false;
+				case Hd(k, _) if (key.equals(k)): return true;
+				case Hd(_, kl): keys = kl;
+			}
+		}
+	}
+
+	public static inline function mem<A,B> (key:A, pmap:PMap<A,B>) : Bool {
+		return exists(key, pmap);
+	}
+
+	public static function find<A, B> (key:A, pmap:PMap<A,B>) : B {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: throw ocaml.Not_found.instance;
+				case [Hd(k, _), Hd(v, _)] if (key.equals(k)): return v;
+				case [Hd(_, kl), Hd(_, vl)]:
+					keys = kl; values = vl;
+				case _: throw "Invalid PMap";
+			}
+		}
 	}
 
 }

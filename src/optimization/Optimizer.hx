@@ -55,22 +55,26 @@ class Optimizer {
 						Some(core.Type.mk(TConst(TInt(f.ef_index)), com.basic.tint, p));
 				}
 			case [{a:[], b:"Std"}, "int", [e={eexpr:TConst(TInt(_))}]]:
-				var e = e.clone(); e.epos = p;
-				Some(e);
+				Some(e.with({epos:p}));
 			case [{a:[], b:"String"}, "fromCharCode", [{eexpr:TConst(TInt(i))}]] if (i > 0 && i < 128):
 				Some(core.Type.mk(TConst(TString(String.fromCharCode(i))), com.basic.tstring, p));
 			case [{a:[], b:"Std"}, "string", [{eexpr:TCast(e={eexpr:TConst(c)}, None)}]],
 				 [{a:[], b:"Std"}, "string", [e={eexpr:TConst(c)}]]:
 				switch (c) {
 					case TString(s):
-						var e = e.clone(); e.epos = p;
-						Some(e);
+						Some(e.with({epos:p}));
 					case TInt(i):
-						var e = e.clone(); e.eexpr = TConst(TString(Std.string(i))); e.epos = p; e.etype = com.basic.tstring;
-						Some(e);
+						Some({
+							eexpr: TConst(TString(Std.string(i))),
+							epos: p,
+							etype: com.basic.tstring
+						});
 					case TBool(b):
-						var e = e.clone(); e.eexpr = TConst(TString((b) ? "true" : "false")); e.epos = p; e.etype = com.basic.tstring;
-						Some(e);
+						Some({
+							eexpr: TConst(TString((b) ? "true" : "false")),
+							epos: p,
+							etype: com.basic.tstring
+						});
 					case _:
 						None;
 				}
@@ -272,7 +276,7 @@ class Optimizer {
 				}
 				catch (_:ocaml.Not_found) {
 					var v_ = core.Type.alloc_var(v.v_name, v.v_type, v.v_pos);
-					v_.v_extra = v.v_extra.clone(); // clone or not ?
+					v_.v_extra = v.v_extra; // clone or not ?
 					var i = {
 						i_var: v_,
 						i_subst: v_,
@@ -355,9 +359,7 @@ class Optimizer {
 			*/
 			var ethis = switch (ethis.eexpr) {
 				case TConst(TSuper):
-					var _ethis = ethis.clone();
-					_ethis.eexpr = TConst(TThis);
-					_ethis;
+					ethis.with({eexpr:core.Type.TExprExpr.TConst(TThis)});
 				case _:
 					ethis;
 			}
@@ -408,7 +410,7 @@ class Optimizer {
 				}
 				else { t; }
 			}
-			var map_pos = (self_calling_closure) ? function (e:core.Type.TExpr) { return e; } : function (e:core.Type.TExpr) { var e = e.clone(); e.epos = p; return e; };
+			var map_pos = (self_calling_closure) ? function (e:core.Type.TExpr) { return e; } : function (e:core.Type.TExpr) { return e.with({epos:p}); };
 			function map (term:Bool, e:core.Type.TExpr) : core.Type.TExpr {
 				var po = e.epos;
 				var e = map_pos(e);
@@ -420,15 +422,15 @@ class Optimizer {
 						/* never inline a function which contain a delayed macro because its bound
 							to its variables and not the calling method */
 						if (v.v_name == "$__delayed_call__") { cancel_inlining.set(true); }
-						var e = e.clone(); e.eexpr = TLocal(l.i_subst);
+						var e = e.with({eexpr:core.Type.TExprExpr.TLocal(l.i_subst)});
 						(l.i_abstract_this) ? core.Type.mk(TCast(e, None), v.v_type, e.epos) : e;
 					case TConst(TThis):
 						var l = read_local(vthis);
 						l.i_read = l.i_read + ((in_loop.get()) ? 2 : 1);
-						var e = e.clone(); e.eexpr = TLocal(l.i_subst); e;
+						e.with({eexpr:core.Type.TExprExpr.TLocal(l.i_subst)});
 					case TVar(v, eo):
 						has_vars.set(true);
-						var e = e.clone(); e.eexpr = TVar(local(v).i_subst, opt(map.bind(false), eo)); e;
+						e.with({eexpr:core.Type.TExprExpr.TVar(local(v).i_subst, opt(map.bind(false), eo))});
 					case TReturn(eo) if (!in_local_fun.get()):
 						if (!term) { core.Error.error("Cannot inline a not final return", po); }
 						switch (eo) {
@@ -444,14 +446,14 @@ class Optimizer {
 						in_loop.set(true);
 						var e2 = map(false, e2);
 						in_loop.set(old);
-						var e = e.clone(); e.eexpr = TFor(i.i_subst, e1, e2); e;
+						e.with({eexpr:core.Type.TExprExpr.TFor(i.i_subst, e1, e2)});
 					case TWhile(cond, eloop, flag):
 						var cond = map(false, cond);
 						var old = in_loop.get();
 						in_loop.set(true);
 						var eloop = map(false, eloop);
 						in_loop.set(old);
-						var e = e.clone(); e.eexpr = TWhile(cond, eloop, flag); e;
+						e.with({eexpr:core.Type.TExprExpr.TWhile(cond, eloop, flag)});
 					case TSwitch(e1, cases, def) if (term):
 						var term = term && (def != None || OptimizerTexpr.is_exhaustive(e1));
 						var cases = List.map(function (c:{values:ImmutableList<core.Type.TExpr>, e:core.Type.TExpr}) {
@@ -461,19 +463,21 @@ class Optimizer {
 						}, cases);
 						var def = opt(map.bind(term), def);
 						var t = return_type(e.etype, List.append(List.map(function(c) {return c.e; }, cases), switch (def) { case None: []; case Some(e): [e];}));
-						var e = e.clone(); e.eexpr = TSwitch(map(false, e1), cases, def); e.etype = t;
-						e;
+						e.with({
+							eexpr:core.Type.TExprExpr.TSwitch(map(false, e1), cases, def),
+							etype:t
+						});
 					case TTry(e1, catches):
 						var t = (!term) ? e.etype : return_type(e.etype, e1::List.map(function (c) { return c.e; }, catches));
-						var e = e.clone();
-						e.eexpr = TTry(map(term, e1), List.map(function (c) {
-							var v = c.v; var e = c.e;
-							var lv = local(v).i_subst;
-							var e = map(term, e);
-							return {v:lv, e:e};
-						}, catches));
-						e.etype = t;
-						e;
+						e.with({
+							eexpr:core.Type.TExprExpr.TTry(map(term, e1), List.map(function (c) {
+								var v = c.v; var e = c.e;
+								var lv = local(v).i_subst;
+								var e = map(term, e);
+								return {v:lv, e:e};
+							}, catches)),
+							etype: t
+						});
 					case TBlock(l):
 						var old = context.Typecore.save_locals(ctx);
 						var t = new Ref(e.etype);
@@ -504,8 +508,10 @@ class Optimizer {
 									if (term) { t.set(e.etype); }
 									[e];
 								case (e={eexpr:TIf(cond, e1, None)})::l if (term && has_term_return(e1)):
-									var _e = e.clone(); _e.eexpr = TIf(cond, e1, Some(core.Type.mk(TBlock(l), e.etype, e.epos)));
-									_e.epos = core.Ast.punion(e.epos, switch (List.rev(l)) { case e::_:e.epos; case []: throw false;});
+									var _e = e.with({
+										eexpr: core.Type.TExprExpr.TIf(cond, e1, Some(core.Type.mk(TBlock(l), e.etype, e.epos))),
+										epos: core.Ast.punion(e.epos, switch (List.rev(l)) { case e::_:e.epos; case []: throw false;})
+									});
 									loop([_e]);
 								case e::l:
 									var e = map(false, e);
@@ -514,13 +520,16 @@ class Optimizer {
 						}
 						var l = loop(l);
 						old();
-						var e = e.clone(); e.eexpr = TBlock(l); e.etype = t.get(); e;
+						e.with({eexpr: core.Type.TExprExpr.TBlock(l), etype: t.get()});
 					case TIf(econd, eif, Some(eelse)) if (term):
 						var econd = map(false, econd);
 						var eif = map(term, eif);
 						var eelse = map(term, eelse);
 						var t = return_type(e.etype, [eif, eelse]);
-						var e = e.clone(); e.eexpr = TIf(econd, eif, Some(eelse)); e.etype = t; e;
+						e.with({
+							eexpr: core.Type.TExprExpr.TIf(econd, eif, Some(eelse)),
+							etype: t
+						});
 					case TParenthesis(e1):
 						var e1 = map(term, e1);
 						core.Type.mk(TParenthesis(e1), e1.etype, e.epos);
@@ -528,15 +537,13 @@ class Optimizer {
 						has_side_effect_.set(true);
 						var l = read_local(v);
 						l.i_write = true;
-						var e1 = e1.clone(); e1.eexpr = TLocal(l.i_subst);
-						var e = e.clone(); e.eexpr = TUnop(op, flag, e1); e;
+						e.with({eexpr: core.Type.TExprExpr.TUnop(op, flag, e1.with({eexpr: core.Type.TExprExpr.TLocal(l.i_subst)}))});
 					case TBinop(op=(OpAssign|OpAssignOp(_)), e1={eexpr:TLocal(v)}, e2):
 						has_side_effect_.set(true);
 						var l = read_local(v);
 						l.i_write = true;
 						var e2 = map(false, e2);
-						var e1 = e1.clone(); e1.eexpr = TLocal(l.i_subst);
-						var e = e.clone(); e.eexpr = TBinop(op, e1, e2); e;
+						e.with({eexpr: core.Type.TExprExpr.TBinop(op, e1.with({eexpr:core.Type.TExprExpr.TLocal(l.i_subst)}), e2)});
 					case TObjectDecl(fl):
 						var fl = List.map(function (of:core.Type.TObjectField) : core.Type.TObjectField {
 							var s = of.a; var e = of.expr;
@@ -544,9 +551,12 @@ class Optimizer {
 						}, fl);
 						switch (core.Type.follow(e.etype)) {
 							case TAnon(an) if (an.a_status.get().match(Const)):
-								var e = e.clone(); e.eexpr = TObjectDecl(fl); e.etype = TAnon({a_fields:an.a_fields, a_status:new Ref(core.Type.AnonStatus.Closed)}); e;
+								e.with({
+									eexpr:core.Type.TExprExpr.TObjectDecl(fl),
+									etype:core.Type.T.TAnon({a_fields:an.a_fields, a_status:new Ref(core.Type.AnonStatus.Closed)})
+								 });
 							case _:
-								var e = e.clone(); e.eexpr = TObjectDecl(fl); e;
+								e.with({eexpr:core.Type.TExprExpr.TObjectDecl(fl)});
 						}
 					case TFunction(f):
 						switch (f.tf_args) {
@@ -560,7 +570,7 @@ class Optimizer {
 						var expr = map(false, f.tf_expr);
 						in_local_fun.set(old_fun);
 						old();
-						var e = e.clone(); e.eexpr = TFunction({tf_args:args, tf_expr:expr, tf_type:f.tf_type}); e;
+						e.with({eexpr: core.Type.TExprExpr.TFunction({tf_args:args, tf_expr:expr, tf_type:f.tf_type})});
 					case TCall({eexpr:TConst(TSuper), etype:t}, el):
 						has_side_effect_.set(true);
 						switch (core.Type.follow(t)) {
@@ -575,7 +585,7 @@ class Optimizer {
 						core.Error.error("Cannot inline function containing super", po);
 					case TMeta(m, e1):
 						var e1 = map(term, e1);
-						var e = e.clone(); e.eexpr = TMeta(m, e1); e;
+						e.with({eexpr: core.Type.TExprExpr.TMeta(m, e1)});
 					case TNew(_), TCall(_), TBinop((OpAssignOp(_)|OpAssign), _, _), TUnop((OpIncrement|OpDecrement), _, _):
 						has_side_effect_.set(true);
 						core.Type.map_expr(map.bind(false), e);
@@ -596,7 +606,7 @@ class Optimizer {
 				if variables are not written and used with a const value, let's substitute
 				with the actual value, either create a temp var
 			*/
-			var subst = new Ref(new Map<Int, core.Type.TExpr>());
+			var subst = new Ref<PMap<Int, core.Type.TExpr>>(PMap.empty());
 			function is_constant (e:core.Type.TExpr) : Bool {
 				function loop (e:core.Type.TExpr) : Void {
 					switch (e.eexpr) {
@@ -649,7 +659,7 @@ class Optimizer {
 				}
 			}, [], inlined_vars);
 			var subst = subst.get();
-			var inline_params:core.Type.TExpr->core.Type.TExpr;
+			var inline_params:core.Type.TExpr->core.Type.TExpr = null;
 			inline_params = function (e:core.Type.TExpr) : core.Type.TExpr {
 				return switch (e.eexpr) {
 					case TLocal(v):
@@ -700,7 +710,7 @@ class Optimizer {
 					case [_, None] if (!has_return_value.get()):
 						switch (e.eexpr) {
 							case TBlock(_):
-								var e = e.clone(); e.etype = tret; e;
+								e.with({etype:tret});
 							case _: core.Type.mk(TBlock([e]), tret, e.epos);
 						}
 					case [TBlock([e]), None]: wrap(e);
@@ -876,10 +886,10 @@ class Optimizer {
 				var i2 = switch (core.Type.follow(i2.etype)) {
 					case TAbstract({a_path:{a:[], b:"Int"}}, []): i2;
 					case _:
-						var _i2 = i2.clone();
-						_i2.eexpr = TCast(i2, None);
-						_i2.etype = t_int;
-						_i2;
+						i2.with({
+							eexpr: core.Type.TExprExpr.TCast(i2, None),
+							etype: t_int
+						});
 				}
 				switch (max) {
 					case None:
@@ -1104,9 +1114,7 @@ class Optimizer {
 				}
 				var e1 = (loop(e1, true)) ? parent(e1) : e1;
 				var e2 = (loop(e2, false)) ? parent(e2) : e2;
-				var _e = e.clone();
-				_e.eexpr = TBinop(op, e1, e2);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TBinop(op, e1, e2)});
 			case TUnop(op, mode, e1):
 				function loop(ee:core.Type.TExpr) : core.Type.TExpr {
 					return switch (ee.eexpr) {
@@ -1115,9 +1123,7 @@ class Optimizer {
 						case _: e1;
 					}
 				}
-				var _e = e.clone();
-				_e.eexpr = TUnop(op, mode, loop(e1));
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TUnop(op, mode, loop(e1))});
 			case TIf(e1, e2, eelse):
 				var e1 = parent(e1);
 				var e2 = if ((eelse != None && has_if(e2)) || switch (e2.eexpr) {case TIf(_): true; case _: false; }) {
@@ -1125,72 +1131,52 @@ class Optimizer {
 				}
 				else { complex(e2); }
 				var eelse = switch (eelse) { case None: None; case Some(e): Some(complex(e));}
-				var _e = e.clone();
-				_e.eexpr = TIf(e1, e2, eelse);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TIf(e1, e2, eelse)});
 			case TWhile(e1, e2, flag):
 				var e1 = parent(e1);
 				var e2 = complex(e2);
-				var _e = e.clone();
-				_e.eexpr = TWhile(e1, e2, flag);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TWhile(e1, e2, flag)});
 			case TFor(v, e1, e2):
 				var e2 = complex(e2);
-				var _e = e.clone();
-				_e.eexpr = TFor(v, e1, e2);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TFor(v, e1, e2)});
 			case TFunction(f):
 				var f = switch (f.tf_expr.eexpr) {
 					case TBlock(_): f;
 					case _:
-						var _f = f.clone();
-						_f.tf_expr = block(f.tf_expr);
-						_f;
+						f.with({tf_expr:block(f.tf_expr)});
 				}
-				var _e = e.clone();
-				_e.eexpr = TFunction(f);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TFunction(f)});
 			case TCall(e2, args):
 				if (need_parent(e2)) {
-					var _e = e.clone();
-					_e.eexpr = TCall(parent(e2), args);
-					_e;
+					e.with({eexpr: core.Type.TExprExpr.TCall(parent(e2), args)});
 				}
 				else {
 					e;
 				}
 			case TEnumParameter(e2, ef, i):
 				if (need_parent(e2)) {
-					var _e = e.clone();
-					_e.eexpr = TEnumParameter(parent(e2), ef, i);
-					_e;
+					e.with({eexpr: core.Type.TExprExpr.TEnumParameter(parent(e2), ef, i)});
 				}
 				else {
 					e;
 				}
 			case TEnumIndex(e2):
 				if (need_parent(e2)) {
-					var _e = e.clone();
-					_e.eexpr = TEnumIndex(parent(e2));
-					_e;
+					e.with({eexpr: core.Type.TExprExpr.TEnumIndex(parent(e2))});
 				}
 				else {
 					e;
 				}
 			case TField(e2, f):
 				if (need_parent(e2)) {
-					var _e = e.clone();
-					_e.eexpr = TField(parent(e2), f);
-					_e;
+					e.with({eexpr: core.Type.TExprExpr.TField(parent(e2), f)});
 				}
 				else {
 					e;
 				}
 			case TArray(e1, e2):
 				if (need_parent(e1)) {
-					var _e = e.clone();
-					_e.eexpr = TArray(parent(e1), e2);
-					_e;
+					e.with({eexpr: core.Type.TExprExpr.TArray(parent(e1), e2)});
 				}
 				else {
 					e;
@@ -1198,9 +1184,7 @@ class Optimizer {
 			case TTry(e1, catches):
 				var e1 = block(e1);
 				var catches = List.map(function (c) { return {v:c.v, e:block(c.e)};}, catches);
-				var _e = e.clone();
-				_e.eexpr = TTry(e1, catches);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TTry(e1, catches)});
 			case TSwitch(e1, cases, def):
 				var e1 = parent(e1);
 				var cases = List.map(function (c) { return {values:c.values, e:complex(c.e)};}, cases);
@@ -1208,11 +1192,8 @@ class Optimizer {
 					case None: None;
 					case Some(e): Some(complex(e));
 				}
-				var _e = e.clone();
-				_e.eexpr = TSwitch(e1, cases, def);
-				_e;
+				e.with({eexpr: core.Type.TExprExpr.TSwitch(e1, cases, def)});
 			case _: e;
-			// case _: throw true;
 		}
 
 	}
@@ -1245,15 +1226,11 @@ class Optimizer {
 						switch (List.filter(_f, l)) {
 							case []: ec;
 							case l:
-								var _e = e.clone();
-								_e.eexpr = TBlock(ocaml.List.rev(ec :: l));
-								_e;
+								e.with({eexpr: core.Type.TExprExpr.TBlock(ocaml.List.rev(ec :: l))});
 						}
 				}
 			case TParenthesis(ec):
-				var _ec = ec.clone();
-				_ec.epos = e.epos;
-				_ec;
+				ec.with({epos:e.epos});
 			case TTry(e,[]):
 				e;
 			case _:
@@ -1275,18 +1252,14 @@ class Optimizer {
 				else {
 					switch (e2) {
 						case None:
-							var _e = e.clone();
-							_e.eexpr = TBlock([]);
-							_e;
+							e.with({eexpr: core.Type.TExprExpr.TBlock([])});
 						case Some(e): e;
 					}
 				}
 			case TWhile({eexpr:TConst(TBool(false))}, sub, flag):
 				switch (flag) {
 					case NormalWhile:
-						var _e = e.clone();
-						_e.eexpr = TBlock([]); // erase sub
-						_e;
+						e.with({eexpr: core.Type.TExprExpr.TBlock([])}); // erase sub
 					case DoWhile: e; // we cant remove while since sub can contain continue/break
 				}
 			case TSwitch(e1, cases, def):
@@ -1322,11 +1295,7 @@ class Optimizer {
 					case None: FAnon(cf);
 					case Some({c:c, params:tl}): FInstance(c, tl, cf);
 				}
-				var _e = e.clone();
-				var _f = f.clone();
-				_f.eexpr = TField(o, fmode);
-				_e.eexpr = TCall(_f, el);
-				_e;
+				e.with({eexpr:core.Type.TExprExpr.TCall(f.with({eexpr: core.Type.TExprExpr.TField(o, fmode)}), el)});
 			case _: e;
 		}
 	}
@@ -1393,25 +1362,19 @@ class Optimizer {
 				switch (make_constant_expression(ctx, e1)) {
 					case None: None;
 					case Some(e1):
-						var _e = e.clone();
-						_e.eexpr = TCast(e1, None);
-						Some(_e);
+						Some(e.with({eexpr:core.Type.TExprExpr.TCast(e1, None)}));
 				}
 			case TParenthesis(e1):
 				switch (make_constant_expression(ctx, e1)) {
 					case None: None;
 					case Some(e1):
-						var _e = e.clone();
-						_e.eexpr = TParenthesis(e1);
-						Some(_e);
+						Some(e.with({eexpr:core.Type.TExprExpr.TParenthesis(e1)}));
 				}
 			case TMeta(m, e1):
 				switch (make_constant_expression(ctx, e1)) {
 					case None: None;
 					case Some(e1):
-						var _e = e.clone();
-						_e.eexpr = TMeta(m, e1);
-						Some(_e);
+						Some(e.with({eexpr:core.Type.TExprExpr.TMeta(m, e1)}));
 				}
 			case TTypeExpr(_): Some(e);
 			// try to inline static function calls
