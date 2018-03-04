@@ -348,7 +348,7 @@ class Pattern {
 										}
 									}, el);
 									var fields = known_fields(core.Abstract.get_underlying_type(a, tl));
-									if (sl != []) {
+									if (sl != Tl) {
 										fields;
 									}
 									else {

@@ -584,7 +584,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			// resolve imports
 			var b = tp.is_import;
 			var name:String = null;
-			if (tp.p != Tl) { // != []
+			if (tp.p != Tl) {
 				throw tp;
 			}
 			switch (tp.c) {

@@ -408,7 +408,7 @@ class Typecore {
 						case {name:m2, params:el} :: l if (m.equals(m2)):
 							loop(l) || List.exists(function (e) {
 								var p = expr_path([], e);
-								return p != [] && chk_path(p, path);
+								return p != Tl && chk_path(p, path);
 							}, el);
 						case _::l: loop(l);
 						case []: false;
@@ -431,7 +431,7 @@ class Typecore {
 			function loop_(c:core.Type.TClass) : Bool {
 				return has(Access, ctx.curclass, ctx.curfield, make_path(c, cf)) ||
 					(switch (c.cl_super) {
-						case Some({c:csup}): trace(csup.cl_path); loop_(csup);
+						case Some({c:csup}): loop_(csup);
 						case None: false;
 					}) || (
 						try {

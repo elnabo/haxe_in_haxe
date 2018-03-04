@@ -1159,7 +1159,7 @@ class Typeload {
 						var t = _tmp.t; var f2 = _tmp.cf;
 						// allow to define fields that are not defined for this platform version in superclass
 						switch (f2.cf_kind) {
-							case Var({v_read:AccRequire(_)}): throw ocaml.Not_found;
+							case Var({v_read:AccRequire(_)}): throw ocaml.Not_found.instance;
 							case _:
 						}
 						if (ctx.com.config.pf_overload && core.Meta.has(Overload, f2.cf_meta) && !core.Meta.has(Overload, f.cf_meta)) {
@@ -1517,8 +1517,7 @@ class Typeload {
 		c.cl_kind = KTypeParameter([]);
 		c.cl_meta = tp.tp_meta;
 		if (enum_constructor) {
-			var _tmp:core.Ast.MetadataEntry = {name:EnumConstructorParam, params:[], pos:core.Globals.null_pos};
-			c.cl_meta = _tmp::c.cl_meta;
+			c.cl_meta = ({name:EnumConstructorParam, params:[], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) ::c.cl_meta;
 		}
 		var t:core.Type.T = TInst(c, List.map(function (p) { return p.t; }, c.cl_params));
 		if (ctx.is_display_file && context.Display.is_display_position(tp.tp_name.pos)) {
@@ -1533,23 +1532,18 @@ class Typeload {
 						g: ctx.g,
 						type_params: List.append(ctx.type_params, get_params())
 					});
-					var constr = List.map( function (e) { return load_complex_type(ctx, true, p, e);}, tp.tp_constraints);
+					var constr = List.map( load_complex_type.bind(ctx, true, p), tp.tp_constraints);
 					// check against direct recursion
 					function loop (t) {
 						switch (core.Type.follow(t)) {
-							case TInst(c2,_):
-								if (c.equals(c2)) {
-									core.Error.error("Recursive constraint parameter is not allowed", p);
-								}
-								switch (c2.cl_kind) {
-									case KTypeParameter(cl):
-										ocaml.List.iter(loop, cl);
-									default:
-								}
+							case TInst(c2,_) if (c == c2):
+								core.Error.error("Recursive constraint parameter is not allowed", p);
+							case TInst({cl_kind:KTypeParameter(cl)}, _):
+								List.iter(loop, cl);
 							default:
 						}
 					}
-					ocaml.List.iter(loop, constr);
+					List.iter(loop, constr);
 					c.cl_kind = KTypeParameter(constr);
 					return t;
 				}
@@ -1559,15 +1553,14 @@ class Typeload {
 	}
 
 	public static function type_type_params (?enum_constructor:Bool=false, ctx:context.Typecore.Typer, path:core.Path, get_params:Void->core.Type.TypeParams, p:core.Globals.Pos, tpl:ImmutableList<core.Ast.TypeParam>) : core.Type.TypeParams {
-		var names:ImmutableList<String> = [];
-		function f (tp:core.Ast.TypeParam) {
-			if (List.exists(function (name) { return name == tp.tp_name.pack; }, names)) {
+		var names = new Ref<ImmutableList<String>>([]);
+		return List.map(function (tp:core.Ast.TypeParam) {
+			if (List.exists(function (name) { return name == tp.tp_name.pack; }, names.get())) {
 				context.Typecore.display_error(ctx, "Duplicate type parameter name: " + tp.tp_name.pack, tp.tp_name.pos);
 			}
-			names = tp.tp_name.pack :: names;
+			names.set(tp.tp_name.pack :: names.get());
 			return type_type_param(enum_constructor, ctx, path, get_params, p, tp);
-		}
-		return List.map(f, tpl);
+		}, tpl);
 	}
 
 	public static function type_function_params (ctx:context.Typecore.Typer, fd:core.Ast.Func, fname:String, p:core.Globals.Pos) : core.Type.TypeParams {
@@ -1598,6 +1591,7 @@ class Typeload {
 			}
 			var c = type_function_arg_value(ctx, t, c, do_display);
 			var v = context.Typecore.add_local(ctx, n, t, p);
+			if (n == "cl" && p.pmin == 1994) { trace("hoy"); }
 			v.v_meta = m;
 			if (do_display && context.Display.is_display_position(pn)) {
 				context.display.DisplayEmitter.display_variable(ctx.com.display, v, pn);
@@ -1611,7 +1605,7 @@ class Typeload {
 		ctx.curfun = fmode;
 		ctx.ret = ret;
 		ctx.opened = [];
-		var _e:core.Ast.Expr = switch (f.f_expr) {
+		var e:core.Ast.Expr = switch (f.f_expr) {
 			case None:
 				if (ctx.com.display.dms_error_policy == EPIgnore) {
 					/* when we don't care because we're in display mode, just act like
@@ -1626,10 +1620,10 @@ class Typeload {
 			case Some(e): e;
 		}
 		var e = if (!do_display) {
-			context.Typecore.type_expr(ctx, _e, NoValue);
+			context.Typecore.type_expr(ctx, e, NoValue);
 		}
 		else {
-			var e = context.display.ExprPreprocessing.process_expr(ctx.com, _e);
+			var e = context.display.ExprPreprocessing.process_expr(ctx.com, e);
 			try {
 				if (context.Common.defined(ctx.com, NoCOpt)) {
 					throw ocaml.Exit.instance;
@@ -1781,6 +1775,7 @@ class Typeload {
 			return _tmp;
 		}
 		catch (err:Any) {
+			if (p.pmin == 1744) { trace(err); }
 			save();
 			throw err;
 		}
@@ -2488,7 +2483,7 @@ class Typeload {
 				if ((ctx.com.platform.equals(Java) || ctx.com.platform.equals(Cs)) && !c.cl_extern) {
 					context.Typecore.delay(ctx, PTypeField, function () {
 						var metas = check_strict_meta(ctx, c.cl_meta);
-						if (metas != Tl) { // metas != []
+						if (metas != Tl) {
 							c.cl_meta = List.append(metas, c.cl_meta);
 						}
 						function run_field(cf:core.Type.TClassField) {

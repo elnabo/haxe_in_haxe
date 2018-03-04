@@ -278,7 +278,7 @@ class Compile {
 			}
 		}
 		var bindings = List.append(bindings, loop(patterns, subjects));
-		return (bindings == []) ? dt : bind(mctx, bindings, dt);
+		return (bindings == Tl) ? dt : bind(mctx, bindings, dt);
 	}
 
 	public static function compile_switch (mctx:Matcher_context, subjects:ImmutableList<core.Type.TExpr>, cases:ImmutableList<Case>) : typing.matcher.decisiontree.Dt {
@@ -330,7 +330,7 @@ class Compile {
 		}, sigma);
 		var _default = default_(subject, cases);
 		var switch_default = compile_(mctx, subjects, _default);
-		var dt = (switch_cases == []) ? switch_default : switch_(mctx, subject, switch_cases, switch_default);
+		var dt = (switch_cases == Tl) ? switch_default : switch_(mctx, subject, switch_cases, switch_default);
 		function null_guard (dt_null) {
 			return guard_null(mctx, subject, dt_null, dt);
 		}

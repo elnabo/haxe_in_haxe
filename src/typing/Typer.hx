@@ -128,6 +128,35 @@ class Typer {
 		}
 	}
 
+	public static function get_iterator_param (t:core.Type.T) : core.Type.T {
+		return switch (core.Type.follow(t)) {
+			case TAnon(a):
+				if (a.a_status.get() != Closed) { throw ocaml.Not_found.instance; }
+				switch [core.Type.follow(PMap.find("hasNext", a.a_fields).cf_type), core.Type.follow(PMap.find("next", a.a_fields).cf_type)] {
+					case [TFun({args:[], ret:tb}), TFun({args:[], ret:t})] if (core.Type.follow(tb).match(TAbstract({a_path:{a:[], b:"Bool"}}, _))):
+						if (PMap.fold(function (_, acc:Int) { return acc + 1; }, a.a_fields, 0) != 2) { throw ocaml.Not_found.instance; }
+						t;
+					case _: throw ocaml.Not_found.instance;
+				}
+			case _: throw ocaml.Not_found.instance;
+		}
+	}
+
+	public static function get_iterable_param (t:core.Type.T) : core.Type.T {
+		return switch (core.Type.follow(t)) {
+			case TAnon(a):
+				if (a.a_status.get() != Closed) { throw ocaml.Not_found.instance; }
+				switch (core.Type.follow(PMap.find("iterator", a.a_fields).cf_type)) {
+					case TFun({args:[], ret:it}):
+						var t = get_iterator_param(it);
+						if (PMap.fold(function (_, acc:Int) { return acc + 1; }, a.a_fields, 0) != 1) { throw ocaml.Not_found.instance; }
+						t;
+					case _: throw ocaml.Not_found.instance;
+				}
+			case _: throw ocaml.Not_found.instance;
+		}
+	}
+
 	public static function get_abstract_froms (a:core.Type.TAbstract, pl:core.Type.TParams) : core.Type.TParams {
 		var l = List.map(core.Type.apply_params.bind(a.a_params, pl), a.a_from);
 		return List.fold_left(function (acc:core.Type.TParams, other:{t:core.Type.T, cf:core.Type.TClassField}) {
@@ -168,7 +197,7 @@ class Typer {
 		}
 		try {
 			loop(t);
-			var ret = callb(tmp.get() != []);
+			var ret = callb(tmp.get() != Tl);
 			restore();
 			return ret;
 		}
@@ -179,24 +208,31 @@ class Typer {
 		}
 	}
 
-	public static function check_error (ctx:context.Typecore.Typer, err:core.Error.ErrorMsg, p:core.Globals.Pos) : Void {
-		switch (err) {
-			case Module_not_found({a:[], b:name}) if (context.display.Diagnostics.is_diagnostics_run(ctx)):
-				context.DisplayToplevel.handle_unresolved_identifier(ctx, name, p, true);
-			case _: context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
-		}
-	}
-
 	public static function is_pos_infos (t:core.Type.T) : Bool {
-		trace("TODO: is_pos_infos");
-		throw false;
+		return switch (t) {
+			case TMono(r):
+				switch (r.get()) {
+					case Some(t): is_pos_infos(t);
+					case _: false;
+				}
+			case TLazy(f):
+				is_pos_infos(core.Type.lazy_type(f));
+			case TType({t_path:{a:["haxe"], b:"PosInfos"}}, []):
+				true;
+			case TType(t, tl):
+				is_pos_infos(core.Type.apply_params(t.t_params, tl, t.t_type));
+			case TAbstract({a_path:{a:[], b:"Null"}}, [t]):
+				is_pos_infos(t);
+			case _:
+				false;
+		}
 	}
 
 	public static function check_constraints (ctx:context.Typecore.Typer, tname:String, tpl:core.Type.TypeParams, tl:core.Type.TParams, map:core.Type.T->core.Type.T, delayed:Bool, p:core.Globals.Pos) : Void {
 		List.iter2(function (m, other) {
 			var name = other.name; var t = other.t;
 			switch (core.Type.follow(t)) {
-				case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr != []):
+				case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr != Tl):
 					var f = function () {
 						List.iter(function(ct) {
 							try {
@@ -229,19 +265,29 @@ class Typer {
 	}
 
 	public static function enum_field_type (ctx:context.Typecore.Typer, en:core.Type.TEnum, ef:core.Type.TEnumField, tl_en:core.Type.TParams, tl_ef:core.Type.TParams, p:core.Globals.Pos) : core.Type.T {
-		trace("TODO: enum_field_type");
-		throw false;
+		function map (t:core.Type.T) : core.Type.T {
+			return core.Type.apply_params(en.e_params, tl_en, core.Type.apply_params(ef.ef_params, tl_ef, t));
+		}
+		try {
+			check_constraints(ctx, core.Globals.s_type_path(en.e_path), en.e_params, tl_en, map, true, p);
+			check_constraints(ctx, ef.ef_name, ef.ef_params, tl_ef, map, true, p);
+		}
+		catch (ue:core.Type.Unify_error) {
+			var l = ue.l;
+			context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+		}
+		return map(ef.ef_type);
 	}
 
 	public static function add_constraint_check (ctx:context.Typecore.Typer, ctypes:core.Type.TypeParams, pl:core.Type.TParams, f:core.Type.TClassField, tl:core.Type.TParams, p:core.Globals.Pos) : Void{
 		List.iter2(function (m:core.Type.T, tp:{name:String, t:core.Type.T}) {
 			var name = tp.name; var t = tp.t;
 			switch (core.Type.follow(t)) {
-				case TInst({cl_kind:KTypeParameter(constr)},_) if (constr!=[]):
+				case TInst({cl_kind:KTypeParameter(constr)},_) if (constr!=Tl):
 					var constr = List.map(function (t) {
 						var t = core.Type.apply_params(f.cf_params, tl, t);
 						// only apply params if not static : in that case no param is passed
-						var t = (pl == []) ? t : core.Type.apply_params(ctypes, pl, t);
+						var t = (pl == Tl) ? t : core.Type.apply_params(ctypes, pl, t);
 						return t;
 					}, constr);
 					context.Typecore.delay(ctx, PCheckConstraint, function () {
@@ -276,12 +322,215 @@ class Typer {
 	public static function class_field (ctx:context.Typecore.Typer, c:core.Type.TClass, tl:core.Type.TParams, name:String, p:core.Globals.Pos) : {fst:Option<{c:core.Type.TClass, params:core.Type.TParams}>, snd:core.Type.T, trd:core.Type.TClassField} {
 		return core.Type.raw_class_field(function (f) { return field_type(ctx, c, tl, f, p); }, c, tl, name);
 	}
+
+	public static function check_error (ctx:context.Typecore.Typer, err:core.Error.ErrorMsg, p:core.Globals.Pos) : Void {
+		switch (err) {
+			case Module_not_found({a:[], b:name}) if (context.display.Diagnostics.is_diagnostics_run(ctx)):
+				context.DisplayToplevel.handle_unresolved_identifier(ctx, name, p, true);
+			case _: context.Typecore.display_error(ctx, core.Error.error_msg(err), p);
+		}
+	}
 	// ----------------------------------------------------------------------
 	// PASS 3 : type expression & check structure
 
 	public static function unify_min_raise (ctx:context.Typecore.Typer, el:ImmutableList<core.Type.TExpr>) : core.Type.T {
-		trace("TODO: unify_min_raise");
-		throw false;
+		function base_types (t:core.Type.T) {
+			var tl = new Ref<ImmutableList<core.Type.T>>([]);
+			function loop(t:core.Type.T) {
+				switch (t) {
+					case TInst(cl, params):
+						switch (cl.cl_kind) {
+							case KTypeParameter(tl): List.iter(loop, tl);
+							case _:
+						}
+						List.iter(function (imp) {
+							var ic = imp.c; var ip = imp.params;
+							var t = core.Type.apply_params(cl.cl_params, params, TInst(ic, ip));
+							loop(t);
+						}, cl.cl_implements);
+						switch (cl.cl_super) {
+							case None:
+							case Some({c:csup, params:pl}):
+								var t = core.Type.apply_params(cl.cl_params, params, TInst(csup, pl));
+								loop(t);
+						}
+						tl.set(t::tl.get());
+					case TEnum(en, tl2=(_::_)):
+						tl.set(core.Type.T.TEnum(en, List.map(function(_) { return core.Type.t_dynamic; }, tl2))::tl.get());
+						tl.set(t::tl.get());
+					case TType(td, pl):
+						loop(core.Type.apply_params(td.t_params, pl, td.t_type));
+						// prioritize the most generic definition
+						tl.set(t::tl.get());
+					case TLazy(f):
+						loop(core.Type.lazy_type(f));
+					case TMono(r):
+						switch (r.get()) {
+							case None:
+							case Some(t): loop(t);
+						}
+					case _: tl.set(t::tl.get());
+				}
+			}
+			loop(t);
+			return tl.get();
+		}
+		return
+		switch (el) {
+			case []: core.Type.mk_mono();
+			case [e]: e.etype;
+			case _:
+				function chk_null(e:core.Type.TExpr) {
+					return (switch (e.eexpr) {
+						case TConst(TNull): true;
+						case TBlock(el):
+							switch (List.rev(el)) {
+								case []: false;
+								case e::_: chk_null(e);
+							}
+						case TParenthesis(e), TMeta(_, e): chk_null(e);
+						case _: false;
+					}) || core.Type.is_null(e.etype);
+				}
+				// First pass: Try normal unification and find out if null is involved.
+				function loop (t:core.Type.T, el:ImmutableList<core.Type.TExpr>) : {fst:Bool, snd:core.Type.T} {
+					return switch (el) {
+						case []: {fst:false, snd:t};
+						case e::el:
+							var t = (chk_null(e)) ? ctx.t.tnull(t) : t;
+							try {
+								context.Typecore.unify_raise(ctx, e.etype, t, e.epos);
+								loop(t, el);
+							}
+							catch (err:core.Error) {
+								switch (err.msg) {
+									case Unify(_):
+										try {
+											context.Typecore.unify_raise(ctx, t, e.etype, e.epos);
+											loop((core.Type.is_null(t)) ? ctx.t.tnull(e.etype) : e.etype, el);
+										}
+										catch (err2:core.Error) {
+											switch (err2.msg) {
+												case Unify(_):
+													{fst:true, snd:t};
+												case _: throw err2;
+											}
+										}
+									case _: throw err;
+								}
+							}
+					}
+				}
+				var _tmp = loop(core.Type.mk_mono(), el);
+				var has_error = _tmp.fst; var t = _tmp.snd;
+				if (!has_error) {
+					t;
+				}
+				else {
+					try {
+						// specific case for const anon : we don't want to hide fields but restrict their common type
+						var fcount = new Ref(-1);
+						function field_count(a:core.Type.TAnon) : Int {
+							return PMap.fold(function (_, acc:Int) {
+								return acc + 1;
+							}, a.a_fields, 0);
+						}
+						function expr (f:core.Type.TClassField) : core.Type.TExpr {
+							return switch (f.cf_expr) {
+								case None: core.Type.mk(TBlock([]), f.cf_type, f.cf_pos);
+								case Some(e): e;
+							}
+						}
+						var fields = List.fold_left(function (acc, e:core.Type.TExpr) : PMap<String, ImmutableList<core.Type.TExpr>> {
+							return switch(core.Type.follow(e.etype)) {
+								case TAnon(a) if (a.a_status.get() == Const):
+									if (fcount.get() == -1) {
+										fcount.set(field_count(a));
+										PMap.map(function (f:core.Type.TClassField) : ImmutableList<core.Type.TExpr> {
+											return [expr(f)];
+										}, a.a_fields);
+									}
+									else {
+										if (fcount.get() != field_count(a)) {
+											throw ocaml.Not_found.instance;
+										}
+										PMap.mapi(function (n:String, el:ImmutableList<core.Type.TExpr>) : ImmutableList<core.Type.TExpr> {
+											return expr(PMap.find(n, a.a_fields)) :: el;
+										}, acc);
+									}
+								case _: throw ocaml.Not_found.instance;
+							}
+						}, PMap.empty(), el);
+						var fields = PMap.foldi(function (n:String, el:ImmutableList<core.Type.TExpr>, acc:PMap<String, core.Type.TClassField>) {
+							var t = try {
+								unify_min_raise(ctx, el);
+							}
+							catch (err:core.Error) {
+								switch (err.msg) {
+									case Unify(_): throw ocaml.Not_found.instance;
+									case _: throw err;
+								}
+							}
+							return PMap.add(n, core.Type.mk_field(n, t, List.hd(el).epos, core.Globals.null_pos), acc);
+						}, fields, PMap.empty());
+						core.Type.T.TAnon({a_fields:fields, a_status:new Ref<core.Type.AnonStatus>(Closed)});
+					}
+					catch (_:ocaml.Not_found) {
+					/* Second pass: Get all base types (interfaces, super classes and their interfaces) of most general type.
+						Then for each additional type filter all types that do not unify. */
+						var common_types = base_types(t);
+						var dyn_types = List.fold_left(function (acc, t:core.Type.T) : ImmutableList<core.Type.T> {
+							function loop(c:core.Type.TClass) : Bool {
+								return ( switch (c.cl_super) {
+									case None: false;
+									case Some({c:c}): loop(c);
+								}) || core.Meta.has(UnifyMinDynamic, c.cl_meta);
+							}
+							return switch (t) {
+								case TInst(c, params) if (params != Tl && loop(c)):
+									core.Type.T.TInst(c, List.map(function (_) { return core.Type.t_dynamic; }, params))::acc;
+								case _: acc;
+							}
+						}, [], common_types);
+						var common_types = new Ref<ImmutableList<core.Type.T>>(switch (List.rev(dyn_types)) {
+							case []: common_types;
+							case l: List.append(common_types, l);
+						});
+						function loop (e:core.Type.TExpr) {
+							var first_error = new Ref<Option<core.Error>>(None);
+							function filter(t:core.Type.T) : Bool {
+								return
+								try {
+									context.Typecore.unify_raise(ctx, e.etype, t, e.epos);
+									true;
+								}
+								catch (err:core.Error) {
+									var p = err.pos;
+									switch (err.msg) {
+										case Unify(l):
+											if (first_error.get() == None) {
+												first_error.set(Some(err));
+											}
+											false;
+										case _: throw err;
+									}
+								}
+							}
+							common_types.set(List.filter(filter, common_types.get()));
+							switch [common_types.get(), first_error.get()] {
+								case [[], Some(err)]: throw err;
+								case _:
+							}
+						}
+						switch (common_types.get()) {
+							case []: core.Error.error("No common base type found", core.Ast.punion(List.hd(el).epos, List.hd(List.rev(el)).epos));
+							case _:
+								List.iter(loop, List.tl(el));
+								List.hd(common_types.get());
+						}
+					}
+				}
+		}
 	}
 	public static function unify_min (ctx:context.Typecore.Typer, el:ImmutableList<core.Type.TExpr>) : core.Type.T {
 		return try {
@@ -682,7 +931,7 @@ class Typer {
 					var t = if (f.cf_name == "_new") {
 						t;
 					}
-					else if (params == []) {
+					else if (params == Tl) {
 						core.Error.error("Invalid abstract implementation function", f.cf_pos);
 					}
 					else {
@@ -690,7 +939,7 @@ class Typer {
 					}
 					switch (t) {
 						case TAbstract(a, pl):
-							var has_params = a.a_params != [] && f.cf_params != [];
+							var has_params = a.a_params != Tl && f.cf_params != Tl;
 							var monos = List.map(function (_) { return core.Type.mk_mono(); }, f.cf_params);
 							function map_type (t:core.Type.T) : core.Type.T {
 								return core.Type.apply_params(a.a_params, pl, core.Type.apply_params(f.cf_params, monos, t));
@@ -1112,7 +1361,7 @@ class Typer {
 								List.iter2(function (m:core.Type.T, pn:{name:String, t:core.Type.T}) {
 									var name = pn.name; var t = pn.t;
 									switch (core.Type.follow(t)) {
-										case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr!=[] && !core.Type.has_mono(m)):
+										case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr!=Tl && !core.Type.has_mono(m)):
 											List.iter(function (tc) { core.Type.unify(m, map(tc)); }, constr);
 										case _:
 									}
@@ -2372,7 +2621,7 @@ class Typer {
 					case TAbstract(a={a_impl:Some(c)}, pl):
 						function loop (opl:ImmutableList<{op:core.Ast.Unop, flag:core.Ast.UnopFlag, cf:core.Type.TClassField}>) : {fst:core.Type.TClassField, snd:core.Type.T, trd:core.Type.T} {
 							return switch (opl) {
-								case []: throw ocaml.Not_found;
+								case []: throw ocaml.Not_found.instance;
 								case {op:op2, flag:flag2, cf:cf}::opl if (op.equals(op2) && flag.equals(flag2)):
 									var m = core.Type.mk_mono();
 									var tcf = core.Type.apply_params(a.a_params, pl, core.Type.monomorphs(cf.cf_params, cf.cf_type));
@@ -2512,7 +2761,9 @@ class Typer {
 						core.Error.error("Cannot access "+i+" in static function", p);
 					}
 					try {
-						var t = List.find(function (tp:{name:String, t:core.Type.T}) { var i2 = tp.name; return i2 == i;}, ctx.type_params);
+						var t = List.find(function (tp:{name:String, t:core.Type.T}) {
+							var i2 = tp.name; return i2 == i;
+						}, ctx.type_params);
 						var c = switch (core.Type.follow(t.t)) { case TInst(c, _): c; case _: trace("Shall not be seen"); throw false;};
 						if (typing.Typeload.is_generic_parameter(ctx, c) && core.Meta.has(Const, c.cl_meta)) {
 							AKExpr(type_module_type(ctx, TClassDecl(c), None, p));
@@ -2634,7 +2885,7 @@ class Typer {
 										catch (_:ocaml.Not_found) {
 											try {
 												// then look for main type statics
-												if (m.a == []) {
+												if (m.a == Tl) {
 													throw ocaml.Not_found.instance; // ensure that we use def() to resolve local types first
 												}
 												var t = List.find(function (t) { return !(core.Type.t_infos(t).mt_private) && core.Type.t_path(t).equals(m); }, md.m_types);
@@ -2849,7 +3100,7 @@ class Typer {
 				var has_abstract_array_access = new Ref(false);
 				try {
 					switch (core.Type.follow(e1.etype)) {
-						case TAbstract(a={a_impl:Some(c)}, pl) if (a.a_array != []):
+						case TAbstract(a={a_impl:Some(c)}, pl) if (a.a_array != Tl):
 							switch (mode) {
 								case MSet:
 									// resolve later
@@ -2884,12 +3135,14 @@ class Typer {
 								}
 								catch (err:core.Error) {
 									switch (err.msg) {
-										case Unify(_) if (!ctx.untyped_):
-											if (has_abstract_array_access.get()) {
-												core.Error.error("No @:arrayAccess function accepts an argument of " + core.Type.s_type(core.Type.print_context(), e2.etype), e1.epos);
-											}
-											else {
-												core.Error.error("Array access is not allowed on " + core.Type.s_type(core.Type.print_context(), e1.etype), e1.epos);
+										case Unify(_):
+											if (!ctx.untyped_) {
+												if (has_abstract_array_access.get()) {
+													core.Error.error("No @:arrayAccess function accepts an argument of " + core.Type.s_type(core.Type.print_context(), e2.etype), e1.epos);
+												}
+												else {
+													core.Error.error("Array access is not allowed on " + core.Type.s_type(core.Type.print_context(), e1.etype), e1.epos);
+												}
 											}
 										case _: throw err;
 									}
@@ -3013,7 +3266,7 @@ class Typer {
 				case _: core.Error.error("Constructor is not a function", p);
 			}
 		}
-		var t = if (path.tp.tparams != []) {
+		var t = if (path.tp.tparams != Tl) {
 			core.Type.follow(typing.Typeload.load_instance(ctx, path, false, p));
 		}
 		else {
@@ -3218,7 +3471,7 @@ class Typer {
 
 	public static function type_local_function (ctx:context.Typecore.Typer, name:Option<String>, f:core.Ast.Func, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
 		var params = typing.Typeload.type_function_params(ctx, f, switch (name) { case None: "localfun"; case Some(n): n;}, p);
-		if (params != []) {
+		if (params != Tl) {
 			if (name == None) {
 				context.Typecore.display_error(ctx, "Type parameters not supported in unnamed local functions", p);
 			}
@@ -3227,7 +3480,7 @@ class Typer {
 			}
 		}
 		List.iter (function (tp:core.Ast.TypeParam) {
-			if (tp.tp_constraints != []) {
+			if (tp.tp_constraints != Tl) {
 				context.Typecore.display_error(ctx, "Type parameter constraints are not supported for local functions", p);
 			}
 		}, f.f_params);
@@ -3305,7 +3558,7 @@ class Typer {
 		return switch (v) {
 			case None: e;
 			case Some(v):
-				if (params != [] || inline_) {
+				if (params != Tl || inline_) {
 					v.v_extra = Some({params:params, expr:(inline_) ? Some(e) : None});
 				}
 				function loop (u:filters.LocalUsage.Usage) {
@@ -3343,8 +3596,67 @@ class Typer {
 	}
 
 	public static function type_array_decl (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_array_declaration");
-		throw false;
+		var tp = switch (with_type) {
+			case WithType(t):
+				function loop(t:core.Type.T) {
+					return switch(core.Type.follow(t)) {
+						case TInst({cl_path:{a:[], b:"Array"}}, [tp]):
+							switch (core.Type.follow(tp)) {
+								case TMono(_): None;
+								case _: Some(tp);
+							}
+						case TAnon(_):
+							try {
+								Some(get_iterable_param(t));
+							}
+							catch (_:ocaml.Not_found) {
+								None;
+							}
+						case TAbstract(a, pl):
+							switch (List.fold_left(function (acc:ImmutableList<core.Type.T>, t:core.Type.T) {
+								return switch (loop(t)) {
+									case None: acc;
+									case Some(t): t :: acc;
+								}
+							}, [], get_abstract_froms(a, pl))) {
+								case [t]: Some(t);
+								case _: None;
+							}
+						case t:
+							(t == core.Type.t_dynamic) ? Some(t) : None;
+					}
+				}
+				loop(t);
+			case _: None;
+		}
+		return switch (tp) {
+			case None:
+				var el = List.map(function (e:core.Ast.Expr) { return type_expr(ctx, e, Value); }, el);
+				var t = try {
+					unify_min_raise(ctx, el);
+				}
+				catch (err:core.Error) {
+					var p = err.pos;
+					switch (err.msg) {
+						case Unify(l):
+							if (ctx.com.display.dms_error_policy == EPIgnore || ctx.untyped_) {
+								core.Type.t_dynamic;
+							}
+							else {
+								context.Typecore.display_error(ctx, "Arrays of mixed types are only allowed if the type is forced to Array<Dynamic>", p);
+								throw new core.Error(Unify(l), p);
+							}
+						case _: throw err;
+					}
+				}
+				core.Type.mk(TArrayDecl(el), ctx.t.tarray(t), p);
+			case Some(t):
+				var el = List.map(function (e:core.Ast.Expr) {
+					var e = type_expr(ctx, e, WithType(t));
+					return context.typecore.AbstractCast.cast_or_unify(ctx, t, e, p);
+				}, el);
+				core.Type.mk(TArrayDecl(el), ctx.t.tarray(t), p);
+		}
 	}
 
 	public static function type_expr (ctx:context.Typecore.Typer, expr:core.Ast.Expr, with_type:context.Typecore.WithType) : core.Type.TExpr {

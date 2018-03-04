@@ -401,7 +401,7 @@ class Main {
 					var ctx = create(List.append(each_params.get(), List.rev(acc)));
 					init(ctx);
 					ctx.flush();
-				case "--next"::l if (acc == []): // skip empty --next
+				case "--next"::l if (acc == Tl): // skip empty --next
 					loop([], l);
 				case "--next"::l:
 					var ctx = create(List.append(each_params.get(), List.rev(acc)));

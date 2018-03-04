@@ -240,7 +240,7 @@ class Optimizer {
 		var pmonos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
 		var tmonos = List.append(tparams.snd, pmonos);
 		var tparams = List.append(tparams.fst, cf.cf_params);
-		return {fst:tparams!=[], snd:core.Type.apply_params.bind(tparams, tmonos)};
+		return {fst:tparams!=Tl, snd:core.Type.apply_params.bind(tparams, tmonos)};
 	}
 
 	public static function type_inline (ctx:context.Typecore.Typer, cf:core.Type.TClassField, f:core.Type.TFunc, ethis:core.Type.TExpr, params:ImmutableList<core.Type.TExpr>, tret:core.Type.T, config:Option<{fst:Bool, snd:core.Type.T->core.Type.T}>, p:core.Globals.Pos, ?self_calling_closure:Bool=false, force:Bool) : Option<core.Type.TExpr> {

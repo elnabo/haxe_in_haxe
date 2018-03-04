@@ -52,8 +52,6 @@ class Cloner {
 				}
 				if (Std.is(v, context.Typecore.TyperGlobals) || Std.is(v, context.Common.Context)) {
 					return v;
-					// trace(Meta.getType(v));
-					// trace(Meta.getType(v).clone);
 				}
 				if (Std.is(v, ocaml.PMap)) {
 					return v;

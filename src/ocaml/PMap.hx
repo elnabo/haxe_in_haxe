@@ -31,8 +31,8 @@ class PMap<K, V> {
 			switch [keys, values] {
 				case [Tl, Tl]: break;
 				case [Hd(k, kl), Hd(_, vl)] if (key.equals(k)):
-					keys = List.append(keys, kl);
-					values = List.append(values, vl);
+					resKeys = List.append(keys, kl);
+					resValues = List.append(values, vl);
 					break;
 				case [Hd(k, kl), Hd(v, vl)]:
 					keys = kl; values = vl;
@@ -85,6 +85,24 @@ class PMap<K, V> {
 					keys = kl; values = vl;
 					resKeys = k :: resKeys;
 					resValues = f(v) :: resValues;
+				case _: throw "Invalid PMap";
+			}
+		}
+		return new PMap(resKeys, resValues);
+	}
+
+	public static function mapi<A, B, C> (f:A->B->C, pmap:PMap<A,B>) : PMap<A, C> {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		var resKeys:ImmutableList<A> = Tl;
+		var resValues:ImmutableList<C> = Tl;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: break;
+				case [Hd(k, kl), Hd(v, vl)]:
+					keys = kl; values = vl;
+					resKeys = k :: resKeys;
+					resValues = f(k, v) :: resValues;
 				case _: throw "Invalid PMap";
 			}
 		}

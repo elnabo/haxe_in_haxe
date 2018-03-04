@@ -651,7 +651,6 @@ class Type {
 			return true;
 		}
 		else {
-			// trace(c.cl_super);
 			return switch (c.cl_super) {
 				case None: false;
 				case Some({c:c}): is_parent(csup, c);
@@ -760,101 +759,101 @@ class Type {
 		}
 
 		function rloop(l1:TypeParams, l2:ImmutableList<T>) : ImmutableList<{fst:T, snd:T}> {
-			return switch {f:l1, s:l2} {
-				case {f:[], s:[]}: [];
-				case {f:({name:x, t:TLazy(f)}::l1), s:_}:
-					var _l1:TypeParams = l1;
-					rloop({name:x, t:lazy_type(f)}::_l1, l2);
-				case {f:{t:t1}::l1, s:t2::l2}:
+			return switch [l1, l2] {
+				case [[], []]: [];
+				case [({name:x, t:TLazy(f)}::l1), _]:
+					rloop({name:x, t:lazy_type(f)}::l1, l2);
+				case [{t:t1}::l1, t2::l2]:
 					{fst:t1, snd:t2}::rloop(l1, l2);
-				case _: trace("Shall not be seen"); throw false;
+				case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
 			}
 		}
 		var subst = rloop(cparams, params);
 
 		function loop (t:T) {
+			return
 			try {
 				List.assq(t, subst);
 			}
-			catch (_:ocaml.Not_found) {}
-
-			return switch (t) {
-				case TMono(_.get()=>r):
-					switch (r) {
-						case None: t;
-						case Some(v): loop(v);
-					}
-				case TEnum(e, tl):
-					switch (tl) {
-						case []: t;
-						case _: TEnum(e, List.map(loop, tl));
-					}
-				case TType(t2, tl):
-					switch (tl) {
-						case []: t;
-						case _: TType(t2, List.map(loop, tl));
-					}
-				case TAbstract(a, tl):
-					switch (tl) {
-						case []: t;
-						case _: TAbstract(a, List.map(loop, tl));
-					}
-				case TInst(c, tl):
-					switch (tl) {
-						case []: t;
-						case[TMono(r)]:
-							switch (r.get()) {
-								case Some(tt) if (t == tt):
-									// for dynamic
-									var pt = mk_mono();
-									var params = [pt];
-									var t = TInst(c, params);
-									switch (pt) {
-										case TMono(r) :
-											r.set(Some(t));
-										case _:
-											trace("Shall not be seen"); throw false; // never
-									}
-									t;
-								case _: TInst(c, List.map(loop, tl));
-							}
-						case _: TInst(c, List.map(loop, tl));
-					}
-				case TFun({args:tl, ret:r}):
-					TFun({args: List.map(function(s:{name:String, opt:Bool, t:T}) {
-							return {name:s.name,
-									opt:s.opt,
-									t: loop(s.t)};
-						}, tl),
-						ret:loop(r)});
-				case TAnon(a):
-					var fields = PMap.map(function (f:TClassField) : TClassField {
-						return f.with({cf_type:loop(f.cf_type)});
-					}, a.a_fields);
-					switch (a.a_status.get()) {
-						case Opened:
-							a.a_fields = fields;
+			catch (_:ocaml.Not_found) {
+				switch (t) {
+					case TMono(r):
+						switch (r.get()) {
+							case None: t;
+							case Some(t): loop(t);
+						}
+					case TEnum(e, tl):
+						switch (tl) {
+							case []: t;
+							case _: TEnum(e, List.map(loop, tl));
+						}
+					case TType(t2, tl):
+						switch (tl) {
+							case []: t;
+							case _: TType(t2, List.map(loop, tl));
+						}
+					case TAbstract(a, tl):
+						switch (tl) {
+							case []: t;
+							case _: TAbstract(a, List.map(loop, tl));
+						}
+					case TInst(c, tl):
+						switch (tl) {
+							case []: t;
+							case[TMono(r)]:
+								switch (r.get()) {
+									case Some(tt) if (t == tt):
+										// for dynamic
+										var pt = mk_mono();
+										var t = TInst(c, [pt]);
+										switch (pt) {
+											case TMono(r) :
+												r.set(Some(t));
+											case _:
+												trace("Shall not be seen"); std.Sys.exit(255); throw false;
+										}
+										t;
+									case _: TInst(c, List.map(loop, tl));
+								}
+							case _: TInst(c, List.map(loop, tl));
+						}
+					case TFun({args:tl, ret:r}):
+						TFun({args: List.map(function(arg:{name:String, opt:Bool, t:T}) {
+								var s = arg.name; var o = arg.opt; var t = arg.t;
+								return {name:s,
+										opt:o,
+										t: loop(t)};
+							}, tl),
+							ret:loop(r)});
+					case TAnon(a):
+						var fields = PMap.map(function (f:TClassField) : TClassField {
+							return f.with({cf_type:loop(f.cf_type)});
+						}, a.a_fields);
+						switch (a.a_status.get()) {
+							case Opened:
+								a.a_fields = fields;
+								t;
+							default:
+								TAnon({
+									a_fields: fields,
+									a_status: a.a_status
+								});
+						}
+					case TLazy(f):
+						var ft = lazy_type(f);
+						var ft2 = loop(ft);
+						if (ft == ft2) {
 							t;
-						default:
-							TAnon({
-								a_fields: fields,
-								a_status: a.a_status
-							});
-					}
-				case TLazy(f):
-					var ft = lazy_type(f);
-					var ft2 = loop(ft);
-					if (ft == ft2) {
-						t;
-					}
-					else {
-						ft2;
-					}
-				case TDynamic(t2):
-					if (t2.get() == t)
-						t;
-					else
-						TDynamic(new Ref(loop(t2.get())));
+						}
+						else {
+							ft2;
+						}
+					case TDynamic(_.get()=>t2):
+						if (t2 == t)
+							t;
+						else
+							TDynamic(new Ref(loop(t2)));
+				}
 			}
 		}
 		return loop(t);
@@ -1332,7 +1331,7 @@ class Type {
 	public static function link (e:ocaml.Ref<Option<T>>, a:T, b:T) : Bool {
 		// tell if setting a == b will create a type-loop
 		function loop (t:T) : Bool {
-			if (t.equals(a)) {
+			if (t == a) {
 				return true;
 			}
 			else {
@@ -1344,31 +1343,43 @@ class Type {
 						}
 					case TEnum(_, tl), TInst(_, tl), TType(_, tl), TAbstract(_, tl): ocaml.List.exists(loop, tl);
 					case TFun(fun):
-						List.exists(function (arg) { return loop(arg.t);}, fun.args) || loop(fun.ret);
-					case TDynamic(t2):
-						if (t == t2.get()) {
+						var tl = fun.args; var t = fun.ret;
+						loop(t) || List.exists(function (arg) { var t = arg.t; return loop(t);}, tl);
+					case TDynamic(_.get()=>t2):
+						if (t == t2) {
 							false;
 						}
 						else {
-							loop(t2.get());
+							loop(t2);
 						}
 					case TLazy(f):
 						loop(lazy_type(f));
 					case TAnon(a):
-						PMap.fold(function (value, b) { return b || loop(value.cf_type); } , a.a_fields, false);
+						try {
+							PMap.iter(function (_, f) {
+								if (loop(f.cf_type)) {
+									throw ocaml.Exit.instance;
+								}
+							}, a.a_fields);
+							false;
+						}
+						catch (_:ocaml.Exit) {
+							true;
+						}
 				}
 			}
 		}
 		// tell is already a ~= b
+		return
 		if (loop(b)) {
-			return follow(b).equals(a);
+			follow(b) == a;
 		}
-		else if (b.equals(t_dynamic)) {
-			return true;
+		else if (b == t_dynamic) {
+			true;
 		}
 		else {
 			e.set(Some(b));
-			return true;
+			true;
 		}
 	}
 
@@ -1675,8 +1686,8 @@ class Type {
 						error(cannot_unify(a, b) :: err.l);
 					}
 				case _:
-					if (b.equals(t_dynamic) && (param == EqRightDynamic || param == EqBothDynamic)) {}
-					else if (a.equals(t_dynamic) && param == EqBothDynamic) {}
+					if (b == t_dynamic && (param == EqRightDynamic || param == EqBothDynamic)) {}
+					else if (a == t_dynamic && param == EqBothDynamic) {}
 					else {
 						error([cannot_unify(a, b)]);
 					}
@@ -1776,28 +1787,29 @@ class Type {
 			case [TInst(c1, tl1), TInst(c2, tl2)]:
 				function loop (c:TClass, tl:ImmutableList<T>) : Bool {
 					return
-					if (c.equals(c2)) {// strict
+					if (c == c2) {// strict
 						unify_type_params(a, b, tl, tl2);
 						true;
 					}
 					else {
-						var _tmp = switch (c.cl_super) {
+						var _tmp = switch (c.cl_kind) {
+							case KTypeParameter(pl):
+								List.exists(function (t:T) { return
+									switch (follow(t)) {
+										case TInst(cs,tls): loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls));
+										case TAbstract(aa, tl): List.exists(unify_to.bind(aa, tl, b), aa.a_to);
+										case _: false;
+									}
+								}, pl);
+							case _: false;
+						};
+						_tmp = _tmp || List.exists(function (arg:{c:TClass, params:ImmutableList<T>}) { var cs = arg.c; var tls = arg.params; return loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls)); }, c.cl_implements);
+						_tmp = _tmp || switch (c.cl_super) {
 							case None: false;
 							case Some({c:cs, params:tls}):
 								loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls));
 						}
-						_tmp || List.exists(function (arg:{c:TClass, params:ImmutableList<T>}) { var cs = arg.c; var tls = arg.params; return loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls)); }, c.cl_implements)
-							 || switch (c.cl_kind) {
-								case KTypeParameter(pl):
-									List.exists(function (t:T) { return
-										switch (follow(t)) {
-											case TInst(cs,tls): loop(cs, List.map(apply_params.bind(c.cl_params, tl), tls));
-											case TAbstract(aa, tl): List.exists(unify_to.bind(aa, tl, b), aa.a_to);
-											case _: false;
-										}
-									}, pl);
-								 case _: false;
-							 };
+						_tmp;
 					}
 				}
 				if (!loop(c1, tl1)) { error([cannot_unify(a, b)]); }
@@ -1813,7 +1825,7 @@ class Type {
 						if (o1 && ! o2) { error([Cant_force_optional]); }
 						unify(t1, t2);
 						i.set(i.get()+1);
-					}, l1, l2); // contravariance
+					}, l2, l1); // contravariance
 				}
 				catch (ue:Unify_error) {
 					var l = ue.l;
@@ -2151,8 +2163,36 @@ class Type {
 
 	public static function unify_from_field (ab:TAbstract, tl:TParams, a:T, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
 		var t = _tmp.t; var cf = _tmp.cf;
-		trace("TODO: unify_from_field");
-		throw false;
+		return rec_stack_bool(abstract_cast_stack, {fst:a, snd:b},
+			function (arg) { var a2 = arg.fst; var b2 = arg.snd; return fast_eq(a, a2) && fast_eq(b, b2); },
+			function () {
+				var unify_func = (allow_transitive_cast) ? unify : type_eq.bind(EqStrict);
+				return switch (follow(cf.cf_type)) {
+					case TFun({ret:r}):
+						var monos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
+						function map (t:core.Type.T) {
+							return apply_params(ab.a_params, tl, apply_params(cf.cf_params, monos, t));
+						}
+						unify_func(a, map(t));
+						List.iter2(function (m, arg2) {
+							var name = arg2.name; var t = arg2.t;
+							switch (follow(t)) {
+								case TInst({cl_kind:KTypeParameter(constr)}, _):
+									List.iter(function (tc) {
+										switch (follow(m)) {
+											case TMono(_): throw new Unify_error([]);
+											case _: unify(m, map(tc));
+										}
+									}, constr);
+								case _:
+							}
+						}, monos, cf.cf_params);
+						unify_func(map(r), b);
+						true;
+					case _: false;
+				}
+			}
+		);
 	}
 
 	public static function unify_to_field (ab:TAbstract, tl:TParams, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
@@ -2166,11 +2206,11 @@ class Type {
 			return type_iseq(tf, t);
 		}
 		switch [follow(t1), follow(t2)] {
-			case [TInst(c1, tl1), TInst(c2, tl2)] if (c1.equals(c2)):
+			case [TInst(c1, tl1), TInst(c2, tl2)] if (c1 == c2):
 				List.iter2(f, tl1, tl2);
-			case [TEnum(en1, tl1), TEnum(en2, tl2)] if (en1.equals(en2)):
+			case [TEnum(en1, tl1), TEnum(en2, tl2)] if (en1 == en2):
 				List.iter2(f, tl1, tl2);
-			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1.equals(a2) && core.Meta.has(CoreType, a1.a_meta)):
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2 && core.Meta.has(CoreType, a1.a_meta)):
 				List.iter2(f, tl1, tl2);
 			case [TAbstract(a1, pl1), TAbstract(a2, pl2)]:
 				if (core.Meta.has(CoreType, a1.a_meta) && core.Meta.has(CoreType, a2.a_meta)) {
@@ -2211,7 +2251,7 @@ class Type {
 			catch (exc:Unify_error) {
 				var l = exc.l;
 				var err = cannot_unify(a, b);
-				error(err::(Invariant_parameter(t1, t2) :: l));
+				error(err::Invariant_parameter(t1, t2) :: l);
 			}
 		}, tl1, tl2);
 	}

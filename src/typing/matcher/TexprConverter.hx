@@ -216,7 +216,7 @@ class TexprConverter {
 						catch (_:Not_exhaustive) {
 							switch [with_type, finiteness] {
 								case [NoValue, Infinite]: None;
-								case [_, CompileTimeFinite] if (unmatched == []): None;
+								case [_, CompileTimeFinite] if (unmatched == Tl): None;
 								case _ if (ctx.com.display.dms_error_policy == EPIgnore): None;
 								case _: report_not_exhaustive(e_subject, unmatched);
 							}
@@ -240,7 +240,6 @@ class TexprConverter {
 								Tl;
 							}
 							Hashtbl.replace(h, dt.dt_t, {fst:con::l, snd:dt, trd:params});
-							// trace(Hashtbl.)
 						}, cases);
 						return Hashtbl.fold(function (_, c, acc) {
 							var cons = c.fst; var dt = c.snd; var params = c.trd;

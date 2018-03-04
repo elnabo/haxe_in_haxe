@@ -12,9 +12,27 @@ class AbstractCast {
 
 	public static var cast_stack = new Ref<ImmutableList<core.Type.TClassField>>([]);
 
-	public static function make_static_call (ctx:context.Typecore.Typer, c:core.Type.TClass, cf:core.Type.TClassField, a:core.Type.TAbstract, pl, args:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: make_static_call");
-		throw false;
+	public static function make_static_call (ctx:context.Typecore.Typer, c:core.Type.TClass, cf:core.Type.TClassField, a:core.Type.TAbstract, pl:ImmutableList<core.Type.T>, args:ImmutableList<core.Type.TExpr>, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		return
+		if (cf.cf_kind.match(Method(MethMacro))) {
+			switch (args) {
+				case [e]:
+					var _tmp = context.Typecore.push_this(ctx, e);
+					var e = _tmp.fst; var f = _tmp.snd;
+					ctx.with_type_stack = context.Typecore.WithType.WithType(t) :: ctx.with_type_stack;
+					var e = switch(ctx.g.do_macro(ctx, MExpr, c.cl_path, cf.cf_name, [e], p)) {
+						case Some(e): context.Typecore.type_expr(ctx, e, Value);
+						case None: context.Typecore.type_expr(ctx, {expr:EConst(CIdent("null")), pos:p}, Value);
+					}
+					ctx.with_type_stack = List.tl(ctx.with_type_stack);
+					f();
+					e;
+				case _: trace("Shall not be seen"); Sys.exit(255); throw false;
+			}
+		}
+		else {
+			context.Typecore.make_static_call(ctx, c, cf, core.Type.apply_params.bind(a.a_params, pl), args, t, p);
+		}
 	}
 
 	public static function do_check_cast (ctx:context.Typecore.Typer, tleft:core.Type.T, eright:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {
@@ -92,7 +110,8 @@ class AbstractCast {
 							}
 							loop2(a.a_to);
 						}
-					case _: throw ocaml.Not_found.instance;
+					case _:
+						throw ocaml.Not_found.instance;
 				}
 			}
 			loop(tleft, eright.etype);

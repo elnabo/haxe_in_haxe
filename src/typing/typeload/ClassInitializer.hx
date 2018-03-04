@@ -728,7 +728,7 @@ class ClassInitializer {
 	public static function create_method (ctx:context.Typecore.Typer, cctx:Class_init_ctx, fctx:Field_init_ctx, c:core.Type.TClass, f:core.Ast.ClassField, fd:core.Ast.Func, p:core.Globals.Pos) : core.Type.TClassField {
 		var params = typing.Typeload.type_function_params(ctx, fd, f.cff_name.pack, p);
 		if (core.Meta.has(Generic, f.cff_meta)) {
-			if (params == Tl) { // == []
+			if (params == Tl) {
 				core.Error.error(f.cff_name.pack+": Generic functions must have type parameters", p);
 			}
 		}
@@ -863,7 +863,7 @@ class ClassInitializer {
 									case None:
 									case Some({pos:p}): core.Error.error("Rest argument cannot have default value", p);
 								}
-								if (args != Tl) { // != []
+								if (args != Tl) {
 									core.Error.error("Rest should only be used for the last function argument", p);
 								}
 							case _:
