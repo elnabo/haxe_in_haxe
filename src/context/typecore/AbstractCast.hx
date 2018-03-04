@@ -40,6 +40,7 @@ class AbstractCast {
 			if (cf.equals(ctx.curfield) || List.mem(cf, cast_stack.get())) {
 				core.Error.error("Recursive implicit cast", p);
 			}
+			cast_stack.set(cf::cast_stack.get());
 			var r = f();
 			cast_stack.set(List.tl(cast_stack.get()));
 			return r;

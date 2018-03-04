@@ -320,7 +320,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			l;
 		}
 		catch (_:ocaml.Error) { catched(); }
-		catch (_:ocaml.Failure) { catched(); }
+		catch (_:ocaml.stream.Failure) { catched(); }
 		catch (_:hxparse.ParserError) { catched(); }
 		catch (e:Any) {
 			syntax.Lexer.restore(stream.old);
@@ -941,7 +941,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			aunshift(parseClassFieldResume(tdecl), c);
 		}
 		catch (_:ocaml.Error) { catchFunction();}
-		catch (_:ocaml.Failure) { catchFunction();}
+		catch (_:ocaml.stream.Failure) { catchFunction();}
 		catch (_:hxparse.NoMatch<Dynamic>) { catchFunction();}
 	}
 
@@ -1015,7 +1015,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 							{name:Last, pos:p};
 						}
 						else {
-							throw ocaml.Failure.instance;
+							throw ocaml.stream.Failure.instance;
 						}
 				}
 		}
@@ -1393,10 +1393,12 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					case [f = parseFunctionField(doc, meta, al)]:
 						f;
 					case _:
-						if (al.length == 0)
-							throw ocaml.Failure.instance;
-						else
+						if (al.length == 0) {
+							throw ocaml.stream.Failure.instance;
+						}
+						else {
 							syntax.Parser.serror();
+						}
 				};
 				{
 					cff_name: data.name,
@@ -1492,7 +1494,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					{tp:{tpackage:[], tname:"", tparams:[], tsub:None}, pos:core.Globals.null_pos}
 				}
 				else {
-					throw ocaml.Failure.instance;
+					throw ocaml.stream.Failure.instance;
 				}
 		}
 	}
@@ -1549,7 +1551,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		catch (_:hxparse.NoMatch<Dynamic>) { // Stream.Failure ?
 			return {acc:acc, pos:p};
 		}
-		catch (_:ocaml.Failure) {
+		catch (_:ocaml.stream.Failure) {
 			return {acc:acc, pos:p};
 		}
 		catch (_:ocaml.Error) {
@@ -2210,7 +2212,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			catch (exc:ocaml.Error) {
 				catched(exc);
 			}
-			catch (exc:ocaml.Failure) {
+			catch (exc:ocaml.stream.Failure) {
 				catched(exc);
 			}
 			catch (e:syntax.parser.Display) {

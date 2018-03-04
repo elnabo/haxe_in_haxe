@@ -33,9 +33,9 @@ class List {
 			case Hd(_, tl): 1 + length(tl);
 		}
 	}
-	public static function tl<T> (l:ImmutableList<T>) : ImmutableList<T> {
+	public static function tl<T> (l:ImmutableList<T>, ?pos:haxe.PosInfos) : ImmutableList<T> {
 		return switch (l) {
-			case Tl: throw Failure.instance;
+			case Tl: throw ocaml.Failure.instance;
 			case Hd(_, tl): tl;
 		}
 	}
