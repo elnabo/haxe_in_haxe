@@ -81,7 +81,7 @@ class Texpr {
 			case {f:TTypeExpr(mt1), s:TTypeExpr(mt2)}: mt1.equals(mt2);
 			case {f:TParenthesis(e1), s:TParenthesis(e2)}: equal(e1, e2);
 			// case {f:TObjectDecl(fl1), s:TObjectDecl(fl2)}: safe_for_all2(function (s1,e1) (s2,e2)  s1 = s2 && equal e1 e2) fl1 fl2
-			case {f:TObjectDecl(fl1), s:TObjectDecl(fl2)}: core.Ast.safe_for_all2(function (o1:core.Type.TObjectField, o2:core.Type.TObjectField) { return o1.a.equals(o2.a) && equal(o1.expr, o2.expr);}, fl1, fl2);
+			case {f:TObjectDecl(fl1), s:TObjectDecl(fl2)}: core.Ast.safe_for_all2(function (o1:core.Type.TObjectField, o2:core.Type.TObjectField) { return o1.name == o2.name && o1.pos.equals(o2.pos) && o1.quotes == o2.quotes && equal(o1.expr, o2.expr);}, fl1, fl2);
 			case {f:TArrayDecl(el1), s:TArrayDecl(el2)}, {f:TBlock(el1), s:TBlock(el2)}: core.Ast.safe_for_all2(equal, el1, el2);
 			case {f:TCall(e1,el1), s:TCall(e2,el2)}: equal(e1, e2) && core.Ast.safe_for_all2(equal, el1, el2);
 			// case {f:TNew(c1,tl1,el1), s:TNew(c2,tl2,el2)}: c1 == c2 && safe_for_all2 type_iseq tl1 tl2 && safe_for_all2 equal el1 el2

@@ -69,7 +69,6 @@ class Error {
 	public static function unify_error_msg (ctx, err:core.Type.UnifyError) : String {
 		return switch (err) {
 			case Cannot_unify (t1, t2):
-				trace(core.Type.s_type(ctx, t1), core.Type.s_type(ctx, t2));
 				core.Type.s_type(ctx, t1) + " should be " + core.Type.s_type(ctx, t2);
 			case Invalid_field_type (s):
 				"Invalid type for field " + s + " :";

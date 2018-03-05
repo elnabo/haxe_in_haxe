@@ -10,8 +10,9 @@ class Expr {
 		}
 	}
 
-	public static function field_assoc (name:String, fl:ImmutableList<core.Ast.ObjectField>) : core.Ast.Expr {
-		function loop (fl:ImmutableList<core.Ast.ObjectField>) {
+	public static function field_assoc<T> (name:String, fl:ImmutableList<{name:String, pos:core.Globals.Pos, quotes:core.Ast.QuoteStatus, expr:T}>) : T {
+		// function loop (fl:ImmutableList<core.Ast.ObjectField>) {
+		function loop (fl:ImmutableList<{name:String, pos:core.Globals.Pos, quotes:core.Ast.QuoteStatus, expr:T}>) {
 			return switch (fl) {
 				case {name:name_, expr:e}::fl:
 					if (name_==name) {
@@ -26,8 +27,8 @@ class Expr {
 		return loop(fl);
 	}
 
-	public static function field_mem_assoc (name:String, fl:ImmutableList<core.Ast.ObjectField>) : Bool {
-		function loop (fl:ImmutableList<core.Ast.ObjectField>) {
+	public static function field_mem_assoc<T> (name:String, fl:ImmutableList<{name:String, pos:core.Globals.Pos, quotes:core.Ast.QuoteStatus, expr:T}>) : Bool {
+		function loop (fl:ImmutableList<{name:String, pos:core.Globals.Pos, quotes:core.Ast.QuoteStatus, expr:T}>) {
 			return switch (fl) {
 				case {name:name_, expr:e}::fl:
 					if (name_==name) {

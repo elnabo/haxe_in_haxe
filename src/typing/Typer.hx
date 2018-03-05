@@ -3198,6 +3198,137 @@ class Typer {
 		}
 	}
 
+	public static function format_string(ctx:context.Typecore.Typer, s:String, p:core.Globals.Pos) : core.Ast.Expr {
+		var e = new Ref(None);
+		var pmin = new Ref(p.pmin);
+		var min = new Ref(p.pmin+1);
+		function add_expr (arg:core.Ast.Expr, len:Int) {
+			var enext = arg.expr; var p = arg.pos;
+			min.set(min.get() + len);
+			var enext:core.Ast.Expr = if(ctx.in_display && context.Display.is_display_position(p)) {
+				context.display.ExprPreprocessing.process_expr(ctx.com, {expr:enext, pos:p});
+			}
+			else {
+				{expr:enext, pos:p};
+			}
+			switch (e.get()) {
+				case None: e.set(Some(enext));
+				case Some(prev):
+					e.set(Some({expr:EBinop(OpAdd, prev, enext), pos:core.Ast.punion(prev.pos, p)}));
+			}
+		}
+		function add (enext:core.Ast.ExprDef, len:Int) {
+			var p = p.with({pmin:min.get(), pmax:min.get()+len});
+			add_expr({expr:enext, pos:p}, len);
+		}
+		function add_sub (start:Int, pos:Int) {
+			var len = pos - start;
+			if (len > 0 || e.get() == None) {
+				add(core.Ast.ExprDef.EConst(CString(s.substr(start, len))), len);
+			}
+		}
+		var warn_escape = context.Common.defined(ctx.com, FormatWarning);
+		function warn (pos:Int, len:Int) {
+			ctx.com.warning("This string is formatted", p.with({pmin:pmin.get()+1+pos, pmax:pmin.get()+1+pos+len}));
+		}
+		var len = s.length;
+		var parse_group = function (start:Int, pos:Int, gopen:String, gclose:String, gname:String) { trace("Shall not be seen"); throw false; }
+		function parse (start:Int, pos:Int) {
+			if (pos == len) { add_sub(start, pos); }
+			else {
+				var c = s.charAt(pos);
+				var pos = pos + 1;
+				if (c == "'") {
+					pmin.set(pmin.get()+1);
+					min.set(min.get()+1);
+				}
+				if (c != "$" || pos == len) { parse(start, pos); }
+				var _tmp = s.charCodeAt(pos);
+				if (_tmp == "$".code) {
+					if (warn_escape) { warn(pos, 1); }
+					// double $
+					add_sub(start, pos);
+					parse(pos+1, pos+1);
+				}
+				else if (_tmp == "{".code) {
+					parse_group(start, pos, "{", "}", "brace");
+				}
+				else if (('a'.code <= _tmp && _tmp <= "z".code) || ('A'.code <= _tmp && _tmp <= "Z".code) || "_".code == _tmp) {
+					add_sub(start, pos-1);
+					min.set(min.get()+1);
+					function loop (i:Int) {
+						return
+						if (i == len) { i; }
+						else {
+							var c = s.charCodeAt(i);
+							if (('a'.code <= c && c <= "z".code) || ('A'.code <= c && c <= "Z".code) || ('0'.code <= c && c <= "9".code) || "_".code == c) {
+								loop(i+1);
+							}
+							else {
+								i;
+							}
+						}
+					}
+					var iend = loop(pos+1);
+					var len = iend - pos;
+					if (warn_escape) { warn(pos, len); }
+					add(core.Ast.ExprDef.EConst(CIdent(s.substr(pos, len))), len);
+					parse(pos+len, pos+len);
+				}
+				else {
+					// keep as-ut
+					parse(start, pos);
+				}
+			}
+		}
+		parse_group = function (start, pos, gopen, gclose, gname) {
+			add_sub(start, pos-1);
+			function loop(groups:ImmutableList<Int>, i:Int) : Int {
+				return
+				if (i == len) {
+					switch (groups) {
+						case []: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+						case g :: _: core.Error.error("Unclosed "+gname, p.with({pmin:pmin.get()+g+1, pmax:pmin.get()+g+2}));
+					}
+				}
+				else {
+					var c = s.charAt(i);
+					if (c == gopen) {
+						loop(i::groups, i+1);
+					}
+					else if (c==gclose) {
+						var groups = List.tl(groups);
+						if (groups == Tl) {
+							i;
+						}
+						else {
+							loop(groups, i+1);
+						}
+					}
+					else {
+						loop(groups, i+1);
+					}
+				}
+			}
+			var send = loop([pos], pos+1);
+			var slen = send - pos - 1;
+			var scode = s.substr(pos+1, len);
+			if (warn_escape) { warn(pos+1, slen); }
+			min.set(min.get()+2);
+			if (slen > 0) {
+				add_expr(syntax.ParserEntry.parse_expr_string(ctx.com.defines, scode, p.with({pmin:pmin.get()+pos+2, pmax:pmin.get()+send+1}), core.Error.error, true), slen);
+			}
+			min.set(min.get()+1);
+			parse(send+1, send+1);
+		}
+		parse(0, 0);
+		return
+		switch (e.get()) {
+			case None: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+			case Some(e) : e;
+		}
+	}
+
 	public static function type_block (ctx:context.Typecore.Typer, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
 		function merge (e:core.Type.TExpr) : ImmutableList<core.Type.TExpr> {
 			return switch (e.eexpr) {
@@ -3241,8 +3372,169 @@ class Typer {
 	}
 
 	public static function type_object_decl (ctx:context.Typecore.Typer, fl:ImmutableList<core.Ast.ObjectField>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("TODO: typing.Typer.type_object_decl");
-		throw false;
+		var dynamic_parameter = new Ref<Option<core.Type.T>>(None);
+		var a = switch (with_type) {
+			case WithType(t):
+				function loop (in_abstract_from:Bool, t:core.Type.T) : ObjectDeclKind {
+					return switch (core.Type.follow(t)) {
+						case TAnon(a) if (!in_abstract_from && !PMap.is_empty(a.a_fields)):
+							ODKWithStructure(a);
+						case TAbstract(a, pl) if (!core.Meta.has(CoreType, a.a_meta)):
+							switch (List.fold_left(function (acc:ImmutableList<ObjectDeclKind>, t:core.Type.T) { return switch (loop(true, t)) { case ODKPlain: acc; case t: t::acc; } }, [], get_abstract_froms(a, pl))) {
+								case [t]: t;
+								case _: ODKPlain;
+							}
+						case TDynamic(_.get()=>t) if (core.Type.follow(t) != core.Type.t_dynamic):
+							dynamic_parameter.set(Some(t));
+							ODKWithStructure({
+								a_status: new Ref(core.Type.AnonStatus.Closed),
+								a_fields: PMap.empty()
+							});
+						case TInst(c, tl) if (core.Meta.has(StructInit, c.cl_meta)):
+							ODKWithClass(c, tl);
+						case _:
+							ODKPlain;
+					}
+				}
+				loop(false, t);
+			case _: ODKPlain;
+		}
+		function type_fields (field_map:PMap<String, core.Type.TClassField>) : {fst:core.Type.T, snd:ImmutableList<core.Type.TObjectField>} {
+			var fields = new Ref<PMap<String, core.Type.TClassField>>(PMap.empty());
+			var extra_fields = new Ref<ImmutableList<String>>(Tl);
+			var fl = List.map(function (obj:core.Ast.ObjectField) : core.Type.TObjectField {
+				var n = obj.name; var pn = obj.pos; var qs = obj.quotes; var e = obj.expr;
+				var is_valid = syntax.Lexer.is_valid_identifier(n);
+				if (PMap.mem(n, fields.get())) { core.Error.error("Duplicate field in object declaration : "+n, p); }
+				var e = try {
+					var t = switch (dynamic_parameter.get()) {
+						case Some(t): t;
+						case None:
+							var cf = PMap.find(n, field_map);
+							if (ctx.in_display && context.Display.is_display_position(pn)) {
+								context.display.DisplayEmitter.display_field(ctx.com.display, cf, pn);
+							}
+							cf.cf_type;
+					}
+					var e = type_expr(ctx, e, WithType(t));
+					var e = context.typecore.AbstractCast.cast_or_unify(ctx, t, e, p);
+					try {
+						core.Type.type_eq(EqStrict, e.etype, t);
+						e;
+					}
+					catch (_:core.Type.Unify_error) {
+						core.Type.mk(TCast(e, None), t, e.epos);
+					}
+				}
+				catch(_:ocaml.Not_found) {
+					if (is_valid) {
+						extra_fields.set(n::extra_fields.get());
+					}
+					type_expr(ctx, e, Value);
+				}
+				if (is_valid) {
+					if (n.length > 0 && n.charAt(0) == "$") {
+						core.Error.error("Field names starting with a dollar are not allowed", p);
+					}
+					var cf = core.Type.mk_field(n, e.etype, core.Ast.punion(pn, e.epos), pn);
+					fields.set(PMap.add(n, cf, fields.get()));
+				}
+				return {name:n, pos:pn, quotes:qs, expr:e};
+			}, fl);
+			var t:core.Type.T = TAnon({a_fields:fields.get(), a_status:new Ref(core.Type.AnonStatus.Const)});
+			if (!ctx.untyped_) {
+				switch (PMap.foldi(function (n:String, cf:core.Type.TClassField, acc:ImmutableList<String>) { return (!core.Meta.has(Optional, cf.cf_meta) && !PMap.mem(n, fields.get())) ? n::acc : acc; }, field_map, [])) {
+					case []:
+					case [n]: context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires field "+n)], p);
+					case nl: context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires field "+List.join(", ", nl))], p);
+				}
+				switch (extra_fields.get()) {
+					case []:
+					case _: context.Typecore.raise_or_display(ctx, List.map(function (n) { return core.Type.has_extra_field(t, n); }, extra_fields.get()), p);
+				}
+			}
+			return {fst:t, snd:fl};
+		}
+		return switch (a) {
+			case ODKPlain:
+				function loop (arg1:{fst:ImmutableList<core.Type.TObjectField>, snd:PMap<String, core.Type.TClassField>}, arg2:core.Ast.ObjectField) {
+					var l = arg1.fst; var acc = arg1.snd; var f = arg2.name; var pf = arg2.pos; var qs = arg2.quotes; var e = arg2.expr;
+					var is_valid = syntax.Lexer.is_valid_identifier(f);
+					if (PMap.mem(f, acc)) { core.Error.error("Duplicate field in object declaration : "+f, p); }
+					var e = type_expr(ctx, e, Value);
+					switch (core.Type.follow(e.etype)) {
+						case TAbstract({a_path:{a:[] ,b:"Void"}}, _): core.Error.error("Fields of type Void are not allowed in structures", e.epos);
+						case _:
+					}
+					var cf = core.Type.mk_field(f, e.etype, core.Ast.punion(pf, e.epos), pf);
+					if (ctx.in_display && context.Display.is_display_position(pf)) {
+						context.display.DisplayEmitter.display_field(ctx.com.display, cf, pf);
+					}
+					var _tmp = {name:f, pos:pf, quotes:qs, expr:e} :: l;
+					var _tmp2 = if (is_valid) {
+						if (f.length > 0 && f.charAt(0)=="$") { core.Error.error("Field names starting with a dollar are not allowed", p); }
+						PMap.add(f, cf, acc);
+					}
+					else { acc; }
+					return {fst:_tmp, snd:_tmp2};
+				}
+				var _tmp = List.fold_left(loop, {fst:[], snd:PMap.empty()}, fl);
+				var fields = _tmp.fst; var types = _tmp.snd;
+				var x = new Ref<core.Type.AnonStatus>(Const);
+				ctx.opened = x :: ctx.opened;
+				core.Type.mk(TObjectDecl(List.rev(fields)), TAnon({a_fields:types, a_status:x}), p);
+			case ODKWithStructure(a):
+				var _tmp = type_fields(a.a_fields);
+				var t = _tmp.fst; var fl = _tmp.snd;
+				if (a.a_status.get() == Opened) { a.a_status.set(Closed); }
+				core.Type.mk(TObjectDecl(fl), t, p);
+			case ODKWithClass(c, tl):
+				var _tmp = get_constructor(ctx,c, tl, p);
+				var t = _tmp.t; var ctor = _tmp.cf;
+				var args = switch (core.Type.follow(t)) {
+					case TFun({args:args}): args;
+					case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+				}
+				var fields = List.fold_left(function (acc:PMap<String, core.Type.TClassField>, arg:core.Type.TSignatureArg) {
+					var n = arg.name; var opt = arg.opt; var t = arg.t;
+					var f = core.Type.mk_field(n, t, ctor.cf_pos, ctor.cf_name_pos);
+					if (opt) { f.cf_meta = [{name:Optional, params:[], pos:ctor.cf_pos}]; }
+					return PMap.add(n, f, acc);
+				}, PMap.empty(), args);
+				var _tmp = type_fields(fields);
+				var t = _tmp.fst; var fl = _tmp.snd;
+				var _tmp = List.fold_left(function (arg1:{fst:ImmutableList<core.Type.TExpr>, snd:ImmutableList<core.Type.TObjectField>, trd:Bool}, arg2:core.Type.TObjectField) {
+					var evars = arg1.fst; var elocs = arg1.snd; var has_side_effect = arg1.trd;
+					var e = arg2.expr;
+					return switch (e.eexpr) {
+						case TConst(_), TTypeExpr(_), TFunction(_):
+							return {fst:evars, snd:{name:arg2.name, pos:arg2.pos, quotes:arg2.quotes, expr:e}::elocs, trd:has_side_effect};
+						case _:
+							if (has_side_effect) {
+								var v = context.Typecore.gen_local(ctx, e.etype, e.epos);
+								var ev = core.Type.mk(TVar(v, Some(e)), e.etype, e.epos);
+								var eloc = core.Type.mk(TLocal(v), v.v_type, e.epos);
+								{fst:e::evars, snd:{name:arg2.name, pos:arg2.pos, quotes:arg2.quotes, expr:eloc}::elocs, trd:has_side_effect};
+							}
+							else {
+								{fst:evars, snd:{name:arg2.name, pos:arg2.pos, quotes:arg2.quotes, expr:e}::elocs, trd:optimization.OptimizerTexpr.has_side_effect(e)};
+							}
+					}
+				}, {fst:Tl, snd:Tl, trd:false}, List.rev(fl));
+				var evars = _tmp.fst; var fl = _tmp.snd;
+				var el = List.map(function (arg) {
+					var n = arg.name; var t = arg.t;
+					return
+					try {
+						core.ast.Expr.field_assoc(n, fl);
+					}
+					catch (_:ocaml.Not_found) {
+						core.Type.mk(TConst(TNull), t, p);
+					}
+				}, args);
+				var e = core.Type.mk(TNew(c, tl, el), TInst(c, tl), p);
+				core.Type.mk(TBlock(List.rev(e::List.rev(evars))), e.etype, e.epos);
+		}
 	}
 
 	public static function type_map_declaration (ctx:context.Typecore.Typer, e1:core.Ast.Expr, el:ImmutableList<core.Ast.Expr>, with_type:context.Typecore.WithType, p:core.Globals.Pos) : core.Type.TExpr {
@@ -4497,11 +4789,6 @@ class Typer {
 			}
 			loop([]);
 		}
-	}
-
-	public static function format_string(ctx:context.Typecore.Typer, s:String, p:core.Globals.Pos) : core.Ast.Expr {
-		trace("TODO: typing.Typer.format_string");
-		throw false;
 	}
 
 	public static function sort_types(com:context.Common.Context, modules:Hashtbl<core.Path, core.Type.ModuleDef>) : {types:ImmutableList<core.Type.ModuleType>, modules:ImmutableList<core.Type.ModuleDef>} {

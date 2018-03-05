@@ -136,11 +136,9 @@ typedef TAnon = {
 }
 
 typedef TObjectField = {
-	a:{
-		name:String,
-		pos:Globals.Pos,
-		quotes:Ast.QuoteStatus
-	},
+	name:String,
+	pos:Globals.Pos,
+	quotes:Ast.QuoteStatus,
 	expr:TExpr
 }
 enum TExprExpr {
@@ -2197,8 +2195,39 @@ class Type {
 
 	public static function unify_to_field (ab:TAbstract, tl:TParams, b:T, ?allow_transitive_cast:Bool=true, _tmp:{t:T, cf:TClassField}) : Bool {
 		var t = _tmp.t; var cf = _tmp.cf;
-		trace("TODO: unify_to_field");
-		throw false;
+		var a:core.Type.T = TAbstract(ab, tl);
+		return rec_stack_bool(abstract_cast_stack, {fst:b, snd:a},
+			function (arg) { var b2 = arg.fst; var a2 = arg.snd; return fast_eq(a, a2) && fast_eq(b, b2); },
+			function () {
+				var unify_func = (allow_transitive_cast) ? unify : type_eq.bind(EqStrict);
+				return switch (core.Type.follow(cf.cf_type)) {
+					case TFun({args:{t:ta}::_}):
+						var monos = List.map(function (_) { return core.Type.mk_mono(); }, cf.cf_params);
+						function map (t:core.Type.T) {
+							return core.Type.apply_params(ab.a_params, tl, core.Type.apply_params(cf.cf_params, monos, t));
+						}
+						var athis = map(ab.a_this);
+						// we cannot allow implicit casts when the this type is not completely known yet
+						// if has_mono athis then raise (Unify_error []);
+						with_variance(type_eq.bind(EqStrict), athis, map(ta));
+						// immediate constraints checking is ok here because we know there are no monomorphs
+						List.iter2(function (m, arg2) {
+							var name = arg2.name; var t = arg2.t;
+							switch (follow(t)) {
+								case TInst({cl_kind:KTypeParameter(constr)}, _):
+									List.iter(function (tc) {
+										switch (follow(m)) {
+											case TMono(_): throw new Unify_error([]);
+											case _: unify(m, map(tc));
+										}
+									}, constr);
+								case _:
+							}
+						}, monos, cf.cf_params);
+						unify_func(map(t), b);
+					case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+				}
+			});
 	}
 
 	public static function unify_with_variance (f:(T,T)->Void, t1:T, t2:T) : Void {
@@ -2358,7 +2387,7 @@ class Type {
 			case TBlock(el):
 				e.with({eexpr:core.TExprExpr.TBlock(List.map(f, el))});
 			case TObjectDecl(el):
-				e.with({eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el))});
+				e.with({eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {name:a.name, pos:a.pos, quotes:a.quotes, expr:f(a.expr)};}, el))});
 			case TCall(e1, el):
 				var e1 = f(e1);
 				e.with({eexpr:core.TExprExpr.TCall(e1, List.map(f, el))});
@@ -2506,7 +2535,7 @@ class Type {
 				});
 			case TObjectDecl(el):
 				e.with({
-					eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {a:a.a, expr:f(a.expr)};}, el)),
+					eexpr:core.TExprExpr.TObjectDecl(List.map(function (a) {return {name:a.name, pos:a.pos, quotes:a.quotes, expr:f(a.expr)};}, el)),
 					etype: ft(e.etype)
 				});
 			case TCall(e1, el):

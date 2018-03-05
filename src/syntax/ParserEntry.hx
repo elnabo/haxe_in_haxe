@@ -1,7 +1,9 @@
 package syntax;
 
-import haxe.ds.Option;
+import haxe.ds.ImmutableList;
+// import haxe.ds.Option;
 import ocaml.DynArray;
+using equals.Equal;
 
 // eval
 enum Small_type {
@@ -48,6 +50,27 @@ class ParserEntry {
 
 	public static inline function eval(ctx:core.Define, e:core.Ast.Expr) : Small_type {
 		return haxeparser.HaxeParser.HaxeTokenSource.eval(ctx, e);
+	}
+
+	public static function parse_string (com:core.Define, s:String, p:core.Globals.Pos, error:(String, core.Globals.Pos)->Dynamic, inlined:Bool) : {fst:ImmutableList<String>, snd:ImmutableList<core.Ast.TypeDecl>} {
+		trace("TODO: ParserEntry.parse_string");
+		throw false;
+	}
+
+	public static function parse_expr_string(com:core.Define, s:String, p:core.Globals.Pos, error:(String, core.Globals.Pos)->Dynamic, inl:Bool) : core.Ast.Expr {
+		var head = "class X{static function main() ";
+		var head = (p.pmin > head.length) ? head + StringTools.lpad("", " ", p.pmin + head.length) : head;
+		function loop (e:core.Ast.Expr) : core.Ast.Expr {
+			var e = core.Ast.map_expr(loop, e);
+			return {expr:e.expr, pos:p};
+		}
+		return
+		switch (parse_string(com, head+s+";}", p, error, inl)) {
+			case {snd:[{decl:EClass({d_data:[{cff_name:{pack:"main", pos:_p}, cff_kind:FFun({f_expr:Some(e)})}]})}]} if (_p.equals(core.Globals.null_pos)):
+				(inl) ? e : loop(e);
+			case _:
+				throw ocaml.Exit.instance;
+		}
 	}
 
 	// public static function cmp(a:Small_type, b:Small_type) {

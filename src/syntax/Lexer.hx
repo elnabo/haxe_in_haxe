@@ -408,6 +408,44 @@ class Lexer extends hxparse.Lexer implements hxparse.RuleBuilder {
 	public static var cur = make_file("");
 	public static var all_files = new Hashtbl<String, LexerFile>();
 
+	static final _keywords:Hashtbl<String, core.Ast.Keyword> = Hashtbl.create(0);
+	public static var keywords(get,null):Hashtbl<String, core.Ast.Keyword>;
+	static function get_keywords() {
+		if (Hashtbl.length(_keywords) == 0) {
+			var ks:Array<core.Ast.Keyword> = [Function,Class,Static,Var,If,Else,While,Do,For,
+				Break,Return,Continue,Extends,Implements,Import,
+				Switch,Case,Default,Public,Private,Try,Untyped,
+				Catch,New,This,Throw,Extern,Enum,In,Interface,
+				Cast,Override,Dynamic,Typedef,Package,
+				Inline,Using,Null,True,False,Abstract,Macro,Final];
+			for (k in ks) {
+				Hashtbl.add(_keywords, core.Ast.s_keyword(k), k);
+			}
+		}
+		return _keywords;
+	}
+
+	public static function is_valid_identifier (s:String) : Bool {
+		return
+		try {
+			for (i in 0...s.length) {
+				var c = s.charCodeAt(i);
+				if ("a".code <= c && c <= "z".code) {}
+				else if ("A".code <= c && c <= "Z".code) {}
+				else if ("_".code == c) {}
+				else if ("0".code <= c && c <= "9".code) {}
+				else {
+					throw ocaml.Exit.instance;
+				}
+			}
+			if (Hashtbl.mem(keywords, s)) { throw ocaml.Exit.instance; }
+			true;
+		}
+		catch (_:ocaml.Exit) {
+			false;
+		}
+	}
+
 	public static function init (file:String, do_add:Bool) {
 		var f = make_file(file);
 		cur = f;

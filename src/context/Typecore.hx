@@ -315,7 +315,6 @@ class Typecore {
 					case []:
 						ctx.g.delayed = rest;
 					case f::l:
-						var rest:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}> = rest;
 						ctx.g.delayed = {fst:p2, snd:l}::rest;
 						f();
 				}

@@ -546,8 +546,8 @@ class Optimizer {
 						e.with({eexpr: core.Type.TExprExpr.TBinop(op, e1.with({eexpr:core.Type.TExprExpr.TLocal(l.i_subst)}), e2)});
 					case TObjectDecl(fl):
 						var fl = List.map(function (of:core.Type.TObjectField) : core.Type.TObjectField {
-							var s = of.a; var e = of.expr;
-							return {a:s, expr:map(false, e)};
+							var e = of.expr;
+							return {name:of.name, pos:of.pos, quotes:of.quotes, expr:map(false, e)};
 						}, fl);
 						switch (core.Type.follow(e.etype)) {
 							case TAnon(an) if (an.a_status.get().match(Const)):
@@ -995,8 +995,29 @@ class Optimizer {
 	}
 
 	public static function optimize_for_loop_iterator (ctx:context.Typecore.Typer, v:core.Type.TVar, e1:core.Type.TExpr, e2:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {
-		trace("Optimizer.optimize_for_loop_iterator");
-		throw false;
+		var _tmp = switch (core.Type.follow(e1.etype)) { case TInst(c, pl): {fst:c, snd:pl}; case _: throw ocaml.Exit.instance; };
+		var c = _tmp.fst; var tl = _tmp.snd;
+		var fhasnext = try {
+			core.Type.raw_class_field(function (cf) {
+				return core.Type.apply_params(c.cl_params, tl, cf.cf_type);
+			}, c, tl, "hasNext").trd;
+		}
+		catch (_:ocaml.Not_found) {
+			throw ocaml.Exit.instance;
+		}
+		if (!fhasnext.cf_kind.match(Method(MethInline))) { throw ocaml.Exit.instance; }
+		var tmp = context.Typecore.gen_local(ctx, e1.etype, e1.epos);
+		var eit = core.Type.mk(TLocal(tmp), e1.etype, p);
+		var ehasnext = context.Typecore.make_call(ctx, core.Type.mk(TField(eit, FInstance(c, tl, fhasnext)), TFun({args:[], ret:ctx.t.tbool}), p), [], ctx.t.tbool, p);
+		var enext = core.Type.mk(TVar(v, Some(context.Typecore.make_call(ctx, core.Type.mk(TField(eit, core.Type.quick_field_dynamic(eit.etype, "next")), TFun({args:[], ret:v.v_type}), p), [], v.v_type, p))), ctx.t.tvoid, p);
+		var eblock = switch (e2.eexpr) {
+			case TBlock(el): e2.with({eexpr:core.Type.TExprExpr.TBlock(enext::el)});
+			case _: core.Type.mk(TBlock([enext, e2]), ctx.t.tvoid, p);
+		}
+		return core.Type.mk(TBlock([
+			core.Type.mk(TVar(tmp, Some(e1)), ctx.t.tvoid, p),
+			core.Type.mk(TWhile(ehasnext, eblock, NormalWhile), ctx.t.tvoid, p)
+		]), ctx.t.tvoid, p);
 	}
 
 	// ----------------------------------------------------------------------

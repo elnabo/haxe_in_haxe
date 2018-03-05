@@ -10,8 +10,22 @@ using ocaml.Cloner;
 class Inheritance {
 
 	public static function check_extends (ctx:context.Typecore.Typer, c:core.Type.TClass, t:core.Type.T, p:core.Globals.Pos) : {c:core.Type.TClass, params:core.Type.TParams} {
-		trace("TODO typeing.typeload.Inheritance.check_extends");
-		throw false;
+		return switch (core.Type.follow(t)) {
+			case TInst({cl_path:{a:[], b:"Array"}, cl_extern:basic_extern}, _),
+				TInst({cl_path:{a:[], b:"String"}, cl_extern:basic_extern}, _),
+				TInst({cl_path:{a:[], b:"Date"}, cl_extern:basic_extern}, _),
+				TInst({cl_path:{a:[], b:"Xml"}, cl_extern:basic_extern}, _) if (!c.cl_extern && basic_extern):
+					core.Error.error("Cannot extend basic class", p);
+			case TInst(csup, params):
+				if (core.Type.is_parent(c, csup)) { core.Error.error("Recursive class", p); }
+				switch (csup.cl_kind) {
+					case KTypeParameter(_):
+						if (typing.Typeload.is_generic_parameter(ctx, csup)) { core.Error.error("Extending generic type parameters is no longer allowed in Haxe 4", p); }
+						core.Error.error("Cannot extend type parameters", p);
+					case _: {c:csup, params:params};
+				}
+			case _: core.Error.error("Should extend by using a class", p);
+		}
 	}
 
 	public static function check_interfaces (ctx:context.Typecore.Typer, c:core.Type.TClass) {

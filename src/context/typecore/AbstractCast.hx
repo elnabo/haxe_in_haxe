@@ -6,6 +6,7 @@ import haxe.ds.Option;
 import ocaml.List;
 import ocaml.Ref;
 
+using ocaml.Cloner;
 using equals.Equal;
 
 class AbstractCast {
@@ -56,8 +57,7 @@ class AbstractCast {
 				switch (a.a_impl) {
 					case Some(c): recurse(cf, function () {
 						var ret = make_static_call(ctx, c, cf, a, tl, [eright], tleft, p);
-						ret.eexpr = TMeta({name:ImplicitCast, params:[], pos:ret.epos}, ret);
-						return ret;
+						return ret.with({eexpr: core.Type.TExprExpr.TMeta({name:ImplicitCast, params:[], pos:ret.epos}, ret)});
 					});
 					case None: trace("Shall not be seen"); throw false;
 				}

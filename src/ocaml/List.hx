@@ -83,9 +83,9 @@ class List {
 
 	public static function iter2<A,B> (f:A->B->Void, l1:ImmutableList<A>, l2:ImmutableList<B>) : Void {
 		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
-		switch ({f:l1, s:l2}) {
-			case {f:Tl, s:Tl}:
-			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
+		switch [l1, l2] {
+			case [Tl, Tl]:
+			case [Hd(v1, tl1), Hd(v2, tl2)]:
 				f(v1, v2);
 			case _: throw new Invalid_argument();
 		}
@@ -99,9 +99,9 @@ class List {
 	}
 	public static function for_all2<A,B> (f:A->B->Bool, l1:ImmutableList<A>, l2:ImmutableList<B>) : Bool {
 		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
-		return switch ({f:l1, s:l2}) {
-			case {f:Tl, s:Tl}: true;
-			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
+		return switch [l1, l2] {
+			case [Tl, Tl]: true;
+			case [Hd(v1, tl1), Hd(v2, tl2)]:
 				if (f(v1, v2)) {
 					for_all2(f, tl1, tl2);
 				}

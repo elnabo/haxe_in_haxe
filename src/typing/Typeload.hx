@@ -1775,7 +1775,6 @@ class Typeload {
 			return _tmp;
 		}
 		catch (err:Any) {
-			if (p.pmin == 1744) { trace(err); }
 			save();
 			throw err;
 		}
