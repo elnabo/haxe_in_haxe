@@ -1,8 +1,10 @@
 package typing.typeload;
 
 import haxe.ds.ImmutableList;
+import haxe.ds.Option;
 
 import ocaml.List;
+import ocaml.PMap;
 import ocaml.Ref;
 using equals.Equal;
 using ocaml.Cloner;
@@ -28,8 +30,110 @@ class Inheritance {
 		}
 	}
 
+	public static function check_interface(ctx:context.Typecore.Typer, c:core.Type.TClass, intf:core.Type.TClass, params:core.Type.TParams) : Void {
+		var p = c.cl_pos;
+		function check_field (i:String, f:core.Type.TClassField) {
+			if (ctx.com.config.pf_overload) {
+				List.iter(function (_tmp) {
+					switch (_tmp) {
+						case f2 if (f != f2):
+							check_field(i, f2);
+						case _:
+					}
+				}, f.cf_overloads);
+			}
+			var is_overload = new Ref(false);
+			try {
+				var _tmp = typing.Typeload.class_field_no_interf(c, i);
+				var t2 = _tmp.fst; var f2 = _tmp.snd;
+				var _tmp = if (ctx.com.config.pf_overload && (f2.cf_overloads != Tl || core.Meta.has(Overload, f2.cf_meta))) {
+					var overloads = codegen.Overloads.get_overloads(c, i);
+					is_overload.set(true);
+					var t = core.Type.apply_params(intf.cl_params, params, f.cf_type);
+					List.find(function (_tmp) {
+						var t1 = _tmp.t; var f1 = _tmp.cf;
+						return codegen.Overloads.same_overload_args(t, t1, f, f1);
+					}, overloads);
+				}
+				else {
+					{t:t2, cf:f2};
+				}
+				var t2 = _tmp.t; var f2 = _tmp.cf;
+				if (ctx.com.display.dms_collect_data) {
+					var h = ctx.com.display_information;
+					h.interface_field_implementations = {c1:intf, cf1:f, c2:c, cf2:Some(f2)} :: h.interface_field_implementations;
+				}
+				core.Type.follow(f2.cf_type); // force evaluation
+				var p = switch (f2.cf_expr) { case None: p; case Some(e): e.epos; }
+				function mkind (mk:core.Type.MethodKind) : Int {
+					return switch(mk) {
+						case MethNormal, MethInline: 0;
+						case MethDynamic: 1;
+						case MethMacro: 2;
+					}
+				}
+				if (f.cf_public && !f2.cf_public && !core.Meta.has(CompilerGenerated, f.cf_meta)) {
+					context.Typecore.display_error(ctx, "Field " + i + " should be public as requested by " + core.Globals.s_type_path(intf.cl_path), p);
+				}
+				/*
+					not (unify_kind f2.cf_kind f.cf_kind) ||
+					not (match f.cf_kind, f2.cf_kind with Var _ , Var _ -> true | Method m1, Method m2 -> mkind m1 = mkind m2 | _ -> false) then
+				*/
+				else if (!(switch [f.cf_kind, f2.cf_kind] { case [Var(_), Var(_)]: true; case [Method(m1), Method(m2)]: mkind(m1) == mkind(m2); case _: false; }) || !core.Type.unify_kind(f2.cf_kind, f.cf_kind)) {
+					context.Typecore.display_error(ctx, "Field " + i + " has different property access than in " + core.Globals.s_type_path(intf.cl_path) + " (" + core.Type.s_kind(f2.cf_kind) + " should be " + core.Type.s_kind(f.cf_kind) + ")", p);
+				}
+				else {
+					try {
+						typing.Typeload.valid_redefinition(ctx, f2, t2, f, core.Type.apply_params(intf.cl_params, params, f.cf_type));
+					}
+					catch (ue:core.Type.Unify_error) {
+						var l = ue.l;
+						if (!core.Meta.has(CsNative, c.cl_meta) && c.cl_extern) {
+							context.Typecore.display_error(ctx, "Field " + i + " has different type than in " + core.Globals.s_type_path(intf.cl_path), p);
+							context.Typecore.display_error(ctx, "Interface field is defined here", f.cf_pos);
+							context.Typecore.display_error(ctx, core.Error.error_msg(Unify(l)), p);
+						}
+					}
+				}
+			}
+			catch (_:ocaml.Not_found) {
+				if (!c.cl_interface) {
+					var msg = if (is_overload.get()) {
+						var ctx = core.Type.print_context();
+						var args = switch (core.Type.follow(f.cf_type)) {
+							case TFun({args:args}):
+								List.join(", ", List.map(function (a:core.Type.TSignatureArg) {
+									var n = a.name; var o = a.opt; var t = a.t;
+									return ((o) ? "?" : "") + n + " : " + core.Type.s_type(ctx, t);
+								}, args));
+							case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+						}
+						"No suitable overload for " + i+ "( " +args + "), as needed by " + core.Globals.s_type_path(intf.cl_path) + " was found";
+					}
+					else {
+						"Field " + i + " needed by " + core.Globals.s_type_path(intf.cl_path) + " is missing";
+					}
+					context.Typecore.display_error(ctx, msg, p);
+				}
+			}
+		}
+		PMap.iter(check_field, intf.cl_fields);
+		List.iter(function (_tmp) {
+			var i2 = _tmp.c;  var p2 = _tmp.params;
+			check_interface(ctx, c, i2, List.map(core.Type.apply_params.bind(intf.cl_params, params), p2));
+		}, intf.cl_implements);
+	}
+
 	public static function check_interfaces (ctx:context.Typecore.Typer, c:core.Type.TClass) {
-		trace("TODO typing.typeload.Inheritance.check_interfaces");
+		switch (c.cl_path) {
+			case {a:"Proxy"::_}:
+			case _ if (c.cl_extern && core.Meta.has(CsNative, c.cl_meta)):
+			case _:
+				List.iter(function (_tmp) {
+					var intf = _tmp.c; var params = _tmp.params;
+					check_interface(ctx, c, intf, params);
+				}, c.cl_implements);
+		}
 	}
 
 	public static function set_heritance (ctx:context.Typecore.Typer, c:core.Type.TClass, herits:ImmutableList<core.Ast.ClassFlag>, p:core.Globals.Pos) : ImmutableList<Void->Void> {

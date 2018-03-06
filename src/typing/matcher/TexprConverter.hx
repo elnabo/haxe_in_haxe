@@ -23,6 +23,21 @@ enum Match_kind {
 }
 
 class TexprConverter {
+	public static function s_subject(s:String, e:core.Type.TExpr) : String {
+		function loop (s:String, e:core.Type.TExpr) {
+			return switch (e.eexpr) {
+				case TField(e1, fa):
+					loop('{ ${core.Type.field_name(fa)}: ${s} }', e1);
+				case TEnumParameter(e1, ef, i):
+					var arity = switch (core.Type.follow(ef.ef_type)) { case TFun({args:args}): List.length(args); case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;}
+					var l = typing.Matcher.make_offset_list(i, arity -i -1, s, "_");
+					loop('${ef.ef_name}(${List.join(", ", l)})', e1);
+				case _: s;
+			}
+		}
+		return loop(s, e);
+	}
+
 	public static function unify_constructor (ctx:context.Typecore.Typer, params:core.Type.TParams, t:core.Type.T, con:typing.matcher.constructor.T) : Option<{con:typing.matcher.constructor.T, params:core.Type.TParams}> {
 		return switch (con) {
 			case ConEnum(en, ef):
@@ -161,8 +176,35 @@ class TexprConverter {
 	}
 
 	public static function report_not_exhaustive (e_subject:core.Type.TExpr, unmatched:ImmutableList<{con:typing.matcher.constructor.T, params:Dynamic}>) : Dynamic { // real = void always throw
-		trace("TODO: report_not_exhaustive");
-		throw false;
+		var sl:ImmutableList<String> = switch (core.Type.follow(e_subject.etype)) {
+			case TAbstract(a={a_impl:Some(c)}, tl) if (core.Meta.has(Enum, a.a_meta)):
+				List.map(function (_tmp) {
+					var con:typing.matcher.constructor.T = _tmp.con;
+					return switch (con) {
+						case ConConst(ct1):
+							var cf = List.find(function (cf:core.Type.TClassField) {
+								return switch (cf.cf_expr) {
+									case Some({eexpr:(TConst(ct2)|TCast({eexpr:TConst(ct2)}, None))}):
+										ct1.equals(ct2);
+									case _: false;
+								}
+							}, c.cl_ordered_statics);
+							cf.cf_name;
+						case _:
+							Constructor.to_string(con);
+					}
+				}, unmatched);
+			case _:
+				List.map(function (_tmp) {
+					var con:typing.matcher.constructor.T = _tmp.con;
+					return Constructor.to_string(con);
+				}, unmatched);
+		}
+		var s = switch (unmatched) {
+			case []: "_";
+			case _: List.join(" | ", List.sort(Reflect.compare, sl));
+		}
+		return core.Error.error('Unmatched patterns: ${s_subject(s, e_subject)}', e_subject.epos);
 	}
 
 	public static function to_texpr (ctx:context.Typecore.Typer, t_switch:core.Type.T, match_debug:Bool, with_type:context.Typecore.WithType, dt:typing.matcher.decisiontree.Dt) : core.Type.TExpr {

@@ -7,7 +7,7 @@ import ocaml.Ref;
 
 class ExprPreprocessing {
 	public static function find_enclosing (com:context.Common.Context, e:core.Ast.Expr) : core.Ast.Expr {
-		var display_pos = new Ref(syntax.Parser.resume_display);
+		var display_pos = new Ref(syntax.Parser.resume_display.get());
 		function mk_null (p:core.Globals.Pos) : core.Ast.Expr {
 			return {expr:EDisplay({expr:EConst(CIdent("null")), pos:p}, false), pos:p};
 		}
@@ -47,7 +47,7 @@ class ExprPreprocessing {
 							}
 							else {
 								mk_null(p) :: el;
-							}; 
+							};
 							List.rev(el);
 					}
 					return {expr:EBlock(el), pos:e.pos};
@@ -59,7 +59,7 @@ class ExprPreprocessing {
 	}
 
 	public static function find_before_pos (com:context.Common.Context, e:core.Ast.Expr) : core.Ast.Expr {
-		var display_pos = new Ref(syntax.Parser.resume_display);
+		var display_pos = new Ref(syntax.Parser.resume_display.get());
 		function is_annotated(p:core.Globals.Pos) : Bool {
 			if (p.pmin <= display_pos.get().pmin && p.pmax >= display_pos.get().pmax) {
 				display_pos.set(new core.Globals.Pos("", -2, -2));

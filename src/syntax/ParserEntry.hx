@@ -1,8 +1,8 @@
 package syntax;
 
 import haxe.ds.ImmutableList;
-// import haxe.ds.Option;
-import ocaml.DynArray;
+import haxe.ds.Option;
+import ocaml.Hashtbl;
 using equals.Equal;
 
 // eval
@@ -15,35 +15,6 @@ enum Small_type {
 
 class ParserEntry {
 
-	var ctx:core.Define;
-	var code:syntax.Lexer;
-
-	var old:syntax.Lexer.LexerFile;
-	var restore_cache:Void->Void;
-	var mstack:DynArray<Any>;
-
-	var sraw:haxeparser.HaxeParser;
-
-	// public function new (ctx:core.Define, code:syntax.Lexer) {
-	public function new (ctx:core.Define, src:String, buf:byte.ByteData) {
-		this.ctx = ctx;
-		this.code = new syntax.Lexer(buf, src);
-
-		old = Lexer.save();
-		restore_cache = syntax.parser.TokenCache.clear();
-		mstack = [];
-		syntax.Parser.last_doc = None;
-		syntax.Parser.in_macro = core.Define.defined(ctx, Macro);
-
-		code.token(syntax.Lexer.skip_header);
-
-		var parser = new haxeparser.HaxeParser(buf, src, ctx);
-		try {
-			var l = parser.parse();
-		}
-
-	}
-
 	public static inline function is_true(a:Small_type) {
 		return haxeparser.HaxeParser.HaxeTokenSource.isTrue(a);
 	}
@@ -52,9 +23,43 @@ class ParserEntry {
 		return haxeparser.HaxeParser.HaxeTokenSource.eval(ctx, e);
 	}
 
-	public static function parse_string (com:core.Define, s:String, p:core.Globals.Pos, error:(String, core.Globals.Pos)->Dynamic, inlined:Bool) : {fst:ImmutableList<String>, snd:ImmutableList<core.Ast.TypeDecl>} {
-		trace("TODO: ParserEntry.parse_string");
-		throw false;
+	public static function parse (ctx:core.Define, code:{fst:byte.ByteData, snd:String})  : {pack:ImmutableList<String>, decls:ImmutableList<core.Ast.TypeDecl>} {
+		return new haxeparser.HaxeParser(code.fst, code.snd, ctx).parse();
+	}
+
+	public static function parse_string (com:core.Define, s:String, p:core.Globals.Pos, error:(String, core.Globals.Pos)->Dynamic, inlined:Bool) : {pack:ImmutableList<String>, decls:ImmutableList<core.Ast.TypeDecl>} {
+		var old = syntax.Lexer.save();
+		var old_file = try { Some(Hashtbl.find(syntax.Lexer.all_files, p.pfile)); }
+			catch (_:ocaml.Not_found) { None; }
+		var old_display = syntax.Parser.resume_display.get();
+		var old_de = syntax.Parser.display_error;
+		function restore () {
+			switch (old_file) {
+				case None:
+				case Some(f): Hashtbl.replace(syntax.Lexer.all_files, p.pfile, f);
+			}
+			if (!inlined) { syntax.Parser.resume_display.set(old_display); }
+			syntax.Lexer.restore(old);
+			syntax.Parser.display_error = old_de;
+		}
+		syntax.Lexer.init(p.pfile, true);
+		syntax.Parser.display_error = function (e:syntax.parser.ErrorMsg, p:core.Globals.Pos) { throw new syntax.parser.Error(e, p); }
+		if (!inlined) { syntax.Parser.resume_display.set(core.Globals.null_pos); }
+		var _tmp = try {
+			parse(com, {fst:byte.ByteData.ofString(s), snd:p.pfile});
+		}
+		catch (err:syntax.parser.Error) {
+			var e = err.error_msg; var pe = err.pos;
+			restore();
+			core.Error.error(syntax.Parser.error_msg(e), (inlined) ? pe : p);
+		}
+		catch (err:syntax.lexer.Error) {
+			var e = err.error_msg; var pe = err.pos;
+			restore();
+			core.Error.error(syntax.Lexer.error_msg(e), (inlined) ? pe : p);
+		}
+		restore();
+		return _tmp;
 	}
 
 	public static function parse_expr_string(com:core.Define, s:String, p:core.Globals.Pos, error:(String, core.Globals.Pos)->Dynamic, inl:Bool) : core.Ast.Expr {
@@ -66,7 +71,7 @@ class ParserEntry {
 		}
 		return
 		switch (parse_string(com, head+s+";}", p, error, inl)) {
-			case {snd:[{decl:EClass({d_data:[{cff_name:{pack:"main", pos:_p}, cff_kind:FFun({f_expr:Some(e)})}]})}]} if (_p.equals(core.Globals.null_pos)):
+			case {decls:[{decl:EClass({d_data:[{cff_name:{pack:"main", pos:_p}, cff_kind:FFun({f_expr:Some(e)})}]})}]} if (_p.equals(core.Globals.null_pos)):
 				(inl) ? e : loop(e);
 			case _:
 				throw ocaml.Exit.instance;

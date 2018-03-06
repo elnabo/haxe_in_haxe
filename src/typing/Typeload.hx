@@ -325,7 +325,8 @@ class Typeload {
 		syntax.Lexer.init(file, true);
 		context.Common.stats.s_files_parsed.set(context.Common.stats.s_files_parsed.get()+1);
 		var data = try {
-			new haxeparser.HaxeParser(buf, file, com.defines).parse();
+			// new haxeparser.HaxeParser(buf, file, com.defines).parse();
+			syntax.ParserEntry.parse(com.defines, {fst:buf, snd:file});
 		}
 		catch (e:Dynamic) {
 			t();
@@ -1136,8 +1137,96 @@ class Typeload {
 	// ----------------------------------------------------------------------
 	// Structure check
 	public static function valid_redefinition (ctx:context.Typecore.Typer, f1:core.Type.TClassField, t1:core.Type.T, f2:core.Type.TClassField, t2:core.Type.T) : Void { // child, parent
-		trace("TODO: Typeload.valid_redefinition");
-		throw false;
+		function valid (t1:core.Type.T, t2:core.Type.T) {
+			core.Type.unify(t1, t2);
+			if ((core.Type.follow(t1) == core.Type.t_dynamic && core.Type.follow(t2) == core.Type.t_dynamic) || (core.Type.is_null(t1) != core.Type.is_null(t2))) {
+				throw new core.Type.Unify_error([Cannot_unify(t1, t2)]);
+			}
+		}
+		switch [optimization.OptimizerTexpr.PurityState.get_purity_from_meta(f2.cf_meta), optimization.OptimizerTexpr.PurityState.get_purity_from_meta(f1.cf_meta)] {
+			case [Pure, MaybePure]: f1.cf_meta = ({name:Pure, params:[{expr:EConst(CIdent("expect")), pos:f2.cf_pos}], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f1.cf_meta;
+			case [ExpectPure(p), MaybePure]: f1.cf_meta = ({name:Pure, params:[{expr:EConst(CIdent("expect")), pos:p}], pos:core.Globals.null_pos} : core.Ast.MetadataEntry) :: f1.cf_meta;
+			case _:
+		}
+
+		var _tmp = switch [f1.cf_params, f2.cf_params] {
+			case [[], []]: {fst:t1, snd:t2};
+			case [l1, l2] if (List.length(l1) == List.length(l2)):
+				var to_check = new Ref<ImmutableList<ImmutableList<core.Type.T>->Void>>([]);
+				var monos = List.map2(function (arg1:{name:String, t:core.Type.T}, arg2:{name:String, t:core.Type.T}) : core.Type.T {
+					var name = arg1.name; var p1 = arg1.t; var p2 = arg2.t;
+					switch [core.Type.follow(p1), core.Type.follow(p2)] {
+						case [TInst(c1={cl_kind:KTypeParameter(ct1)}, pl1), TInst(c2={cl_kind:KTypeParameter(ct2)}, pl2)]:
+							switch [ct1, ct2] {
+								case [[], []]:
+								case [_, _] if (List.length(ct1) == List.length(ct2)):
+									// if same constraints, they are the same type
+									function check (monos:ImmutableList<core.Type.T>) {
+										List.iter2(function (t1:core.Type.T, t2:core.Type.T) {
+											try {
+												var t1 = core.Type.apply_params(l1, monos, core.Type.apply_params(c1.cl_params, pl1, t1));
+												var t2 = core.Type.apply_params(l2, monos, core.Type.apply_params(c2.cl_params, pl2, t2));
+												core.Type.type_eq(EqStrict, t1, t2);
+											}
+											catch(ue:core.Type.Unify_error) {
+												var l = ue.l;
+												throw new core.Type.Unify_error(core.Type.UnifyError.Unify_custom("Constraints differ")::l);
+											}
+										}, ct1, ct2);
+									}
+									to_check.set(check::to_check.get());
+								case _:
+									throw new core.Type.Unify_error([Unify_custom("Different number of constraints")]);
+							}
+						case _:
+					}
+					return TInst(core.Type.mk_class(core.Type.null_module, new core.Path([], name), core.Globals.null_pos, core.Globals.null_pos), []);
+				}, l1, l2);
+				List.iter(function (f) { f(monos); }, to_check.get());
+				{fst:core.Type.apply_params(l1, monos, t1), snd:core.Type.apply_params(l2, monos, t2)};
+			case _:
+				// ignore type params, will create other errors later
+				{fst:t1, snd:t2};
+		}
+		var t1 = _tmp.fst; var t2 = _tmp.snd;
+		switch [f1.cf_kind, f2.cf_kind] {
+			case [Method(m1), Method(m2)] if (!(m1 == MethDynamic) && !(m2==MethDynamic)):
+				switch [core.Type.follow(t1), core.Type.follow(t2)] {
+					case [TFun({args:args1, ret:r1}), TFun({args:args2, ret:r2})]:
+						if (List.length(args1) != List.length(args2)) { throw new core.Type.Unify_error([Unify_custom("Different number of function arguments")]); }
+						try {
+							List.iter2(function (arg1:core.Type.TSignatureArg, arg2:core.Type.TSignatureArg) {
+								var n = arg1.name; var o1 = arg1.opt; var a1 = arg1.t;
+								var o2 = arg1.opt; var a2 = arg2.t;
+								if (o1 != o2) { throw new core.Type.Unify_error([Not_matching_optional(n)]); }
+								try {
+									valid(a2, a1);
+								}
+								catch (_:core.Type.Unify_error) {
+									throw new core.Type.Unify_error([Cannot_unify(a1, a2)]);
+								}
+							}, args1, args2);
+							valid(r1, r2);
+						}
+						catch (ue:core.Type.Unify_error) {
+							var l = ue.l;
+							throw new core.Type.Unify_error(core.Type.UnifyError.Cannot_unify(t1, t2)::l);
+						}
+					case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+				}
+			case [_, Var({v_write:(AccNo|AccNever)})]:
+				// write variance
+				valid(t1, t2);
+			case [_, Var({v_read:(AccNo|AccNever)})]:
+				// read variance
+				valid(t2, t1);
+			case [_,_]:
+				// in case args differs, or if an interface var
+				core.Type.type_eq(EqStrict, t1, t2);
+				if (core.Type.is_null(t1) != core.Type.is_null(t2)) {
+					throw new core.Type.Unify_error([Cannot_unify(t1, t2)]);
+				}
+		}
 	}
 
 	public static function check_overriding (ctx:context.Typecore.Typer, c:core.Type.TClass, f:core.Type.TClassField) : Void {
@@ -1232,6 +1321,24 @@ class Typeload {
 						return {t:t, cf:f2};
 					}, false);
 				}
+		}
+	}
+
+	public static function class_field_no_interf (c:core.Type.TClass, i:String) : {fst:core.Type.T, snd:core.Type.TClassField} {
+		return
+		try {
+			var f = PMap.find(i, c.cl_fields);
+			{fst:f.cf_type, snd:f};
+		}
+		catch (_:ocaml.Not_found) {
+			switch (c.cl_super) {
+				case None: throw ocaml.Not_found.instance;
+				case Some({c:c, params:tl}):
+					// rec over class_field
+					var _tmp = core.Type.raw_class_field(function (f) { return f.cf_type; }, c, tl, i);
+					var t = _tmp.snd; var f =_tmp.trd;
+					{fst:core.Type.apply_params(c.cl_params, tl, t), snd:f};
+			}
 		}
 	}
 

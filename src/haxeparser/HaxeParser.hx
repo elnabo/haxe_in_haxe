@@ -4,6 +4,7 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
 import ocaml.List;
+import ocaml.Ref;
 // import byte.ByteData;
 
 // eval
@@ -82,7 +83,8 @@ class HaxeTokenSource {
 	var restore_cache:Void->Void;
 
 	@:allow(haxeparser.HaxeParser)
-	var mstack:Array<core.Globals.Pos>;
+	// var mstack:Array<core.Globals.Pos>;
+	var mstack:Ref<ImmutableList<core.Globals.Pos>>;
 
 	var rawSource:hxparse.LexerTokenSource<syntax.Lexer.Token>;
 	var sraw:HaxeCondParser;
@@ -94,7 +96,7 @@ class HaxeTokenSource {
 
 		this.old = syntax.Lexer.save();
 		this.restore_cache = syntax.parser.TokenCache.clear();
-		this.mstack = [];
+		this.mstack = new Ref(Tl);
 
 		syntax.Parser.last_doc = None;
 		syntax.Parser.in_macro = core.Define.defined(ctx, Macro);
@@ -127,15 +129,19 @@ class HaxeTokenSource {
 			case CommentLine(_):
 				next_token();
 			case Sharp("end"):
-				if (mstack.length == 0) {
-					tk;
-				}
-				else {
-					mstack.shift();
-					next_token();
+				switch (mstack.get()) {
+					case []: tk;
+					case _ :: l:
+						mstack.set(l);
+						next_token();
 				}
 			case Sharp("else") | Sharp("elseif"):
-				process_token(skip_tokens(tk.pos, false));
+				switch (mstack.get()) {
+					case []: tk;
+					case _ :: l:
+						mstack.set(l);
+						process_token(skip_tokens(tk.pos, false));
+				}
 			case Sharp("if"):
 				process_token(enter_macro(tk.pos));
 			case Sharp("error"):
@@ -168,11 +174,11 @@ class HaxeTokenSource {
 		}
 
 		var cond = switch (o.expr.expr) {
-			case EConst(CIdent("macro")) if (core.Path.unique_full_path(p.pfile) == syntax.Parser.resume_display.pfile): true;
+			case EConst(CIdent("macro")) if (core.Path.unique_full_path(p.pfile) == syntax.Parser.resume_display.get().pfile): true;
 			case _: false;
 		}
 		if (isTrue(eval(ctx, o.expr)) || cond) {
-			mstack.unshift(p);
+			mstack.set(p :: mstack.get());
 			return tk;
 		}
 		else {
@@ -184,21 +190,13 @@ class HaxeTokenSource {
 		return switch (tk.td) {
 			case Sharp("end"):
 				lexerToken();
-			case Sharp("elseif"):
-				if (!test) {
-					skip_tokens(p, test);
-				}
-				else {
-					enter_macro(tk.pos);
-				}
+			case Sharp("elseif"), Sharp("else") if (!test):
+				skip_tokens(p, test);
 			case Sharp("else"):
-				if (!test) {
-					skip_tokens(p, test);
-				}
-				else {
-					mstack.unshift(tk.pos);
-					lexerToken();
-				}
+				mstack.set(tk.pos :: mstack.get());
+				lexerToken();
+			case Sharp("elseif"):
+				enter_macro(tk.pos);
 			case Sharp("if"):
 				skip_tokens_loop(p, test, skip_tokens(p, false));
 			case Eof:
@@ -312,14 +310,16 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 
 		return try {
 			var l = parseFile();
-			if (stream.mstack.length != 0) {
-				if (!syntax.Parser.do_resume()) {
-					throw new syntax.parser.Error(Unclosed_macro, stream.mstack[stream.mstack.length-1]);
-				}
+			switch (stream.mstack.get()) {
+				case p::_ if (!syntax.Parser.do_resume()):
+					syntax.Parser.error(Unclosed_macro, p);
+				case _:
 			}
+			stream.restore_cache();
+			syntax.Lexer.restore(stream.old);
 			l;
 		}
-		catch (_:ocaml.Error) { catched(); }
+		catch (_:ocaml.stream.Error) { catched(); }
 		catch (_:ocaml.stream.Failure) { catched(); }
 		catch (_:hxparse.ParserError) { catched(); }
 		catch (e:Any) {
@@ -468,30 +468,68 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 	}
 
 	function popt<T>(f:Void->T) : Option<T> {
-		return switch stream {
-			case [v = f()]: Some(v);
-			case _: None;
+		return
+		try {
+			switch stream {
+				case [v = f()]: Some(v);
+				case _: None;
+			}
+		}
+		catch (_:ocaml.stream.Failure) {
+			None;
 		}
 	}
 
 	function plist<T>(f:Void->T) : Array<T> {
-		return switch stream {
-			case [v = f(), l = plist(f)]: aunshift(l, v);
-			case _ : [];
+		var _tmp = try {
+			switch stream {
+				case [v = f()]: Some(v);
+				case _: None;
+			}
+		}
+		catch (_:ocaml.stream.Failure) {
+			None;
+		}
+		return
+		switch (_tmp) {
+			case Some(v):
+				try {
+					var l = plist(f);
+					aunshift(l, v);
+				}
+				catch (_:ocaml.stream.Failure) {
+					throw new ocaml.stream.Error("");
+				}
+			case None: [];
 		}
 	}
 
 	function psep<T>(sep:core.Ast.Token, f:Void->T):Array<T> {
-		switch stream {
-			case [v = f()]:
+		var _tmp = try {
+			switch stream {
+				case [v = f()]: Some(v);
+				case _: None;
+			}
+		}
+		catch (_:ocaml.stream.Failure) {
+			None;
+		}
+		return switch (_tmp) {
+			case Some(v):
 				function loop() : Array<T> {
-					return switch stream {
-						case [{td:sep2} && sep2 == sep, v = f(), l = loop()]: [v].concat(l);
-						case _: [];
-					};
+					return
+					try {
+						switch stream {
+							case [{td:sep2} && sep2 == sep, v = f(), l = loop()]: [v].concat(l);
+							case _: [];
+						}
+					}
+					catch (_:ocaml.stream.Failure) {
+						throw new ocaml.stream.Error("");
+					}
 				}
 				return [v].concat(loop());
-			case _: return [];
+			case _: [];
 		}
 	}
 
@@ -940,7 +978,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 			var c = parseClassField();
 			aunshift(parseClassFieldResume(tdecl), c);
 		}
-		catch (_:ocaml.Error) { catchFunction();}
+		catch (_:ocaml.stream.Error) { catchFunction();}
 		catch (_:ocaml.stream.Failure) { catchFunction();}
 		catch (_:hxparse.NoMatch<Dynamic>) { catchFunction();}
 	}
@@ -1554,7 +1592,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 		catch (_:ocaml.stream.Failure) {
 			return {acc:acc, pos:p};
 		}
-		catch (_:ocaml.Error) {
+		catch (_:ocaml.stream.Error) {
 			var tk = nextToken();
 			syntax.Parser.display_error(Unexpected(tk.td), tk.pos);
 			return blockWithPos(acc, tk.pos);
@@ -1797,7 +1835,7 @@ class HaxeParser extends hxparse.Parser<HaxeTokenSource, syntax.Lexer.Token> imp
 					syntax.Parser.display(makeMeta(meta.name, meta.params, error.expr, meta.pos));
 				}
 				catch (error:hxparse.ParserError) {
-					if (core.Path.unique_full_path(meta.pos.pfile) == syntax.Parser.resume_display.pfile) {
+					if (core.Path.unique_full_path(meta.pos.pfile) == syntax.Parser.resume_display.get().pfile) {
 						var e:core.Ast.Expr = {expr:EConst(CIdent("null")), pos:meta.pos};
 						syntax.Parser.display(makeMeta(meta.name, meta.params, e, meta.pos));
 					}

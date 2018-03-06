@@ -3,6 +3,9 @@ package syntax;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.List;
+import ocaml.Ref;
+
+using equals.Equal;
 
 enum DeclFlag {
 	DPrivate;
@@ -79,11 +82,11 @@ class Parser {
 
 	public static var last_doc : Option<{doc:String, pos:Int}> = None;
 	public static var use_doc: Bool = false;
-	public static var resume_display : core.Globals.Pos = core.Globals.null_pos;
+	public static var resume_display = new Ref<core.Globals.Pos>(core.Globals.null_pos);
 	public static var in_macro : Bool = false;
 
 	public static inline function do_resume() : Bool {
-		return resume_display != core.Globals.null_pos;
+		return resume_display.get().diff(core.Globals.null_pos);
 	}
 
 	public static inline function display(e:core.Ast.Expr) : Dynamic {
@@ -101,20 +104,20 @@ class Parser {
 	}
 
 	public static inline function is_resuming_file (file:String) {
-		return core.Path.unique_full_path(file) == resume_display.pfile;
+		return core.Path.unique_full_path(file) == resume_display.get().pfile;
 	}
 
 	public static inline function is_resuming(p:core.Globals.Pos) {
-		var p2 = resume_display;
+		var p2 = resume_display.get();
 		return p.pmax == p2.pmin && is_resuming_file(p.pfile);
 	}
 
 	public static inline function set_resume(p:core.Globals.Pos) {
-		resume_display = new core.Globals.Pos(core.Path.unique_full_path(p.pfile), p.pmin, p.pmax);
+		resume_display.set(new core.Globals.Pos(core.Path.unique_full_path(p.pfile), p.pmin, p.pmax));
 	}
 
 	public static inline function encloses_resume(p:core.Globals.Pos) {
-		return p.pmin <= resume_display.pmin && p.pmax >= resume_display.pmax;
+		return p.pmin <= resume_display.get().pmin && p.pmax >= resume_display.get().pmax;
 	}
 
 	public static function would_skip_resume (p1:core.Globals.Pos, s:haxeparser.HaxeParser) {

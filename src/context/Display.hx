@@ -28,8 +28,8 @@ enum DisplayException {
 
 class Display {
 	public static function is_display_file (file:String) : Bool {
-		return (file != "?") && 
-			(core.Path.unique_full_path(file) == syntax.Parser.resume_display.pfile);
+		return (file != "?") &&
+			(core.Path.unique_full_path(file) == syntax.Parser.resume_display.get().pfile);
 	}
 
 	public static function encloses_position (p_target:core.Globals.Pos, p:core.Globals.Pos) : Bool {
@@ -37,7 +37,7 @@ class Display {
 	}
 
 	public static function is_display_position (p:core.Globals.Pos) : Bool {
-		return encloses_position(syntax.Parser.resume_display,p);
+		return encloses_position(syntax.Parser.resume_display.get(),p);
 	}
 
 	public static function display_field_kind_index (dfk:DisplayFieldKind) : Int {

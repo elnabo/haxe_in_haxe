@@ -71,11 +71,7 @@ class Globals {
 		};
 	}
 
-	public static var null_pos(get, never):Pos;
-	static inline function get_null_pos () {
-		return new Pos("?", -1, -1);
-	}
-	// public static final null_pos = new Pos("?", -1, -1);
+	public static final null_pos = new Pos("?", -1, -1);
 
 	public static function s_type_path (p:Path) {
 		return switch (p.a) {

@@ -1573,7 +1573,7 @@ class Type {
 				case _: true;
 			}
 		}
-		if (a == b || a.equals(b)) {
+		if (a == b) {
 		}
 		else {
 			switch ({fst:a, snd:b}) {
@@ -1745,7 +1745,7 @@ class Type {
 					function (l:ImmutableList<UnifyError>) { error(cannot_unify(a, b)::l); }
 				);
 			case [TEnum(ea, tl1), TEnum(eb, tl2)]:
-				if (!ea.equals(eb)) {
+				if (ea != eb) {
 					error([cannot_unify(a, b)]);
 				}
 				unify_type_params(a, b, tl1, tl2);
@@ -1765,7 +1765,7 @@ class Type {
 					var l = ue.l;
 					error(cannot_unify(a, b)::l);
 				}
-			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1.equals(a2)):
+			case [TAbstract(a1, tl1), TAbstract(a2, tl2)] if (a1 == a2):
 				try {
 					unify_type_params(a, b, tl1, tl2);
 				}
@@ -2175,7 +2175,7 @@ class Type {
 						List.iter2(function (m, arg2) {
 							var name = arg2.name; var t = arg2.t;
 							switch (follow(t)) {
-								case TInst({cl_kind:KTypeParameter(constr)}, _):
+								case TInst({cl_kind:KTypeParameter(constr)}, _) if (constr!=Tl):
 									List.iter(function (tc) {
 										switch (follow(m)) {
 											case TMono(_): throw new Unify_error([]);
@@ -2301,8 +2301,14 @@ class Type {
 	}
 
 	public static function unify_with_access (t1:T, f2:TClassField) : Void {
-		trace("TODO: unify_with_access");
-		throw false;
+		switch (f2.cf_kind) {
+			// write only
+			case Var({v_read:AccNo}), Var({v_read:AccNever}): unify(f2.cf_type, t1);
+			// read only
+			case Method(MethNormal), Method(MethInline), Var({v_write:AccNo}), Var({v_write:AccNever}): unify(t1, f2.cf_type);
+			// read/write
+			case _: with_variance(type_eq.bind(EqBothDynamic), t1, f2.cf_type);
+		}
 	}
 
 	// ======= Mapping and iterating =======

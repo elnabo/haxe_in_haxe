@@ -901,13 +901,13 @@ class Main {
 			}
 			syntax.Lexer.old_format.set(context.Common.defined(com, OldErrorFormat));
 			if (syntax.Lexer.old_format.get() && syntax.Parser.do_resume()) {
-				var p = syntax.Parser.resume_display;
+				var p = syntax.Parser.resume_display.get();
 				// convert byte position to utf8 position
 				var real_path = core.Path.get_real_path()(p.pfile);
 				if (sys.FileSystem.exists(real_path)) {
 					var content = sys.io.File.getBytes(real_path).toString();
 					var pos = haxe.Utf8.length(content.substr(0, p.pmin));
-					syntax.Parser.resume_display = new core.Globals.Pos(p.pfile, pos, pos);
+					syntax.Parser.resume_display.set(new core.Globals.Pos(p.pfile, pos, pos));
 				}
 			}
 			DisplayOutput.process_display_file(com, classes);
@@ -1180,16 +1180,16 @@ class Main {
 		// 	}
 		// }
 		catch (e:Bool) { throw e; }
-		catch (e:Dynamic) {
-			trace("Exception  Dynamic", e);
-			var orp = std.Sys.getEnv("OCAMLRUNPARAM");
-			if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
-				error(ctx, ""+e, core.Globals.null_pos);
-			}
-			else {
-				throw e;
-			}
-		}
+		// catch (e:Dynamic) {
+		// 	trace("Exception  Dynamic", e);
+		// 	var orp = std.Sys.getEnv("OCAMLRUNPARAM");
+		// 	if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
+		// 		error(ctx, ""+e, core.Globals.null_pos);
+		// 	}
+		// 	else {
+		// 		throw e;
+		// 	}
+		// }
 	}
 
 	public static function main () {
