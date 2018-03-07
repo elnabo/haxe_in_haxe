@@ -865,15 +865,15 @@ class Type {
 		return switch(t) {
 			case TMono(r):
 				switch (r.get()) {
-					case Some(tt): follow(tt);
+					case Some(t): follow(t);
 					case None: t;
 				}
 			case TLazy(f):
 				follow(lazy_type(f));
-			case TType (tt,tl):
-				follow(apply_params(tt.t_params, tl, tt.t_type));
-			case TAbstract({a_path:{a:[], b:"Null"}},[tt]):
-				follow(tt);
+			case TType (t,tl):
+				follow(apply_params(t.t_params, tl, t.t_type));
+			case TAbstract({a_path:{a:[], b:"Null"}},[t]):
+				follow(t);
 			case _: t;
 		};
 	}

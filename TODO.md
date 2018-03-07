@@ -5,3 +5,4 @@
 - use strict equality when asked for
 - (a || b) in ocaml is (b || a) in haxe
 - note: a == [] doesn't work with immutable list
+- possible problem in function check_overflow with int32/64

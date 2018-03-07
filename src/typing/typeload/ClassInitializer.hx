@@ -711,9 +711,10 @@ class ClassInitializer {
 								core.Error.error(cf.cf_name + ": Functions without expressions must have an explicit return type", cf.cf_pos);
 							case Some(_):
 						}
+						cf.cf_meta = ({name:NoExpr,params:[],pos:core.Globals.null_pos}: core.Ast.MetadataEntry) :: cf.cf_meta;
+						fctx.do_bind = false;
+						if (!core.Meta.has(CoreType, a.a_meta)) { fctx.do_add = false; }
 					}
-					cf.cf_meta = ({name:NoExpr,params:[],pos:core.Globals.null_pos}: core.Ast.MetadataEntry) :: cf.cf_meta;
-					fctx.do_bind = false;
 				}
 				if (cf.cf_name == "_new" && core.Meta.has(MultiType, a.a_meta)) {
 					fctx.do_bind = false;

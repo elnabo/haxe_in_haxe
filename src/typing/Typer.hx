@@ -2403,7 +2403,7 @@ class Typer {
 				case OpAssign, OpAssignOp(_): trace("Shall not be seen"); throw false;
 			}
 		}
-		function find_overload(a:core.Type.TAbstract, c, tl:core.Type.TParams, left) {
+		function find_overload(a:core.Type.TAbstract, c:core.Type.TClass, tl:core.Type.TParams, left:Bool) {
 			var map = core.Type.apply_params.bind(a.a_params, tl);
 			function make_(op_cf, cf:core.Type.TClassField, e1:core.Type.TExpr, e2:core.Type.TExpr, tret:core.Type.T) {
 				return if (cf.cf_expr == None) {
@@ -2413,7 +2413,7 @@ class Typer {
 					if (!core.Meta.has(CoreType, a.a_meta)) {
 						// for non core-types we require that the return type is compatible to the native result type
 						var _e1 = e1.with({etype:core.Abstract.follow_with_abstracts(e1.etype)});
-						var _e2 = e2.with({etype: core.Abstract.follow_with_abstracts(e2.etype)});
+						var _e2 = e1.with({etype: core.Abstract.follow_with_abstracts(e2.etype)});
 						var e_ = make(_e1, _e2);
 						var t_expected = e_.etype;
 						try {
@@ -2451,8 +2451,9 @@ class Typer {
 				}
 			}
 			function loop (ol:ImmutableList<{op:core.Ast.Binop, cf:core.Type.TClassField}>) {
+
 				return switch (ol) {
-					case {op:op_cf, cf:cf}::ol if (!op_cf.equals(op) && (!is_assign_op || !op_cf.equals(OpAssignOp(op))) ):
+					case {op:op_cf, cf:cf}::ol if (op_cf != op && (!is_assign_op || op_cf.diff(OpAssignOp(op))) ):
 						loop(ol);
 					case {op:op_cf, cf:cf}::ol:
 						var is_impl = core.Meta.has(Impl, cf.cf_meta);
@@ -2520,7 +2521,7 @@ class Typer {
 										]), e.etype, e.epos);
 										e;
 									}
-									if (is_assign_op && op_cf.equals(op)) {
+									if (is_assign_op && op_cf==op) {
 										return core.Type.mk(TMeta({name:RequiresAssign, params:[], pos:p}, e), e.etype, e.epos);
 									}
 									else {
@@ -2533,7 +2534,7 @@ class Typer {
 										if (!core.Meta.has(Commutative, cf.cf_meta)) {
 											throw ocaml.Not_found.instance;
 										}
-										check(e1, e2, false);
+										check(e2, e1, true);
 									}
 									catch (_:ocaml.Not_found) { loop(ol); }
 									catch (err:core.Error) {

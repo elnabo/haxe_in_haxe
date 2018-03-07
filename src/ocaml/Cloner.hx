@@ -10,7 +10,7 @@ class Cloner {
 
 	public static function with<T> (o:T, change:Dynamic): T {
 		var res = Reflect.copy(o);
-		for (field in  Reflect.fields(o)) {
+		for (field in Reflect.fields(o)) {
 			if (Reflect.hasField(change, field)) {
 				Reflect.setField(res, field, Reflect.field(change, field));
 			}
