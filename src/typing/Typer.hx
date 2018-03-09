@@ -3244,41 +3244,43 @@ class Typer {
 					min.set(min.get()+1);
 				}
 				if (c != "$" || pos == len) { parse(start, pos); }
-				var _tmp = s.charCodeAt(pos);
-				if (_tmp == "$".code) {
-					if (warn_escape) { warn(pos, 1); }
-					// double $
-					add_sub(start, pos);
-					parse(pos+1, pos+1);
-				}
-				else if (_tmp == "{".code) {
-					parse_group(start, pos, "{", "}", "brace");
-				}
-				else if (('a'.code <= _tmp && _tmp <= "z".code) || ('A'.code <= _tmp && _tmp <= "Z".code) || "_".code == _tmp) {
-					add_sub(start, pos-1);
-					min.set(min.get()+1);
-					function loop (i:Int) {
-						return
-						if (i == len) { i; }
-						else {
-							var c = s.charCodeAt(i);
-							if (('a'.code <= c && c <= "z".code) || ('A'.code <= c && c <= "Z".code) || ('0'.code <= c && c <= "9".code) || "_".code == c) {
-								loop(i+1);
-							}
+				else {
+					var _tmp = s.charCodeAt(pos);
+					if (_tmp == "$".code) {
+						if (warn_escape) { warn(pos, 1); }
+						// double $
+						add_sub(start, pos);
+						parse(pos+1, pos+1);
+					}
+					else if (_tmp == "{".code) {
+						parse_group(start, pos, "{", "}", "brace");
+					}
+					else if (('a'.code <= _tmp && _tmp <= "z".code) || ('A'.code <= _tmp && _tmp <= "Z".code) || "_".code == _tmp) {
+						add_sub(start, pos-1);
+						min.set(min.get()+1);
+						function loop (i:Int) {
+							return
+							if (i == len) { i; }
 							else {
-								i;
+								var c = s.charCodeAt(i);
+								if (('a'.code <= c && c <= "z".code) || ('A'.code <= c && c <= "Z".code) || ('0'.code <= c && c <= "9".code) || "_".code == c) {
+									loop(i+1);
+								}
+								else {
+									i;
+								}
 							}
 						}
+						var iend = loop(pos+1);
+						var len = iend - pos;
+						if (warn_escape) { warn(pos, len); }
+						add(core.Ast.ExprDef.EConst(CIdent(s.substr(pos, len))), len);
+						parse(pos+len, pos+len);
 					}
-					var iend = loop(pos+1);
-					var len = iend - pos;
-					if (warn_escape) { warn(pos, len); }
-					add(core.Ast.ExprDef.EConst(CIdent(s.substr(pos, len))), len);
-					parse(pos+len, pos+len);
-				}
-				else {
-					// keep as-ut
-					parse(start, pos);
+					else {
+						// keep as-ut
+						parse(start, pos);
+					}
 				}
 			}
 		}
@@ -3313,7 +3315,7 @@ class Typer {
 			}
 			var send = loop([pos], pos+1);
 			var slen = send - pos - 1;
-			var scode = s.substr(pos+1, len);
+			var scode = s.substr(pos+1, slen);
 			if (warn_escape) { warn(pos+1, slen); }
 			min.set(min.get()+2);
 			if (slen > 0) {

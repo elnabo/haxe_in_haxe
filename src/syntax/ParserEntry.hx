@@ -71,7 +71,7 @@ class ParserEntry {
 		}
 		return
 		switch (parse_string(com, head+s+";}", p, error, inl)) {
-			case {decls:[{decl:EClass({d_data:[{cff_name:{pack:"main", pos:_p}, cff_kind:FFun({f_expr:Some(e)})}]})}]} if (_p.equals(core.Globals.null_pos)):
+			case {decls:[{decl:EClass({d_data:[{cff_name:{pack:"main", pos:null_pos}, cff_kind:FFun({f_expr:Some(e)})}]})}]}: // capturing in null_pos why ?
 				(inl) ? e : loop(e);
 			case _:
 				throw ocaml.Exit.instance;
