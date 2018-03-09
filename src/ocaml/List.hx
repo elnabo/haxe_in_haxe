@@ -87,6 +87,7 @@ class List {
 			case [Tl, Tl]:
 			case [Hd(v1, tl1), Hd(v2, tl2)]:
 				f(v1, v2);
+				iter2(f, tl1, tl2);
 			case _: throw new Invalid_argument();
 		}
 	}

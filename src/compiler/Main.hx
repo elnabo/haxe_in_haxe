@@ -1180,16 +1180,16 @@ class Main {
 		// 	}
 		// }
 		catch (e:Bool) { throw e; }
-		catch (e:Dynamic) {
-			trace("Exception  Dynamic", e);
-			var orp = std.Sys.getEnv("OCAMLRUNPARAM");
-			if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
-				error(ctx, ""+e, core.Globals.null_pos);
-			}
-			else {
-				throw e;
-			}
-		}
+		// catch (e:Dynamic) {
+		// 	trace("Exception  Dynamic", e);
+		// 	var orp = std.Sys.getEnv("OCAMLRUNPARAM");
+		// 	if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
+		// 		error(ctx, ""+e, core.Globals.null_pos);
+		// 	}
+		// 	else {
+		// 		throw e;
+		// 	}
+		// }
 	}
 
 	public static function main () {

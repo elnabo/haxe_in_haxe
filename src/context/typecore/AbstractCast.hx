@@ -38,7 +38,7 @@ class AbstractCast {
 
 	public static function do_check_cast (ctx:context.Typecore.Typer, tleft:core.Type.T, eright:core.Type.TExpr, p:core.Globals.Pos) : core.Type.TExpr {
 		function recurse(cf:core.Type.TClassField, f:Void->core.Type.TExpr) : core.Type.TExpr {
-			if (cf.equals(ctx.curfield) || List.mem(cf, cast_stack.get())) {
+			if (cf == ctx.curfield || List.mem(cf, cast_stack.get())) {
 				core.Error.error("Recursive implicit cast", p);
 			}
 			cast_stack.set(cf::cast_stack.get());

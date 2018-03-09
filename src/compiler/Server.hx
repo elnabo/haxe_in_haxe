@@ -24,7 +24,6 @@ class Server {
 	public static var start_time : Float = core.Timer.get_time();
 
 	public static function do_connect (host:String, port:Int, args:ImmutableList<String>) : Void {
-
 	}
 
 	public static function parse_hxml (file:String) : ImmutableList<String> {

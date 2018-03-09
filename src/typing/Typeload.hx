@@ -914,7 +914,7 @@ class Typeload {
 								no_expr(farg.value);
 								return {name:farg.name.pack, opt:farg.opt, t:topt(farg.type)};
 							}, fd.f_args);
-							var t:{fst:core.Type.T, snd:core.Type.FieldKind} = {fst:TFun({args:args, ret:topt(fd.f_type)}), snd:Method((dyn.get() ? MethDynamic : MethDynamic))};
+							var t:{fst:core.Type.T, snd:core.Type.FieldKind} = {fst:TFun({args:args, ret:topt(fd.f_type)}), snd:Method((dyn.get() ? MethDynamic : MethNormal))};
 							ctx.type_params = old;
 							t;
 						case FProp(i1, i2, t, e):

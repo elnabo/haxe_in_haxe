@@ -2224,7 +2224,7 @@ class Typer {
 						call_to_string(ctx, e);
 					case KInt, KFloat, KString: e;
 					case KUnk, KDyn, KParam(_), KOther:
-						var std = type_type(ctx, new core.Path([], "std"), e.epos);
+						var std = type_type(ctx, new core.Path([], "Std"), e.epos);
 						var acc = acc_get(ctx, type_field(ctx, std, "string", e.epos, MCall), e.epos);
 						core.Type.follow(acc.etype);
 						var acc:core.Type.TExpr = switch (acc.eexpr) {
@@ -2235,7 +2235,7 @@ class Typer {
 						make_call(ctx, acc, [e], ctx.t.tstring, e.epos);
 					case KAbstract(a, tl):
 						try {
-							context.typecore.AbstractCast.cast_or_unify(ctx, tstring, e, p);
+							context.typecore.AbstractCast.cast_or_unify_raise(ctx, tstring, e, p);
 						}
 						catch (err:core.Error) {
 							switch (err.msg) {
@@ -2250,7 +2250,7 @@ class Typer {
 		}
 		function mk_op(e1:core.Type.TExpr, e2:core.Type.TExpr, t:core.Type.T) : core.Type.TExpr {
 			return
-			if (op.match(OpAdd) && classify(t)==KString) {
+			if (op.match(OpAdd) && classify(t) == KString) {
 				var e1 = to_string(e1);
 				var e2 = to_string(e2);
 				core.Type.mk(TBinop(op, e1, e2), t, p);

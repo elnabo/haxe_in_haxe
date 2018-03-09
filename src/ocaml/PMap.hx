@@ -17,6 +17,9 @@ class PMap<K, V> {
 	public static inline function is_empty<K,V> (pmap:PMap<K,V>) : Bool {
 		return pmap.keys == Tl;
 	}
+	public static inline function size<K,V> (pmap:PMap<K,V>) : Int {
+		return List.length(pmap.keys);
+	}
 
 	public static function add<K,V> (key:K, value:V, pmap:PMap<K,V>) : PMap<K,V> {
 		var m = remove(key, pmap);
@@ -31,8 +34,8 @@ class PMap<K, V> {
 			switch [keys, values] {
 				case [Tl, Tl]: break;
 				case [Hd(k, kl), Hd(_, vl)] if (key.equals(k)):
-					resKeys = List.append(keys, kl);
-					resValues = List.append(values, vl);
+					resKeys = List.append(resKeys, kl);
+					resValues = List.append(resValues, vl);
 					break;
 				case [Hd(k, kl), Hd(v, vl)]:
 					keys = kl; values = vl;

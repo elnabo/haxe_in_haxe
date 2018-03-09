@@ -1488,28 +1488,28 @@ class Type {
 
 	public static function unify_kind (k1:core.Type.FieldKind, k2:core.Type.FieldKind) : Bool {
 		if (k1.equals(k2)) { return true; }
-		return switch ({fst:k1, snd:k2}) {
-			case {fst:Var(v1), snd:Var(v2)}:
+		return switch [k1, k2] {
+			case [Var(v1), Var(v2)]:
 				unify_access(v1.v_read, v2.v_read) && unify_access(v1.v_write, v2.v_write);
-			case {fst:Var(v), snd:Method(m)}:
-				switch ({fst:v.v_read, snd:v.v_write, trd:m}) {
-					case {fst:AccNormal, trd:MethNormal}: true;
-					case {fst:AccNormal, snd:AccNormal, trd:MethDynamic}: true;
+			case [Var(v), Method(m)]:
+				switch [v.v_read, v.v_write, m] {
+					case [AccNormal, _, MethNormal]: true;
+					case [AccNormal, AccNormal, MethDynamic]: true;
 					case _: false;
 				}
-			case {fst:Method(m), snd:Var(v)}:
+			case [Method(m), Var(v)]:
 				switch (m) {
 					case MethDynamic: direct_access(v.v_read) && direct_access(v.v_write);
 					case MethMacro: false;
 					case MethNormal, MethInline:
-						switch ({fst:v.v_read, snd:v.v_write}) {
-							case {fst:AccNormal, snd:AccNo}, {fst:AccNormal, snd:AccNever}: true;
+						switch [v.v_read, v.v_write] {
+							case [AccNormal, AccNo], [AccNormal, AccNever]: true;
 							case _: false;
 						}
 				}
-			case {fst:Method(m1), snd:Method(m2)}:
-				switch ({fst:m1, snd:m2}) {
-					case {fst:MethInline, snd:MethNormal}, {fst:MethDynamic, snd:MethNormal}: true;
+			case [Method(m1), Method(m2)]:
+				switch [m1, m2] {
+					case [MethInline, MethNormal], [MethDynamic, MethNormal]: true;
 					case _: false;
 				}
 		}
@@ -1595,7 +1595,7 @@ class Type {
 							}
 						case Some(_t): type_eq(param, a, _t);
 					}
-				case {fst:TType(t1, tl1), snd:TType(t2, tl2)} if (t1.equals(t2) || (param == EqCoreType && t1.t_path.equals(t2.t_path)) && List.length(tl1) == List.length(tl2)):
+				case {fst:TType(t1, tl1), snd:TType(t2, tl2)} if (t1 == t2 || (param == EqCoreType && t1.t_path.equals(t2.t_path)) && List.length(tl1) == List.length(tl2)):
 					List.iter2(type_eq.bind(param), tl1, tl2);
 				case {fst:TType(t, tl)} if (can_follow(a)):
 					type_eq(param, apply_params(t.t_params, tl, t.t_type), b);
@@ -1646,7 +1646,7 @@ class Type {
 						PMap.iter(function (n, f1:TClassField) {
 							try {
 								var f2 = ocaml.PMap.find(n, a2.a_fields);
-								if (!f1.cf_kind.equals(f2.cf_kind) && (param == EqStrict || param == EqCoreType || !unify_kind(f1.cf_kind, f2.cf_kind))) {
+								if (f1.cf_kind.diff(f2.cf_kind) && (param == EqStrict || param == EqCoreType || !unify_kind(f1.cf_kind, f2.cf_kind))) {
 									error([invalid_kind(n, f1.cf_kind, f2.cf_kind)]);
 								}
 								var a = f1.cf_type;
@@ -1867,6 +1867,7 @@ class Type {
 						var ft = _tmp.snd; var f1 = _tmp.trd;
 						var ft = apply_params(c.cl_params, tl, ft);
 						if (!unify_kind(f1.cf_kind, f2.cf_kind)){
+							trace("yop :/", f1.cf_kind, f2.cf_kind);
 							error([invalid_kind(n, f1.cf_kind, f2.cf_kind)]);
 						}
 						if (f2.cf_public && !f1.cf_public) {
