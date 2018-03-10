@@ -38,8 +38,14 @@ class Hashtbl<K,V> {
 	public function delete(key:K) : Void {
 		for (i in 0...keys.length) {
 			if (keys[i].equals(key)) {
-				keys[i] = keys.pop();
-				values[i] = values.pop();
+				if (keys.length > 1) {
+					keys[i] = keys.pop();
+					values[i] = values.pop();
+				}
+				else {
+					keys.pop();
+					values.pop();
+				}
 				return;
 			}
 		}
