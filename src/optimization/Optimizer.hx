@@ -197,7 +197,7 @@ class Optimizer {
 					var platf = switch (ctx.com.platform) {
 						case Cs: "cs";
 						case Java: "java";
-						case _: throw ocaml.Exit;
+						case _: throw ocaml.Exit.instance;
 					}
 					var mpath = (field == "fromArrayCopy") ? new core.Path(["haxe", "ds"], "Vector") : new core.Path([platf], "NativeArray");
 					var m = ctx.g.do_load_module(ctx, mpath, core.Globals.null_pos);
@@ -1426,6 +1426,10 @@ class Optimizer {
 		Second pass :
 		We replace the variables by their fields lists, and the corresponding fields accesses as well
 	*/
+	public static function inline_constructors (ctx:context.Typecore.Typer, e:core.Type.TExpr) : core.Type.TExpr {
+		trace("TODO: inline_constructors");
+		throw false;
+	}
 
 	// ----------------------------------------------------------------------
 	// COMPLETION

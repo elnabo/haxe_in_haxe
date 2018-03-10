@@ -14,4 +14,8 @@ class Option {
 			case None: x;
 		}
 	}
+
+	public static inline function is_some<A>(x:haxe.ds.Option<A>) : Bool {
+		return x.match(Some(_));
+	}
 }

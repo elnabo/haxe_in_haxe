@@ -655,6 +655,9 @@ class Type {
 			}
 		}
 	}
+	public static function add_descendant (c:core.Type.TClass, descendant:core.Type.TClass) : Void {
+		c.cl_descendants = descendant :: c.cl_descendants;
+	}
 
 	public static function lazy_type(f:ocaml.Ref<TLazy>) : core.Type.T {
 		return switch (f.get()) {
@@ -1317,6 +1320,43 @@ class Type {
 
 	public static function s_const (c:TConstant) : String {
 		trace("TODO: s_const");
+		throw false;
+	}
+
+	public static function s_expr(s_type:core.Type.T->String, e:core.Type.TExpr) : String {
+		function slist<A>(f:A->String, l:ImmutableList<A>) { return List.join(",", List.map(f, l)); }
+		var loop = s_expr.bind(s_type);
+		function s_var (v:core.Type.TVar):String { return v.v_name + ":" + v.v_id + ((v.v_capture) ? "[c]" : ""); }
+		// var str = switch (e.eexpr) {
+		// 	case TConst(c): "Const " + s_const(c);
+		// 	case TLocal(v): "Local " + s_var(v);
+		// 	case TArray(e1, e2):
+		// 		'${loop(e1)}[${loop(e2)}]';
+		// 	case TBinop(op, e1, e2):
+		// 		'(${loop(e1)} ${core.Ast.s_binop(op)} ${loop(e2)})';
+		// 	case TEnumIndex(e1):
+		// 		'EnumIndex ${loop(e1)}';
+		// 	case TEnumParameter(e1, _, i):
+		// 		'${loop(e1)}[${i}]';
+		// 	case TField(e, f):
+		// 		var fstr = switch (f) {
+		// 			case FStatic(c, f): "static("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
+		// 			case FInstance(c, _, f): "inst("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
+		// 			case FClosure(c, f): "closure("+switch (c) { case None: f.cf_name; case Some({c:c}): core.Globals.s_type_path(c.cl_path) + "."+f.cf_name} + ")";
+		// 			case FAnon(f): "anon("+f.cf_name+")";
+		// 			case FEnum(en, f): "enum("+core.Globals.s_type_path(en.e_path)+"." + f.ef_name +")";
+		// 			case FDynamic(f): "dynamic("+f+")";
+		// 		}
+		// 		'${loop(e)}.${fstr}';
+		// 	case TTypeExpr(m):
+		// 		'TypeExpr ${core.Globals.s_type_path(t_path(m))}';
+		// 	case TParenthesis(e):
+		// 		'Parenthesis ${loop(e)}';
+		// 	case TObjectDecl(fl):
+		// 		'ObjectDecl {${slist()}}'
+
+		// }
+		trace("TODO: finish Type.s_expr");
 		throw false;
 	}
 

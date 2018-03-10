@@ -188,6 +188,9 @@ class Common {
 	public static function defined (com:Context, s:core.Define.StrictDefined) : Bool {
 		return core.Define.defined(com.defines, s);
 	}
+	public static function raw_defined (com:Context, v:String) : Bool {
+		return core.Define.raw_defined(com.defines, v);
+	}
 
 	public static function defined_value (com:Context, v:core.Define.StrictDefined) {
 		return core.Define.defined_value(com.defines, v);

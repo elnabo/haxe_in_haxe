@@ -323,11 +323,11 @@ class Typecore {
 		}
 	}
 
-	public static function make_pass (ctx:context.Typecore.Typer, f:Void->core.Type.BuildState) : Void->core.Type.BuildState {
+	public static function make_pass (ctx:Typer, f:Void->core.Type.BuildState) : Void->core.Type.BuildState {
 		return f;
 	}
 
-	public static function init_class_done (ctx:context.Typecore.Typer) : Void {
+	public static function init_class_done (ctx:Typer) : Void {
 		ctx.pass = PTypeField;
 	}
 
@@ -350,7 +350,7 @@ class Typecore {
 		return r;
 	}
 
-	public static function push_this (ctx:context.Typecore.Typer, e:core.Type.TExpr) : {fst:core.Ast.Expr, snd:Void->Void} {
+	public static function push_this (ctx:Typer, e:core.Type.TExpr) : {fst:core.Ast.Expr, snd:Void->Void} {
 		return switch (e.eexpr) {
 			case TConst(ct=(TInt(_) | TFloat(_) | TString(_) | TBool(_))):
 				{fst: {expr:EConst(core.Type.tconst_to_const(ct)), pos:e.epos}, snd: function () {}};
@@ -361,10 +361,19 @@ class Typecore {
 		}
 	}
 
+	public static function is_removable_field (ctx:Typer, f:core.Type.TClassField) : Bool {
+		return core.Meta.has(Extern, f.cf_meta) || core.Meta.has(Generic, f.cf_meta) ||
+			(switch (f.cf_kind) {
+				case Var({v_read:AccRequire(s, _)}): true;
+				case Method(MethMacro): !ctx.in_macro;
+				case _: false;
+			});
+	}
+
 	/**
 	 * checks if we can access to a given class field using current context
 	 */
-	public static function can_access (ctx:context.Typecore.Typer, ?in_overload:Bool=false, c:core.Type.TClass, cf:core.Type.TClassField, stat:Bool) : Bool {
+	public static function can_access (ctx:Typer, ?in_overload:Bool=false, c:core.Type.TClass, cf:core.Type.TClassField, stat:Bool) : Bool {
 		return
 		if (cf.cf_public) {
 			true;

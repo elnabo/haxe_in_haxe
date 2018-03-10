@@ -145,4 +145,19 @@ class PMap<K, V> {
 		}
 	}
 
+	public static function for_all<A, B> (f:(A, B)->Bool, pmap:PMap<A, B>) : Bool {
+		var keys = pmap.keys;
+		var values = pmap.values;
+		while (true) {
+			switch [keys, values] {
+				case [Tl, Tl]: return true;
+				case [Hd(k, _), Hd(v, _)] if (!f(k,v )): return false;
+				case [Hd(k, kl), Hd(v, vl)]:
+					keys = kl;
+					values = vl;
+				case _: throw "Invalid PMap";
+			}
+		}
+	}
+
 }

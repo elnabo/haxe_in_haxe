@@ -4,6 +4,7 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
 import ocaml.List;
+import ocaml.PMap;
 import ocaml.Ref;
 
 using ocaml.Cloner;
@@ -162,5 +163,116 @@ class AbstractCast {
 					core.Error.error('No @:arrayAccess function accepts argument of ${core.Type.s_type(core.Type.print_context(), e1.etype)} and ${core.Type.s_type(core.Type.print_context(), e2.etype)}', p);
 			}
 		}
+	}
+
+	public static function find_multitype_specialization (com:context.Common.Context, a:core.Type.TAbstract, pl:core.Type.TParams, p:core.Globals.Pos) : {fst:core.Type.TClassField, snd:core.Type.T} {
+		trace("TODO: find_multitype_specialization");
+		throw false;
+	}
+
+	public static function handle_abstract_casts (ctx:context.Typecore.Typer, e:core.Type.TExpr) : core.Type.TExpr {
+		function loop (ctx:context.Typecore.Typer, e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TNew(c={cl_kind:KAbstractImpl(a)}, pl, el):
+					if (!core.Meta.has(MultiType, a.a_meta)) {
+						/* This must have been a @:generic expansion with a { new } constraint (issue #4364). In this case
+							let's construct the underlying type. */
+						switch (core.Abstract.get_underlying_type(a, pl)) {
+							case t=TInst(c, tl): e.with({{eexpr:core.Type.TExprExpr.TNew(c, tl, el), etype:t}});
+							case _: core.Error.error("Cannot construct "+core.Type.s_type(core.Type.print_context(), core.Type.T.TAbstract(a, pl)), e.epos);
+						}
+					}
+					else {
+						// a TNew of an abstract implementation is only generated if it is a multi type abstract
+						var _tmp = find_multitype_specialization(ctx.com, a, pl, e.epos);
+						var cf = _tmp.fst; var m = _tmp.snd;
+						var e = make_static_call(ctx, c, cf, a, pl, core.Type.mk(TConst(TNull), TAbstract(a, pl), e.epos)::el, m, e.epos);
+						e.with({etype:m});
+					}
+				case TCall({eexpr:TField(_, FStatic({cl_path:{a:[], b:"Std"}}, {cf_name:"string"}))}, [e1]) if (core.Type.follow(e1.etype).match(TAbstract({a_impl:Some(_)}, _))):
+					switch (core.Type.follow(e1.etype)) {
+						case TAbstract(a={a_impl:Some(c)}, tl):
+							try {
+								var cf = PMap.find("toString", c.cl_statics);
+								make_static_call(ctx, c, cf, a, tl, [e1], ctx.t.tstring, e.epos);
+							}
+							catch (_:ocaml.Not_found) {
+								e;
+							}
+						case _:
+							trace("Shall not be seen"); throw false;
+					}
+				case TCall(e1, el):
+					try {
+						function find_abstract(e:core.Type.TExpr, t:core.Type.T) : {fst:core.Type.TAbstract, snd:core.Type.TParams, trd:core.Type.TExpr} {
+							return switch [core.Type.follow(t), e.eexpr] {
+								case [TAbstract(a, pl), _] if (core.Meta.has(MultiType, a.a_meta)):
+									{fst:a, snd:pl, trd:e};
+								case [_, TCast(e1, None)]:
+									find_abstract(e1, e1.etype);
+								case [_, TLocal({v_extra:Some({expr:Some(e_)})})]:
+									switch (core.Type.follow(e_.etype)) {
+										case TAbstract(a, pl) if (core.Meta.has(MultiType, a.a_meta)):
+											{fst:a, snd:pl, trd:core.Type.mk(TCast(e, None), e_.etype, e.epos)};
+										case _: throw ocaml.Not_found.instance;
+									}
+								case _: throw ocaml.Not_found.instance;
+							}
+						}
+						function find_field (e1:core.Type.TExpr) : core.Type.TExpr {
+							return switch (e1.eexpr) {
+								case TCast(e2, None):
+									e1.with({eexpr:core.Type.TExprExpr.TCast(find_field(e2), None)});
+								case TField(e2, fa):
+									var _tmp = find_abstract(e2, e2.etype);
+									var a = _tmp.fst; var pl = _tmp.snd; var e2 = _tmp.trd;
+									var m = core.Abstract.get_underlying_type(a, pl);
+									var fname = core.Type.field_name(fa);
+									var el = List.map(loop.bind(ctx), el);
+									try {
+										var fa = core.Type.quick_field(m, fname);
+										function get_fun_type(t:core.Type.T) {
+											return switch (core.Type.follow(t)) {
+												case tf=TFun({ret:tr}): {fst:tf, snd:tr};
+												case _: throw ocaml.Not_found.instance;
+											}
+										}
+										var _tmp = switch (fa) {
+											case FStatic(_, cf): get_fun_type(cf.cf_type);
+											case FInstance(c, tl, cf): get_fun_type(core.Type.apply_params(c.cl_params, tl, cf.cf_type));
+											case FAnon(cf): get_fun_type(cf.cf_type);
+											case _: throw ocaml.Not_found.instance;
+										}
+										var tf = _tmp.fst; var tr = _tmp.snd;
+										var ef = core.Type.mk(TField(e2.with({etype:m}), fa), tf, e2.epos);
+										var ecall = context.Typecore.make_call(ctx, ef, el, tr, e.epos);
+										if (!core.Type.type_iseq(ecall.etype, e.etype)) {
+											core.Type.mk(core.Type.TExprExpr.TCast(ecall, None), e.etype, e.epos);
+										}
+										else {
+											ecall;
+										}
+									}
+									catch (_:ocaml.Not_found) {
+										// quick_field raises Not_found if m is an abstract, we have to replicate the 'using' call here
+										switch (core.Type.follow(m)) {
+											case TAbstract(a={a_impl:Some(c)}, pl):
+												var cf = PMap.find(fname, c.cl_statics);
+												make_static_call(ctx, c, cf, a, pl, e2::el, e.etype, e.epos);
+											case _: throw ocaml.Not_found.instance;
+										}
+									}
+								case _: throw ocaml.Not_found.instance;
+							}
+						}
+						find_field(e1);
+					}
+					catch (_:ocaml.Not_found) {
+						core.Type.map_expr(loop.bind(ctx), e);
+					}
+				case _: core.Type.map_expr(loop.bind(ctx), e);
+			}
+		}
+		return loop(ctx, e);
 	}
 }

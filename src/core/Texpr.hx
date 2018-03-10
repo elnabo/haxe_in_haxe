@@ -1,11 +1,14 @@
 package core;
 
 import haxe.ds.ImmutableList;
+import haxe.ds.Option;
 import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.Ref;
 using equals.Equal;
 using ocaml.Cloner;
+
+import core.Type;
 
 class Builder {
 	public static function make_static_this (c:core.Type.TClass, p:core.Globals.Pos) : core.Type.TExpr {
@@ -183,6 +186,174 @@ class Texpr {
 		return switch (e.eexpr) {
 			case TParenthesis(e1), TMeta(_, e1), TBlock([e1]), TCast(e1, None): skip(e1);
 			case _: e;
+		}
+	}
+
+	public static function foldmap_list<A>(f:(A, TExpr)->{fst:A, snd:TExpr}, acc:A, el:ImmutableList<TExpr>) : {fst:A, snd:ImmutableList<TExpr>} {
+		function loop (acc:A, el:ImmutableList<TExpr>, acc2:ImmutableList<TExpr>) {
+			return switch (el) {
+				case []: {fst:acc, snd:List.rev(acc2)};
+				case e1 :: el:
+					var _tmp = f(acc, e1);
+					var acc = _tmp.fst; var e1 = _tmp.snd;
+					loop(acc, el, e1::acc2);
+			}
+		}
+		return loop(acc, el, Tl);
+	}
+	public static function foldmap_opt<A>(f:(A, TExpr)->{fst:A, snd:TExpr}, acc:A, eo:Option<TExpr>) : {fst:A, snd:Option<TExpr>} {
+		return switch (eo) {
+			case Some(e):
+				var _tmp = f(acc, e);
+				var acc = _tmp.fst; var e = _tmp.snd;
+				{fst:acc, snd:Some(e)};
+			case None: {fst:acc, snd:eo};
+		}
+	}
+	static function foldmap_pairs_objectdecl<A>(f:(A, TExpr)->{fst:A, snd:TExpr}, acc:A, pairs:ImmutableList<TObjectField>): {fst:A, snd:ImmutableList<TObjectField>} {
+		var _tmp = List.fold_left(function (arg1, p:TObjectField) {
+			var acc = arg1.fst; var el = arg1.snd; var e = p.expr;
+			var _tmp = f(acc, e);
+			var acc = _tmp.fst; var e = _tmp.snd;
+			return {fst:acc, snd:p.with({expr:e})::el};
+		}, {fst:acc, snd:[]}, pairs);
+		var acc = _tmp.fst; var pairs = _tmp.snd;
+		return {fst:acc, snd:List.rev(pairs)};
+	}
+	static function foldmap_pairs_catches<A>(f:(A, TExpr)->{fst:A, snd:TExpr}, acc:A, pairs:ImmutableList<{v:Any, e:Any}>): {fst:A, snd:ImmutableList<{v:Any, e:Any}>} {
+		var _tmp = List.fold_left(function (arg1, p:{v:Any, e:Any}) {
+			var acc = arg1.fst; var el = arg1.snd; var e = p.e;
+			var _tmp = f(acc, e);
+			var acc = _tmp.fst; var e = _tmp.snd;
+			return {fst:acc, snd:p.with({e:e})::el};
+		}, {fst:acc, snd:[]}, pairs);
+		var acc = _tmp.fst; var pairs = _tmp.snd;
+		return {fst:acc, snd:List.rev(pairs)};
+	}
+
+	public static function foldmap<A> (f:(A, TExpr)->{fst:A, snd:core.Type.TExpr}, acc:A, e:TExpr) : {fst:A, snd:TExpr} {
+		return switch (e.eexpr) {
+			case TConst(_), TLocal(_), TBreak, TContinue, TTypeExpr(_), TIdent(_):
+				{fst:acc, snd:e};
+			case TArray(e1, e2):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = f(acc, e2);
+				var acc = _tmp.fst; var e2 = _tmp.snd;
+				{fst:acc, snd: e.with({eexpr:TArray(e1, e2)})};
+			case TBinop(op, e1, e2):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = f(acc, e2);
+				var acc = _tmp.fst; var e2 = _tmp.snd;
+				{fst:acc, snd: e.with({eexpr:TBinop(op, e1, e2)})};
+			case TFor(v, e1, e2):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = f(acc, e2);
+				var acc = _tmp.fst; var e2 = _tmp.snd;
+				{fst:acc, snd: e.with({eexpr:TFor(v, e1, e2)})};
+			case TWhile(e1, e2, flag):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = f(acc, e2);
+				var acc = _tmp.fst; var e2 = _tmp.snd;
+				{fst:acc, snd: e.with({eexpr:TWhile(e1, e2, flag)})};
+			case TThrow(e1):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TThrow(e1)})};
+			case TEnumParameter(e1, ef, i):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TEnumParameter(e1, ef, i)})};
+			case TEnumIndex(e1):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TEnumIndex(e1)})};
+			case TField(e1, v):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TField(e1, v)})};
+			case TParenthesis(e1):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TParenthesis(e1)})};
+			case TUnop(op, pre, e1):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TUnop(op, pre, e1)})};
+			case TArrayDecl(el):
+				var _tmp = foldmap_list(f, acc, el);
+				var acc = _tmp.fst; var el = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TArrayDecl(el)})};
+			case TNew(t, pl, el):
+				var _tmp = foldmap_list(f, acc, el);
+				var acc = _tmp.fst; var el = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TNew(t, pl ,el)})};
+			case TBlock(el):
+				var _tmp = foldmap_list(f, acc, el);
+				var acc = _tmp.fst; var el = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TBlock(el)})};
+			case TObjectDecl(el):
+				var _tmp = foldmap_pairs_objectdecl(f, acc, el);
+				var acc = _tmp.fst; var el = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TObjectDecl(el)})};
+			case TCall(e1, el):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = foldmap_list(f, acc, el);
+				var acc = _tmp.fst; var el = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TCall(e1, el)})};
+			case TVar(v, eo):
+				var _tmp = foldmap_opt(f, acc, eo);
+				var acc = _tmp.fst; var eo = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TVar(v, eo)})};
+			case TFunction(fu):
+				var _tmp = f(acc, fu.tf_expr);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TFunction(fu.with({tf_expr:e1}))})};
+			case TIf(ec, e1, eo):
+				var _tmp = f(acc, ec);
+				var acc = _tmp.fst; var ec = _tmp.snd;
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = foldmap_opt(f, acc, eo);
+				var acc = _tmp.fst; var eo = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TIf(ec, e1, eo)})};
+			case TSwitch (e1, cases, def):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = List.fold_left(function (arg1, c) {
+					var acc = arg1.fst; var cases = arg1.snd; var el = c.values; var e2 = c.e;
+					var _tmp = foldmap_list(f, acc, el);
+					acc = _tmp.fst; var el = _tmp.snd;
+					var _tmp = f(acc, e2);
+					acc = _tmp.fst; var e2 = _tmp.snd;
+					return {fst:acc, snd: {values:el, e:e2}::cases};
+				}, {fst:acc, snd:Tl}, cases);
+				acc = _tmp.fst; var cases = _tmp.snd;
+				var _tmp = foldmap_opt(f, acc, def);
+				acc = _tmp.fst; var def = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TSwitch(e1, cases, def)})};
+			case TTry(e1, catches):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				var _tmp = foldmap_pairs_catches(f, acc, catches);
+				var acc = _tmp.fst; var catches = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TTry(e1, catches)})};
+			case TReturn(eo):
+				var _tmp = foldmap_opt(f, acc, eo);
+				var acc = _tmp.fst; var eo = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TReturn(eo)})};
+			case TCast(e1, t):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TCast(e1, t)})};
+			case TMeta(m, e1):
+				var _tmp = f(acc, e1);
+				var acc = _tmp.fst; var e1 = _tmp.snd;
+				{fst:acc, snd:e.with({eexpr:TMeta(m, e1)})};
 		}
 	}
 
