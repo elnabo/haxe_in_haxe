@@ -38,6 +38,10 @@ class Builder {
 		}
 	}
 
+	public static function mk_parent(e:core.Type.TExpr) : core.Type.TExpr {
+		return core.Type.mk(TParenthesis(e), e.etype, e.epos);
+	}
+
 	public static function field (e:core.Type.TExpr, name:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
 		return core.Type.mk(TField(e, try { core.Type.quick_field(e.etype, name); } catch (_:ocaml.Not_found) { throw false; }), t, p);
 	}
@@ -384,5 +388,21 @@ class Texpr {
 			case CRegexp(_, _):
 				core.Error.error("Invalid constant", p);
 		}
+	}
+
+	public static function for_remap (basic:BasicTypes, v:TVar, e1:TExpr, e2:TExpr, p:core.Globals.Pos) : TExpr {
+		var v_ = Type.alloc_var(v.v_name, e1.etype, e1.epos);
+		var ev_ = Type.mk(TLocal(v_), e1.etype, e1.epos);
+		var t1 = Abstract.follow_with_abstracts(e1.etype);
+		var ehasnext = Type.mk(TField(ev_, try { Type.quick_field(t1, "hasNext"); } catch (_:ocaml.Not_found) { core.Error.error(Type.s_type(Type.print_context(), t1) + "has no field hasNext()", p); }), Type.tfun([], basic.tbool), e1.epos);
+		var ehasnext = Type.mk(TCall(ehasnext, []), basic.tbool, ehasnext.epos);
+		var enext = Type.mk(TField(ev_, Type.quick_field(t1, "next")), Type.tfun([], v.v_type), e1.epos);
+		var enext = Type.mk(TCall(enext, []), v.v_type, enext.epos);
+		var eassign = Type.mk(TVar(v, Some(enext)), basic.tvoid, p);
+		var ebody = Type.concat(eassign, e2);
+		return Type.mk(TBlock([
+			Type.mk(TVar(v_, Some(e1)), basic.tvoid, e1.epos),
+			Type.mk(TWhile(Type.mk(TParenthesis(ehasnext), ehasnext.etype, ehasnext.epos), ebody, NormalWhile), basic.tvoid, e1.epos)
+		]), basic.tvoid, p);
 	}
 }

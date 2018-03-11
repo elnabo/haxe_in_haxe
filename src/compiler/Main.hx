@@ -5,7 +5,7 @@ import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
-import context.Common;
+// import context.Common;
 import core.Define;
 
 import haxe.ds.ImmutableList;
@@ -23,15 +23,16 @@ enum ArgType {
 	String(s:String);
 }
 
+class Abort {
+	public static final instance = new Abort();
+	public function new () {};
+}
+
 class Failure {
 	public var s:String;
 	public function new (s:String) {
 		this.s = s;
 	}
-}
-
-class Abort {
-	public function new() {}
 }
 
 class Initialize {
@@ -315,7 +316,7 @@ class Main {
 			p.close();
 
 			if (serr != "") {
-				var m = CMError(
+				var m = context.Common.CompilerMessage.CMError(
 					(serr.charAt(serr.length - 1) == "\n")
 						? serr.substr(0, serr.length - 1)
 						: serr, core.Globals.null_pos
@@ -588,7 +589,7 @@ class Main {
 				}), doc:"<class> : select startup class"},
 				{arg:"-lib", spec:S_String( function(l:String) {
 					cp_libs.set(l::cp_libs.get());
-					Common.raw_define(com, l);
+					context.Common.raw_define(com, l);
 				}), doc:"<library[:version]> : use a haxelib library"},
 				{arg:"-D", spec:S_String( function(v:String) {
 					switch(v) {
@@ -619,7 +620,7 @@ class Main {
 						default:
 							throw new ocaml.Arg.Bad("Invalid DCE mode, expected std | full | no");
 					}
-					Common.define_value(com, Dce, mode);
+					context.Common.define_value(com, Dce, mode);
 				}), doc:"[std|full|no] : set the dead code elimination mode (default std)"},
 				{arg:"-swf-version", spec:S_Float(function(v:Float) {
 					if (!swf_version || com.flash_version < v) {
@@ -782,7 +783,7 @@ class Main {
 					if (split.length == 1) {
 						throw new ocaml.Arg.Bad("Invalid remap format, expected source:target");
 					}
-					com.package_rules = PMap.add(split.shift(), Remap(split.join(":")), com.package_rules);
+					com.package_rules = PMap.add(split.shift(), context.Common.PackageRule.Remap(split.join(":")), com.package_rules);
 				}), doc:"<package:target> : remap a package to another one"},
 				{arg:"--interp", spec:S_Unit(function() {
 					context.Common.define(com,Interp);
@@ -915,7 +916,7 @@ class Main {
 			// if we are at the last compilation step, allow all packages accesses - in case of macros or opening another project file
 			if (com.display.dms_display) {
 				if (!ctx.has_next) {
-					com.package_rules = PMap.foldi(function (p:String, r:PackageRule, acc) {
+					com.package_rules = PMap.foldi(function (p:String, r:context.Common.PackageRule, acc) {
 						return switch (r) {
 							case Forbidden:
 								acc;
@@ -1015,7 +1016,7 @@ class Main {
 				}
 			}
 		}
-		catch (e:compiler.Main.Abort) {
+		catch (e:Abort) {
 		}
 		catch (e:core.Error) {
 			error(ctx, core.Error.error_msg(e.msg), e.pos);

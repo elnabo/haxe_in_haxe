@@ -1,9 +1,9 @@
 package core;
 
 import haxe.ds.ImmutableList;
+import ocaml.List;
 
 using equals.Equal;
-// using ocaml.List;
 
 class Path {
 
@@ -182,6 +182,18 @@ class Path {
 		// 	};
 		// }
 		return haxe.io.Path.addTrailingSlash(p);
+	}
+
+	public static function flat_path (path:Path) : String {
+		var p = path.a; var s = path.b;
+		// Replace _ with _$ in paths to prevent name collisions.
+		function escape (str:String) {
+			return str.split("_").join("_$");
+		}
+		return switch (p) {
+			case []: escape(s);
+			case _: List.join("_", List.map(escape, p)) + "_" + escape(s);
+		}
 	}
 
 	public static function mkdir_from_path (p:String) {

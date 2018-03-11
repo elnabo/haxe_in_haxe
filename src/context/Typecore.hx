@@ -267,6 +267,10 @@ class Typecore {
 		return add_local(ctx, loop(0), t, p);
 	}
 
+	public static inline function is_gen_local (v:core.Type.TVar) : Bool {
+		return v.v_name.charAt(0) == gen_local_prefix.charAt(0);
+	}
+
 	public static function delay (ctx:Typer, p:TyperPass, f:Void->Void) : Void {
 		function loop (s:ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>) :ImmutableList<{fst:TyperPass, snd:ImmutableList<Void->Void>}>{
 			return switch (s) {

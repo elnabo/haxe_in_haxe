@@ -459,20 +459,11 @@ class Type {
 	}
 
 	// ocaml: let rec t_dynamic = TDynamic t_dynamic
-	static var dynamic_set:Bool = false;
-	static var t_dynamic_internal:T = TDynamic(new Ref(null));
-	public static var t_dynamic(get, never):T;
-	static function get_t_dynamic(): T {
-		if (!dynamic_set) {
-			switch (t_dynamic_internal) {
-				case TDynamic(ref):
-					if (ref.get() == null) {
-						ref.set(t_dynamic_internal);
-					}
-				case _:
-			}
-		}
-		return t_dynamic_internal;
+	public static final t_dynamic:T = {
+		var r = new Ref<T>(null);
+		var value = TDynamic(r);
+		r.set(value);
+		value;
 	}
 
 	public static function mk_anon (fl:PMap<String, TClassField>) : T {

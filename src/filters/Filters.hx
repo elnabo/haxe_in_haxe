@@ -2,20 +2,80 @@ package filters;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
 
+using ocaml.Cloner;
+
 class Filters {
 
 	/* retrieve string from @:native metadata or raise Not_found */
+	public static function get_native_name(meta:core.Ast.Metadata) : {name:String, pos:core.Globals.Pos} {
+		function get_native(meta:core.Ast.Metadata) : core.Ast.MetadataEntry {
+			return switch (meta) {
+				case []: throw ocaml.Not_found.instance;
+				case (meta={name:Native, params:[v], pos:p}) :: _:
+					meta;
+				case _ :: meta:
+					get_native(meta);
+			}
+		}
+		var _tmp = get_native(meta);
+		var e = _tmp.params; var mp = _tmp.pos;
+		return
+		switch (e) {
+			case [{expr:EConst(CString(name)), pos:p}]: {name:name, pos:p};
+			case []: throw ocaml.Not_found;
+			case _: core.Error.error("String expected", mp);
+		}
+	}
 
 	/* PASS 1 begin */
 
 	/* Adds final returns to functions as required by some platforms */
+	public static function add_final_return (e:core.Type.TExpr) : core.Type.TExpr {
+		function loop (e:core.Type.TExpr, t:core.Type.T) : core.Type.TExpr {
+			function def_return (p:core.Globals.Pos) : core.Type.TExpr {
+				var c:core.Type.TConstant = switch (core.Type.follow(t)) {
+					case TAbstract({a_path:{a:[], b:"Int"}}, _): TInt(0);
+					case TAbstract({a_path:{a:[], b:"Float"}}, _): TFloat("0.");
+					case TAbstract({a_path:{a:[], b:"Bool"}}, _): TBool(false);
+					case _: TNull;
+				}
+				return {eexpr:core.Type.TExprExpr.TReturn(Some({eexpr:core.Type.TExprExpr.TConst(c), epos:p, etype:t})), etype:core.Type.t_dynamic, epos:p};
+			}
+			return switch (e.eexpr) {
+				case TBlock(el):
+					switch (List.rev(el)) {
+						case []: e;
+						case elast :: el:
+							switch (loop(elast, t)) {
+								case {eexpr:TBlock(el2)}: e.with({eexpr:core.Type.TExprExpr.TBlock(List.append(List.rev(el), el2))});
+								case elast: e.with({eexpr:core.Type.TExprExpr.TBlock(List.rev(elast::el))});
+							}
+					}
+				case TReturn(_): e;
+				case _: e.with({eexpr:core.Type.TExprExpr.TBlock([e, def_return(e.epos)])});
+			}
+		}
+		var e = core.Type.map_expr(add_final_return, e);
+		return
+		switch (e.eexpr) {
+			case TFunction(f):
+				var f = switch (core.Type.follow(f.tf_type)) {
+					case TAbstract({a_path:{a:[], b:"Void"}}, []): f;
+					case _: f.with({tf_expr:loop(f.tf_expr, f.tf_type)});
+				}
+				e.with({eexpr:core.Type.TExprExpr.TFunction(f)});
+			case _: e;
+		}
+	}
 
 	/* -------------------------------------------------------------------------- */
 	/* CHECK LOCAL VARS INIT */
+
 	public static function check_local_vars_init (e:core.Type.TExpr) : core.Type.TExpr {
 		function intersect(vl1:PMap<Int, Bool>, vl2:PMap<Int, Bool>) : PMap<Int, Bool> {
 			return PMap.mapi(function (v:Int, t:Bool) : Bool { return t && PMap.find(v, vl2); }, vl1);
@@ -153,7 +213,183 @@ class Filters {
 
 	/* -------------------------------------------------------------------------- */
 	/* RENAME LOCAL VARS */
+	public static function collect_reserved_local_names (com:context.Common.Context) : PMap<String, Bool> {
+		return switch (com.platform) {
+			case Js:
+				var h = new Ref<PMap<String, Bool>>(PMap.empty());
+				function add (name:String) { h.set(PMap.add(name, true, h.get())); }
+				List.iter(function (mt) {
+					var tinfos = core.Type.t_infos(mt);
+					var native_name = try { get_native_name(tinfos.mt_meta).name; } catch (_:ocaml.Not_found) { core.Path.flat_path(tinfos.mt_path); }
+					if (native_name == "") {
+						switch (mt) {
+							case TClassDecl(c):
+								List.iter(function (cf) {
+									var native_name = try { get_native_name(cf.cf_meta).name; } catch (_:ocaml.Not_found) { cf.cf_name; }
+									add(native_name);
+								}, c.cl_ordered_statics);
+							case _:
+						}
+					}
+					else {
+						add(native_name);
+					}
+				}, com.types);
+				h.get();
+			case _: PMap.empty();
+		}
+	}
 
+	public static function rename_local_vars(ctx:context.Typecore.Typer, reserved:PMap<String, Bool>, e:core.Type.TExpr) : core.Type.TExpr {
+		var vars = new Ref(Tl);
+		function declare (v:core.Type.TVar) {
+			vars.set(v :: vars.get());
+		}
+		var reserved = new Ref(reserved);
+
+		function reserve (name:String) {
+			reserved.set(PMap.add(name, true, reserved.get()));
+		}
+
+		function check(t:core.Type.ModuleType) {
+			switch (core.Type.t_infos(t).mt_path) {
+				case {a:[], b:name}, {a: name :: _}: reserve(name);
+			}
+		}
+
+		function check_type (t:core.Type.T) {
+			switch (core.Type.follow(t)) {
+				case TInst(c, _): check(TClassDecl(c));
+				case TEnum(e, _): check(TEnumDecl(e));
+				case TType(t, _): check(TTypeDecl(t));
+				case TAbstract(a, _): check(TAbstractDecl(a));
+				case TMono(_), TLazy(_), TAnon(_), TDynamic(_), TFun(_):
+			}
+		}
+
+		function collect (e:core.Type.TExpr) : Void {
+			switch (e.eexpr) {
+				case TVar(v, eo):
+					declare(v);
+					switch (eo) { case None: case Some(e): collect(e); }
+				case TFor(v, e1, e2):
+					declare(v);
+					collect(e1);
+					collect(e2);
+				case TTry(e1, catches):
+					collect(e1);
+					List.iter(function (c) {
+						var v = c.v; var e = c.e;
+						declare(v);
+						check_type(v.v_type);
+						collect(e);
+					}, catches);
+				case TFunction (tf):
+					List.iter(function (arg) { var v = arg.v; declare(v); }, tf.tf_args);
+					collect(tf.tf_expr);
+				case TTypeExpr(t):
+					check(t);
+				case TNew(c, _, _):
+					core.Type.iter(collect, e);
+					check(TClassDecl(c));
+				case TCast(e, Some(t)):
+					collect(e);
+					check(t);
+				case TConst(TSuper):
+					check_type(e.etype);
+				case _:
+					core.Type.iter(collect, e);
+
+			}
+		}
+		// Pass 1: Collect used identifiers and variables.
+		reserve("this");
+		if (ctx.com.platform == Java) { reserve("_"); }
+		switch (ctx.curclass.cl_path) {
+			case {a:s :: _}, {a:[], b:s}: reserve(s);
+		}
+		collect(e);
+		// Pass 2: Check and rename variables.
+		var count_table:Hashtbl<String, Int> = Hashtbl.create(0);
+		function maybe_rename (v:core.Type.TVar) : Void {
+			// chop escape char for all local variables generated
+			if (context.Typecore.is_gen_local(v)) { v.v_name = "_g" + v.v_name.substr(1); }
+			var name = new Ref(v.v_name);
+			var count = new Ref(try { Hashtbl.find(count_table, v.v_name); } catch (_:ocaml.Not_found) { 0; });
+			while (PMap.mem(name.get(), reserved.get())) {
+				count.set(count.get() + 1);
+				name.set(v.v_name + count.get());
+			}
+			reserve(name.get());
+			Hashtbl.replace(count_table, v.v_name, count.get());
+			if (!core.Meta.has(RealPath, v.v_meta)) {
+				v.v_meta = ({name:RealPath, params:[{expr:EConst(CString(v.v_name)), pos:e.epos}], pos:e.epos} : core.Ast.MetadataEntry) :: v.v_meta;
+			}
+			v.v_name = name.get();
+		}
+		List.iter(maybe_rename, List.rev(vars.get()));
+		return e;
+	}
+
+	public static function mark_switch_break_loops (e:core.Type.TExpr) {
+		function add_loop_label(n:Int, e:core.Type.TExpr) : core.Type.TExpr {
+			return e.with({eexpr:core.Type.TExprExpr.TMeta({name:LoopLabel, params:[{expr:EConst(CInt(Std.string(n))), pos:e.epos}] ,pos:e.epos}, e)});
+		}
+		var in_switch = new Ref(false);
+		var did_found = new Ref(-1);
+		var num = new Ref(0);
+		var cur_num = new Ref(0);
+		function run (e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TFunction(_):
+					var old_num = num.get();
+					num.set(0);
+					var ret = core.Type.map_expr(run, e);
+					num.set(old_num);
+					ret;
+				case TWhile(_,_,_), TFor(_,_,_):
+					var last_switch = in_switch.get();
+					var last_found = did_found.get();
+					var last_num = cur_num.get();
+					in_switch.set(false);
+					num.set(num.get() + 1);
+					cur_num.set(num.get());
+					did_found.set(-1);
+					var new_e = core.Type.map_expr(run, e); // assuming that no loop will be found in the condition
+					var new_e = (did_found.get() != -1) ? add_loop_label(did_found.get(), new_e) : new_e;
+					did_found.set(last_found);
+					in_switch.set(last_switch);
+					cur_num.set(last_num);
+					new_e;
+				case TSwitch(_,_,_):
+					var last_switch = in_switch.get();
+					in_switch.set(true);
+					var new_e = core.Type.map_expr(run, e);
+					in_switch.set(last_switch);
+					new_e;
+				case TBreak:
+					if (in_switch.get()) {
+						did_found.set(cur_num.get());
+						add_loop_label(cur_num.get(), e);
+					}
+					else {
+						e;
+					}
+				case _: core.Type.map_expr(run, e);
+			}
+		}
+		return run(e);
+	}
+
+	public static function check_unification(ctx:context.Typecore.Typer, e:core.Type.TExpr, t:core.Type.T) : core.Type.TExpr {
+		switch [e.eexpr, t] {
+			case [TLocal(v), TType({t_path:{a:["cs"], b:("Ref"|"Out")}}, _)]:
+				// TODO: this smells of hack, but we have to deal with it somehow
+				v.v_capture = true;
+			case _:
+		}
+		return e;
+	}
 	/* PASS 1 end */
 
 	/* Saves a class state so it can be restored later, e.g. after DCE or native path rewrite */
@@ -206,19 +442,19 @@ class Filters {
 		];
 		var filters = switch (com.platform) {
 			case Cs:
-				trace("TODO: finish Filters.run"); throw false;
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
 				// SetHXGen.run_filter com new_types;
 				// filters @ [
 				// 	TryCatchWrapper.configure_cs com
 				// ]
 			case Java:
-				trace("TODO: finish Filters.run"); throw false;
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
 				// SetHXGen.run_filter com new_types;
 				// filters @ [
 				// 	TryCatchWrapper.configure_java com
 				// ]
 			case Js:
-				trace("TODO: finish Filters.run"); throw false;
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
 				// filters @ [JsExceptions.init tctx];
 			case _: filters;
 		}
@@ -226,6 +462,33 @@ class Filters {
 		List.iter(FiltersCommon.run_expression_filters.bind(tctx, filters), new_types);
 		t();
 		// PASS 1.5: pre-analyzer type filters
+		var filters:ImmutableList<core.Type.ModuleType->Void> = switch (com.platform) {
+			case Cs:
+				// [
+				// 	check_cs_events tctx.com;
+				// 	DefaultArguments.run com;
+				// ]
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
+			case Java:
+				// [
+				// 	DefaultArguments.run com;
+				// ]
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
+			case _: [];
+		}
+		var t = filter_timer(detail_times, ["type 1"]);
+		List.iter(function (f) { List.iter(f, new_types); }, filters);
+		t();
+		if (com.platform != Cross) {
+			optimization.Analyzer.Run.run_on_types(tctx, new_types);
+		}
+		var reserved = collect_reserved_local_names(com);
+		var filters:ImmutableList<core.Type.TExpr->core.Type.TExpr> = [
+			optimization.Optimizer.sanitize.bind(com),
+			(com.config.pf_add_final_return) ? add_final_return : function (e) { return e;},
+			rename_local_vars.bind(tctx, reserved),
+			mark_switch_break_loops
+		];
 		throw false;
 	}
 }

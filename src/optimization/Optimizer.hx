@@ -792,8 +792,28 @@ class Optimizer {
 
 	// Same as type_inline, but modifies the function body to add field inits
 	public static function type_inline_ctor (ctx:context.Typecore.Typer, c:core.Type.TClass, cf:core.Type.TClassField, tf:core.Type.TFunc, ethis:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, po:core.Globals.Pos) : Option<core.Type.TExpr> {
-		trace("TODO: type_inline_ctor");
-		throw false;
+		var field_inits = {
+			var cparams = List.map(function (p) { return p.t; }, c.cl_params);
+			var ethis = core.Type.mk(TConst(TThis), TInst(c, cparams), c.cl_pos);
+			var el = List.fold_left(function (acc:ImmutableList<core.Type.TExpr>, cf:core.Type.TClassField) {
+				return switch [cf.cf_kind, cf.cf_expr] {
+					case [Var(_), Some(e)]:
+						var lhs = core.Type.mk(TField(ethis, FInstance(c, cparams, cf)), cf.cf_type, e.epos);
+						var eassign = core.Type.mk(TBinop(OpAssign, lhs, e), cf.cf_type, e.epos);
+						eassign :: acc;
+					case _: acc;
+				}
+			}, [], c.cl_ordered_fields);
+			List.rev(el);
+		}
+		var tf = if (field_inits == Tl) {
+			tf;
+		}
+		else {
+			var bl:ImmutableList<core.Type.TExpr> = switch (tf.tf_expr) { case {eexpr:TBlock(b)}: b; case x: [x]; }
+			tf.with({tf_expr:core.Type.mk(TBlock(List.append(field_inits, bl)), ctx.t.tvoid, c.cl_pos)});
+		}
+		return type_inline(ctx, cf, tf, ethis, el, ctx.t.tvoid, None, po, false, true);
 	}
 
 	// ----------------------------------------------------------------------
