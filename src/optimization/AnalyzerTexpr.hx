@@ -3,6 +3,7 @@ package optimization;
 import core.Type.TExprExpr;
 
 import haxe.ds.ImmutableList;
+import haxe.ds.Option;
 
 using ocaml.Cloner;
 
@@ -100,6 +101,11 @@ class AnalyzerTexpr {
 			case TParenthesis(e1): is_true_expr(e1);
 			case _: false;
 		}
+	}
+
+	public static function map_values (?allow_control_flow:Bool=true, f:core.Type.TExpr->core.Type.TExpr, e:core.Type.TExpr) : {fst:core.Type.TExpr, snd:Option<core.Type.TExpr>} {
+		trace("TODO: map_values");
+		throw false;
 	}
 
 	public static function wrap_meta (s:String, e:core.Type.TExpr) : core.Type.TExpr {

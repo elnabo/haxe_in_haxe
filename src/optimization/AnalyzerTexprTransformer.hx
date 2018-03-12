@@ -91,10 +91,12 @@ class AnalyzerTexprTransformer {
 		var value:(bb:BasicBlock, e:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var ordered_value_list:(bb:BasicBlock, el:ImmutableList<core.Type.TExpr>)->{bb:BasicBlock, el:ImmutableList<core.Type.TExpr>};
 		var bind_to_temp:(?v:Option<core.Type.TVar>, bb:BasicBlock, sequential:Bool, e:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
+		var declare_var_and_assign:(bb:BasicBlock, v:core.Type.TVar, e:core.Type.TExpr, p:core.Globals.Pos)->BasicBlock;
 		var call:(bb:BasicBlock, e:core.Type.TExpr, e1:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>)->{bb:BasicBlock, e:core.Type.TExpr};
 		var array_assign_op:(bb:BasicBlock, op:core.Ast.Binop, e:core.Type.TExpr, ea:core.Type.TExpr, e1:core.Type.TExpr, e2:core.Type.TExpr, e3:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var field_assign_op:(bb:BasicBlock, op:core.Ast.Binop, e:core.Type.TExpr, ef:core.Type.TExpr, e1:core.Type.TExpr, fa:core.Type.TFieldAccess, e2:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var block_element:(bb:BasicBlock, e:core.Type.TExpr)->BasicBlock;
+		var block_element_plus:(bb:BasicBlock, ep:{fst:core.Type.TExpr, snd:Option<core.Type.TExpr>}, f:core.Type.TExpr->core.Type.TExpr)->BasicBlock;
 		function value_(bb:BasicBlock, e:core.Type.TExpr) : {bb:BasicBlock, e:core.Type.TExpr} {
 			return switch(e.eexpr) {
 				case TLocal(_), TIdent(_):
@@ -205,6 +207,158 @@ class AnalyzerTexprTransformer {
 			var bb = _tmp.bb; var e = _tmp.e;
 			no_void(e.etype, e.epos);
 			return {bb:bb, e:e};
+		}
+		ordered_value_list = function (bb, el) {
+			var _tmp = OptimizerTexpr.create_affection_checker();
+			var might_be_affected = _tmp.fst; var collect_modified_locals = _tmp.snd;
+			function can_be_optimized(e:core.Type.TExpr) : Bool {
+				return switch (e.eexpr) {
+					case TBinop(_,_,_), TArray(_,_), TCall(_,_): true;
+					case TParenthesis(e1): can_be_optimized(e1);
+					case _: false;
+				}
+			}
+			var el = List.fold_left(function (tmp:{fst:Bool, snd:ImmutableList<{fst:Bool, snd:Bool, trd:core.Type.TExpr}>}, e:core.Type.TExpr) {
+				var had_side_effect = tmp.fst; var acc = tmp.snd;
+				return
+				if (had_side_effect) {
+					{fst:true, snd:{fst:OptimizerTexpr.has_side_effect(e) || might_be_affected(e), snd:can_be_optimized(e), trd:e}::acc};
+				}
+				else {
+					var had_side_effect = OptimizerTexpr.has_side_effect(e);
+					if (had_side_effect) { collect_modified_locals(e); }
+					var opt = can_be_optimized(e);
+					{fst:had_side_effect||opt, snd:{fst:false, snd:opt, trd:e}::acc};
+				}
+			}, {fst:false, snd:Tl}, List.rev(el)).snd;
+			var _tmp = List.fold_left(function (tmp1, tmp2) {
+				var bb = tmp1.bb; var acc = tmp1.el;
+				var aff = tmp2.fst; var opt = tmp2.snd; var e = tmp2.trd;
+				var _tmp = (aff || opt) ? bind_to_temp(None, bb, aff, e) : value(bb, e);
+				var bb = _tmp.bb; var value = _tmp.e;
+				return {bb:bb, el:value::acc};
+			}, {bb:bb, el:Tl}, el);
+			var bb = _tmp.bb; var values = _tmp.el;
+			return {bb:bb, el:List.rev(values)};
+		}
+		bind_to_temp = function (?v, bb, sequential, e) {
+			if (v == null) { v = None; }
+			function is_probably_not_affected (e:core.Type.TExpr, e1:core.Type.TExpr, fa:core.Type.TFieldAccess) : Bool {
+				return switch (fa) {
+					case FAnon(cf), FInstance(_,_,cf), FStatic(_,cf), FClosure(_, cf) if (cf.cf_kind.match(Method(MethNormal))): true;
+					case FStatic(_,{cf_kind:Method(MethDynamic)}): false;
+					case FEnum(_): true;
+					case FDynamic(("cca"|"__Index"|"__s")): true; // This is quite retarded, but we have to deal with this somehow...
+					case _:
+						switch [core.Type.follow(e.etype), core.Type.follow(e1.etype)] {
+							case [TFun(_), TInst(_,_)]: false;
+							case [TFun(_), _]: true; // We don't know what's going on here, don't create a temp var (see #5082).
+							case _: false;
+						}
+				}
+			}
+			function loop (fl:ImmutableList<core.Type.TExpr->core.Type.TExpr>, e:core.Type.TExpr) : {fl:ImmutableList<core.Type.TExpr->core.Type.TExpr>, e:core.Type.TExpr} {
+				return switch(e.eexpr) {
+					case TField(e1, fa) if (is_probably_not_affected(e, e1, fa)):
+						loop(function (e_:core.Type.TExpr) { return e.with({eexpr:TField(e_, fa)}); }::fl, e1);
+					case TField(e1, fa):
+						var fa:core.Type.TFieldAccess = switch (fa) {
+							case FInstance(c, tl, cf={cf_kind:Method(_)}): FClosure(Some({c:c, params:tl}), cf);
+							case _: fa;
+						}
+						{fl:fl, e:e.with({eexpr:TField(e1, fa)})};
+					case _:
+						{fl:fl, e:e};
+				}
+			}
+			var _tmp = loop(Tl, e);
+			var fl = _tmp.fl; var e = _tmp.e;
+			function loop2 (e:core.Type.TExpr) : String {
+				return switch(e.eexpr) {
+					case TLocal(v): v.v_name;
+					case TArray(e1,_), TField(e1,_), TParenthesis(e1), TCast(e1, None), TMeta(_,e1): loop2(e1);
+					case _:
+						switch (ctx.name_stack) {
+							case s :: _: s;
+							case []: ctx.temp_var_name;
+						}
+				}
+			}
+			var v = switch (v) { case Some(v): v; case None: core.Type.alloc_var(loop2(e), e.etype, e.epos); }
+			switch (ctx.com.platform) {
+				case Cpp if (sequential && !(context.Common.defined(ctx.com, Cppia))):
+				case _: v.v_meta = [{name:CompilerGenerated, params:Tl, pos:e.epos}];
+			}
+			var bb = declare_var_and_assign(bb, v, e, e.epos);
+			var e = e.with({eexpr:TLocal(v)});
+			var e = List.fold_left(function (e, f) { return f(e); }, e, fl);
+			return {bb:bb, e:e};
+		}
+		declare_var_and_assign = function (bb, v, e, p) {
+			/* TODO: this section shouldn't be here because it can be handled as part of the normal value processing */
+			function loop(bb:BasicBlock, e:core.Type.TExpr) : {bb:BasicBlock, e:core.Type.TExpr} {
+				return switch (e.eexpr) {
+					case TParenthesis(e1): loop(bb, e1);
+					case TBlock(el):
+						function loop2 (bb:BasicBlock, el:ImmutableList<core.Type.TExpr>) {
+							return switch (el) {
+								case [e]: {bb:bb, e:e};
+								case e1 :: el:
+									var bb = block_element(bb, e1);
+									if (bb == g.g_unreachable) { throw ocaml.Exit.instance; }
+									loop2(bb, el);
+								case []: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+							}
+						}
+						var _tmp = loop2(bb, el);
+						var bb = _tmp.bb; var e = _tmp.e;
+						loop(bb, e);
+					case _:
+						{bb:bb, e:e};
+				}
+			}
+			function generate (bb:BasicBlock, e:core.Type.TExpr) {
+				no_void(v.v_type, p);
+				var ev = core.Type.mk(TLocal(v), v.v_type, p);
+				var was_assigned = new Ref(false);
+				function assign(e:core.Type.TExpr) {
+					if (!was_assigned.get()) {
+						was_assigned.set(true);
+						BasicBlock.add_texpr(bb, core.Type.mk(TVar(v, None), ctx.com.basic.tvoid, ev.epos));
+					}
+					return core.Type.mk(TBinop(OpAssign, ev, e), ev.etype, ev.epos);
+				}
+				var close = push_name(v.v_name);
+				var bb = try {
+					block_element_plus(bb, AnalyzerTexpr.map_values(assign, e), function (e:core.Type.TExpr) { return core.Type.mk(TVar(v, Some(e)), ctx.com.basic.tvoid, ev.epos)});
+				}
+				catch (_:ocaml.Exit) {
+					var _tmp = value(bb, e);
+					var bb = _tmp.bb; var e = _tmp.e;
+					BasicBlock.add_texpr(bb, core.Type.mk(TVar(v, Some(e)), ctx.com.basic.tvoid, ev.epos));
+					bb;
+				}
+				close();
+				return bb;
+			}
+			return
+			try {
+				var _tmp = loop(bb, e);
+				var bb = _tmp.bb; var e = _tmp.e;
+				generate(bb, e);
+			}
+			catch (_:ocaml.Exit) {
+				g.g_unreachable;
+			}
+		}
+		block_element_plus = function (bb, ep, f) {
+			var e = ep.fst; var efinal = ep.snd;
+			var bb = block_element(bb, e);
+			var bb = switch(efinal) {
+				case None: bb;
+				case Some(e): block_element(bb, f(e));
+			}
+			return bb;
 		}
 		throw false;
 	}
