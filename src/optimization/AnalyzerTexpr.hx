@@ -7,6 +7,8 @@ import haxe.ds.Option;
 
 using ocaml.Cloner;
 
+using equals.Equal;
+
 /*
 	This module rewrites some expressions to reduce the amount of special cases for subsequent analysis. After analysis
 	it restores some of these expressions back to their original form.
@@ -103,16 +105,38 @@ class AnalyzerTexpr {
 		}
 	}
 
+	public static function is_stack_allocated (c:core.Type.TClass) {
+		return core.Meta.has(StructAccess, c.cl_meta);
+	}
+
 	public static function map_values (?allow_control_flow:Bool=true, f:core.Type.TExpr->core.Type.TExpr, e:core.Type.TExpr) : {fst:core.Type.TExpr, snd:Option<core.Type.TExpr>} {
 		trace("TODO: map_values");
 		throw false;
+	}
+
+	public static function can_throw (e:core.Type.TExpr) {
+		function loop (e:core.Type.TExpr) {
+			return switch (e.eexpr) {
+				case TConst(_), TLocal(_), TTypeExpr(_), TFunction(_), TBlock(_):
+				case TCall(_,_), TNew(_,_,_), TThrow(_), TCast(_, Some(_)): throw ocaml.Exit.instance;
+				case TField(_,_), TArray(_,_): throw ocaml.Exit.instance; // sigh
+				case _: core.Type.iter(loop, e);
+			}
+		}
+		return
+		try {
+			loop(e); false;
+		}
+		catch (_:ocaml.Exit) {
+			true;
+		}
 	}
 
 	public static function wrap_meta (s:String, e:core.Type.TExpr) : core.Type.TExpr {
 		return core.Type.mk(TMeta({name:Custom(s), params:Tl, pos:e.epos}, e), e.etype, e.epos);
 	}
 
-	public static function is_really_unbounded (s:String) : Bool {
+	public static function is_really_unbound (s:String) : Bool {
 		return switch (s) {
 			case "`trace", "__int__": false;
 			case _: true;
@@ -128,4 +152,32 @@ class AnalyzerTexpr {
 		}
 	}
 
+	public static function is_ref_type (t:core.Type.T) : Bool {
+		return switch (t) {
+			case TType({t_path:{a:["cs"], b:("Ref"|"Out")}}, _): true;
+			case TType({t_path:path}, _) if (path.equals(generators.Genphp7.ref_type_path)): true;
+			case TType({t_path:{a:["cpp"], b:"Reference"}}, _): true;
+			case TAbstract({a_path:{a:["hl", "types"], b:"Ref"}}, _): true;
+			case _: false;
+		}
+	}
+
+	public static function is_asvar_type (t:core.Type.T) : Bool {
+		function check (meta:core.Ast.Metadata) {
+			return AnalyzerConfig.has_analyzer_option(meta, "as_var");
+		}
+		return switch (t) {
+			case TInst(c, _): check(c.cl_meta);
+			case TEnum(en, _): check(en.e_meta);
+			case TType(t, tl): check(t.t_meta) || is_asvar_type(core.Type.apply_params(t.t_params, tl, t.t_type));
+			case TAbstract(a, _): check(a.a_meta);
+			case TLazy(f): is_asvar_type(core.Type.lazy_type(f));
+			case TMono(var r):
+				switch (r.get()) {
+					case Some(t): is_asvar_type(t);
+					case _: false;
+				}
+			case _: false;
+		}
+	}
 }

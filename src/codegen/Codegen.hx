@@ -4,8 +4,39 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.List;
 import ocaml.PMap;
+import ocaml.Ref;
 
 using equals.Equal;
+
+class UnificationCallback {
+	public static final tf_stack = new Ref(Tl);
+
+	public static function check_call_params (f:(core.Type.TExpr, core.Type.T)->core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, tl:ImmutableList<core.Type.TSignatureArg>) {
+		function loop (acc:ImmutableList<core.Type.TExpr>, el:ImmutableList<core.Type.TExpr>, tl:ImmutableList<core.Type.TSignatureArg>) {
+			return switch [el, tl] {
+				case [e :: el, a :: tl]:
+					var t = a.t;
+					loop(f(e, t)::acc, el, tl);
+				case [[], []]:
+					acc;
+				case [[], _]:
+					acc;
+				case [e :: el, []]:
+					loop(e::acc, el, []);
+			}
+		}
+		return List.rev(loop([], el, tl));
+	}
+
+	public static function check_call (f:(core.Type.TExpr, core.Type.T)->core.Type.TExpr, el:ImmutableList<core.Type.TExpr>, t:core.Type.T) {
+		return switch (core.Type.follow(t)) {
+			case TFun({args:args}):
+				check_call_params(f, el, args);
+			case _:
+				List.map(function (e:core.Type.TExpr) { return f(e, core.Type.t_dynamic); }, el);
+		}
+	}
+}
 
 class Codegen {
 
@@ -125,7 +156,7 @@ class Codegen {
 								// 		f.cf_type <- TFun(targs,tret);
 							case None:
 								switch (core.Type.follow(ff2.cf_type)) {
-									case TFun(tf): 
+									case TFun(tf):
 										f.cf_type = core.Type.T.TFun({args:tf.args, ret:tf.ret});
 									default:
 										throw false;
@@ -133,7 +164,7 @@ class Codegen {
 						}
 					default: throw false;
 				}
-				
+
 			case None:
 		}
 	}

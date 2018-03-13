@@ -84,7 +84,7 @@ typedef SharedDisplayInformation = {
 	diagnostics_messages : ImmutableList<{
 		s:String,
 		pos:core.Globals.Pos,
-		t:context.displaytypes.diagnosticsseverity.T
+		t:context.displaytypes.DiagnosticsSeverity
 	}>,
 	type_hints : Hashtbl<core.Globals.Pos, core.Type.T>,
 	document_symbols : ImmutableList<{
@@ -582,7 +582,7 @@ class Common {
 		}
 	}
 
-	public static function add_diagnostics_message (com:Context, s:String, p:core.Globals.Pos, sev:context.displaytypes.diagnosticsseverity.T) {
+	public static function add_diagnostics_message (com:Context, s:String, p:core.Globals.Pos, sev:context.displaytypes.DiagnosticsSeverity) {
 		var di = com.shared.shared_display_information;
 		di.diagnostics_messages = ({s:s, pos:p, t:sev}):: di.diagnostics_messages;
 	}

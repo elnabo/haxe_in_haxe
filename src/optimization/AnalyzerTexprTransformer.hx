@@ -23,7 +23,6 @@ class AnalyzerTexprTransformer {
 		The created graph is intact and can immediately be transformed back to an expression, or used for analysis first.
 	*/
 	public static function func (ctx:AnalyzerTypes.Analyzer_context, bb:BasicBlock, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) : {func:BasicBlock, exit:BasicBlock} {
-		trace("TODO AnalyzerTexprTransformer.func");
 		var g = ctx.graph;
 		function create_node (kind:BlockKind, t:core.Type.T, p:core.Globals.Pos) {
 			var bb = Graph.create_node(g, kind, t, p);
@@ -92,11 +91,14 @@ class AnalyzerTexprTransformer {
 		var ordered_value_list:(bb:BasicBlock, el:ImmutableList<core.Type.TExpr>)->{bb:BasicBlock, el:ImmutableList<core.Type.TExpr>};
 		var bind_to_temp:(?v:Option<core.Type.TVar>, bb:BasicBlock, sequential:Bool, e:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var declare_var_and_assign:(bb:BasicBlock, v:core.Type.TVar, e:core.Type.TExpr, p:core.Globals.Pos)->BasicBlock;
+		var block_element_plus:(bb:BasicBlock, ep:{fst:core.Type.TExpr, snd:Option<core.Type.TExpr>}, f:core.Type.TExpr->core.Type.TExpr)->BasicBlock;
+		var block_element_value:(bb:BasicBlock, e:core.Type.TExpr, f:core.Type.TExpr->core.Type.TExpr)->BasicBlock;
 		var call:(bb:BasicBlock, e:core.Type.TExpr, e1:core.Type.TExpr, el:ImmutableList<core.Type.TExpr>)->{bb:BasicBlock, e:core.Type.TExpr};
 		var array_assign_op:(bb:BasicBlock, op:core.Ast.Binop, e:core.Type.TExpr, ea:core.Type.TExpr, e1:core.Type.TExpr, e2:core.Type.TExpr, e3:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var field_assign_op:(bb:BasicBlock, op:core.Ast.Binop, e:core.Type.TExpr, ef:core.Type.TExpr, e1:core.Type.TExpr, fa:core.Type.TFieldAccess, e2:core.Type.TExpr)->{bb:BasicBlock, e:core.Type.TExpr};
 		var block_element:(bb:BasicBlock, e:core.Type.TExpr)->BasicBlock;
-		var block_element_plus:(bb:BasicBlock, ep:{fst:core.Type.TExpr, snd:Option<core.Type.TExpr>}, f:core.Type.TExpr->core.Type.TExpr)->BasicBlock;
+		var block_el:(bb:BasicBlock, e:ImmutableList<core.Type.TExpr>)->BasicBlock;
+		var block:(bb:BasicBlock, e:core.Type.TExpr)->BasicBlock;
 		function value_(bb:BasicBlock, e:core.Type.TExpr) : {bb:BasicBlock, e:core.Type.TExpr} {
 			return switch(e.eexpr) {
 				case TLocal(_), TIdent(_):
@@ -107,7 +109,7 @@ class AnalyzerTexprTransformer {
 					value(bb, e1);
 				case TBlock(_), TIf(_,_,_), TSwitch(_,_,_), TTry(_,_):
 					bind_to_temp(bb, false, e);
-				case TCall({eexpr:TIdent(s)}, el) if (AnalyzerTexpr.is_really_unbounded(s)):
+				case TCall({eexpr:TIdent(s)}, el) if (AnalyzerTexpr.is_really_unbound(s)):
 					check_unbound_call(s, el);
 					{bb:bb, e:e};
 				case TCall(e1, el):
@@ -330,7 +332,7 @@ class AnalyzerTexprTransformer {
 				}
 				var close = push_name(v.v_name);
 				var bb = try {
-					block_element_plus(bb, AnalyzerTexpr.map_values(assign, e), function (e:core.Type.TExpr) { return core.Type.mk(TVar(v, Some(e)), ctx.com.basic.tvoid, ev.epos)});
+					block_element_plus(bb, AnalyzerTexpr.map_values(assign, e), function (e:core.Type.TExpr) { return core.Type.mk(TVar(v, Some(e)), ctx.com.basic.tvoid, ev.epos); });
 				}
 				catch (_:ocaml.Exit) {
 					var _tmp = value(bb, e);
@@ -360,7 +362,420 @@ class AnalyzerTexprTransformer {
 			}
 			return bb;
 		}
-		throw false;
+		block_element_value = function (bb, e, f) {
+			var _tmp = AnalyzerTexpr.map_values(f, e);
+			var e = _tmp.fst; var efinal = _tmp.snd;
+			return block_element_plus(bb, {fst:e, snd:efinal}, f);
+		}
+		call = function (bb, e, e1, el) {
+			var bb = new Ref(bb);
+			function check (e:core.Type.TExpr, t:core.Type.T) {
+				return switch (e.eexpr) {
+					case TLocal(v) if (AnalyzerTexpr.is_ref_type(t)):
+						v.v_capture = true;
+						e;
+					case _:
+						if (AnalyzerTexpr.is_asvar_type(t)) {
+							var v = core.Type.alloc_var("tmp", t, e.epos);
+							var _tmp = bind_to_temp(Some(v), bb.get(), false, e);
+							var bb_ = _tmp.bb; var e = _tmp.e;
+							bb.set(bb_);
+							e;
+						}
+						else {
+							e;
+						}
+				}
+			}
+			var el = codegen.Codegen.UnificationCallback.check_call(check, el, e1.etype);
+			var _tmp = ordered_value_list(bb.get(), e1 :: el);
+			var bb = _tmp.bb; var el = _tmp.el;
+			return switch (el) {
+				case e1 :: el: {bb:bb, e:e.with({eexpr:TCall(e1, el)})};
+				case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+			}
+		}
+		array_assign_op = function (bb, op, e, ea, e1, e2, e3) {
+			var _tmp = bind_to_temp(bb, false, e1);
+			var bb = _tmp.bb; var e1 = _tmp.e;
+			var _tmp = bind_to_temp(bb, false, e2);
+			var bb = _tmp.bb; var e2 = _tmp.e;
+			var ea = ea.with({eexpr:TArray(e1, e2)});
+			var _tmp = bind_to_temp(bb, false, ea);
+			var bb = _tmp.bb; var e4 = _tmp.e;
+			var _tmp = bind_to_temp(bb, false, e3);
+			var bb = _tmp.bb; var e3 = _tmp.e;
+			var eop = e.with({eexpr:TBinop(op, e4, e3)});
+			BasicBlock.add_texpr(bb, e.with({eexpr:TBinop(OpAssign, ea, eop)}));
+			return {bb:bb, e:ea};
+		}
+		field_assign_op = function (bb, op, e, ef, e1, fa, e2) {
+			var _tmp = switch (fa) {
+				case FInstance(c,_,_), FClosure(Some({c:c}),_) if (AnalyzerTexpr.is_stack_allocated(c)):
+					{bb:bb, e:e1};
+				case _: bind_to_temp(bb, false, e1);
+			}
+			var bb = _tmp.bb; var e1 = _tmp.e;
+			var ef = ef.with({eexpr:TField(e1, fa)});
+			var _tmp = bind_to_temp(bb, false, ef);
+			var bb = _tmp.bb; var e3 = _tmp.e;
+			var _tmp = bind_to_temp(bb, false, e2);
+			var bb = _tmp.bb; var e2 = _tmp.e;
+			var eop = e.with({eexpr:TBinop(op, e3, e2)});
+			BasicBlock.add_texpr(bb, e.with({eexpr:TBinop(OpAssign, ef, eop)}));
+			return {bb:bb, e:ef};
+		}
+		block_element = function (bb, e) {
+			return switch (e.eexpr) {
+				// variables
+				case TVar(v, None):
+					BasicBlock.add_texpr(bb, e);
+					bb;
+				case TVar(v, Some(e1)):
+					declare_var_and_assign(bb, v, e1, e.epos);
+				case TBinop(OpAssign, e1={eexpr:TLocal(v)}, e2):
+					function assign (e:core.Type.TExpr) {
+						return core.Type.mk(TBinop(OpAssign, e1, e), e.etype, e.epos);
+					}
+					var close = push_name(v.v_name);
+					var bb = try {
+						block_element_value(bb, e2, assign);
+					}
+					catch (_:ocaml.Exit) {
+						var _tmp = value(bb, e2);
+						var bb = _tmp.bb; var e2 = _tmp.e;
+						BasicBlock.add_texpr(bb, e.with({eexpr:TBinop(OpAssign, e1, e2)}));
+						bb;
+					}
+					close();
+					bb;
+				// branching
+				case TMeta({name:MergeBlock}, {eexpr:TBlock(el)}):
+					block_el(bb, el);
+				case TBlock(el):
+					var bb_sub = create_node(BKSub, e.etype, e.epos);
+					BasicBlock.add_cfg_edge(bb, bb_sub, CFGGoto);
+					Graph.close_node(g, bb);
+					var bb_sub_next = block_el(bb_sub, el);
+					if (bb_sub_next != g.g_unreachable) {
+						var bb_next = create_node(BKNormal, bb.bb_type, bb.bb_pos);
+						BasicBlock.set_syntax_edge(bb, SESubBlock(bb_sub, bb_next));
+						BasicBlock.add_cfg_edge(bb_sub_next, bb_next, CFGGoto);
+						Graph.close_node(g, bb_sub_next);
+						bb_next;
+					}
+					else {
+						BasicBlock.set_syntax_edge(bb, SEMerge(bb_sub));
+						Graph.close_node(g, bb_sub_next);
+						bb_sub_next;
+					}
+				case TIf(e1, e2, None):
+					var _tmp = bind_to_temp(bb, false, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e;
+					return
+					if (bb == g.g_unreachable) {
+						bb;
+					}
+					else {
+						var bb_then = create_node(BKConditional, e2.etype, e2.epos);
+						BasicBlock.add_texpr(bb, AnalyzerTexpr.wrap_meta(":cond-branch", e1));
+						BasicBlock.add_cfg_edge(bb, bb_then, CFGCondBranch(core.Type.mk(TConst(TBool(true)), ctx.com.basic.tbool, e2.epos)));
+						var bb_then_next = block(bb_then, e2);
+						var bb_next = create_node(BKNormal, bb.bb_type, bb.bb_pos);
+						BasicBlock.set_syntax_edge(bb, SEIfThen(bb_then, bb_next, e.epos));
+						BasicBlock.add_cfg_edge(bb, bb_next, CFGCondElse);
+						Graph.close_node(g, bb);
+						BasicBlock.add_cfg_edge(bb_then_next, bb_next, CFGGoto);
+						Graph.close_node(g, bb_then_next);
+						bb_next;
+					}
+				case TIf(e1, e2, Some(e3)):
+					var _tmp = bind_to_temp(bb, false, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e;
+					return
+					if (bb == g.g_unreachable) {
+						bb;
+					}
+					else {
+						var bb_then = create_node(BKConditional, e2.etype, e2.epos);
+						var bb_else = create_node(BKConditional, e3.etype, e3.epos);
+						BasicBlock.add_texpr(bb, AnalyzerTexpr.wrap_meta(":cond-branch", e1));
+						BasicBlock.add_cfg_edge(bb, bb_then, CFGCondBranch(core.Type.mk(TConst(TBool(true)), ctx.com.basic.tbool, e2.epos)));
+						BasicBlock.add_cfg_edge(bb, bb_else, CFGCondElse);
+						Graph.close_node(g, bb);
+						var bb_then_next = block(bb_then, e2);
+						var bb_else_next = block(bb_else, e3);
+						return
+						if (bb_then_next == g.g_unreachable && bb_else_next == g.g_unreachable) {
+							BasicBlock.set_syntax_edge(bb, SEIfThenElse(bb_then, bb_else, g.g_unreachable, e.etype, e.epos));
+							g.g_unreachable;
+						}
+						else {
+							var bb_next = create_node(BKNormal, bb.bb_type, bb.bb_pos);
+							BasicBlock.set_syntax_edge(bb, SEIfThenElse(bb_then, bb_else, bb_next, e.etype, e.epos));
+							BasicBlock.add_cfg_edge(bb_then_next, bb_next, CFGGoto);
+							BasicBlock.add_cfg_edge(bb_else_next, bb_next, CFGGoto);
+							Graph.close_node(g, bb_then_next);
+							Graph.close_node(g, bb_else_next);
+							bb_next;
+						}
+					}
+				case TSwitch(e1, cases, edef):
+					var is_exhaustive = edef != None || OptimizerTexpr.is_exhaustive(e1);
+					var _tmp = bind_to_temp(bb, false, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e;
+					BasicBlock.add_texpr(bb, AnalyzerTexpr.wrap_meta(":cond-branch", e1));
+					var reachable = new Ref<ImmutableList<BasicBlock>>(Tl);
+					function make_case (e:core.Type.TExpr) {
+						var bb_case = create_node(BKConditional, e.etype, e.epos);
+						var bb_case_next = block(bb_case, e);
+						if (bb_case_next != g.g_unreachable) {
+							reachable.set(bb_case_next :: reachable.get());
+						}
+						Graph.close_node(g, bb_case_next);
+						return bb_case;
+					}
+					var cases = List.map(function (c) {
+						var el = c.values; var e = c.e;
+						var bb_case = make_case(e);
+						List.iter(function (e:core.Type.TExpr) { BasicBlock.add_cfg_edge(bb, bb_case, CFGCondBranch(e)); }, el);
+						return {el:el, block:bb_case};
+					}, cases);
+					var def = switch (edef) {
+						case None: None;
+						case Some(e):
+							var bb_case = make_case(e);
+							BasicBlock.add_cfg_edge(bb, bb_case, CFGCondElse);
+							Some(bb_case);
+					}
+					return
+					if (is_exhaustive && reachable.get() == Tl) {
+						BasicBlock.set_syntax_edge(bb, SESwitch(cases, def, g.g_unreachable, e.epos));
+						Graph.close_node(g, bb);
+						g.g_unreachable;
+					}
+					else {
+						var bb_next = create_node(BKNormal, bb.bb_type, bb.bb_pos);
+						if (!is_exhaustive) { BasicBlock.add_cfg_edge(bb, bb_next, CFGGoto); }
+						List.iter(function (bb) { BasicBlock.add_cfg_edge(bb, bb_next, CFGGoto); }, reachable.get());
+						BasicBlock.set_syntax_edge(bb, SESwitch(cases, def, bb_next, e.epos));
+						Graph.close_node(g, bb);
+						bb_next;
+					}
+				case TWhile(e1, e2, NormalWhile):
+					var bb_loop_pre = create_node(BKNormal, e1.etype, e1.epos);
+					BasicBlock.add_cfg_edge(bb, bb_loop_pre, CFGGoto);
+					BasicBlock.set_syntax_edge(bb, SEMerge(bb_loop_pre));
+					Graph.close_node(g, bb);
+					var bb_loop_head = create_node(BKLoopHead, e1.etype, e1.epos);
+					BasicBlock.add_cfg_edge(bb_loop_pre, bb_loop_head, CFGGoto);
+					var close = begin_loop(bb, bb_loop_head);
+					var bb_loop_body = create_node(BKNormal, e2.etype, e2.epos);
+					var bb_loop_body_next = block(bb_loop_body, e2);
+					var bb_breaks = close();
+					var bb_next = if (bb_breaks == Tl) {
+						/* The loop appears to be infinite, let's assume that something within it throws.
+							Otherwise DCE's mark-pass won't see its body and removes everything. */
+						BasicBlock.add_cfg_edge(bb_loop_body_next, bb_exit, CFGMaybeThrow);
+						g.g_unreachable;
+					}
+					else {
+						create_node(BKNormal, bb.bb_type, bb.bb_pos);
+					}
+					List.iter(function (bb) { BasicBlock.add_cfg_edge(bb, bb_next, CFGGoto); }, bb_breaks);
+					BasicBlock.set_syntax_edge(bb_loop_pre, SEWhile(bb_loop_head, bb_loop_body, bb_next));
+					Graph.close_node(g, bb_loop_pre);
+					BasicBlock.add_texpr(bb_loop_pre, e.with({eexpr:TWhile(e1, make_block_meta(bb_loop_body), NormalWhile)}));
+					BasicBlock.add_cfg_edge(bb_loop_body_next, bb_loop_head, CFGGoto);
+					Graph.close_node(g, bb_loop_body_next);
+					Graph.close_node(g, bb_loop_head);
+					bb_next;
+				case TTry(e1, catches):
+					var bb_try = create_node(BKNormal, e1.etype, e1.epos);
+					var bb_exc = create_node(BKException, core.Type.t_dynamic, e.epos);
+					BasicBlock.add_cfg_edge(bb, bb_try, CFGGoto);
+					var close = begin_try(bb_exc);
+					var bb_try_next = block(bb_try, e1);
+					close();
+					// We always want to keep catch-blocks, so let's add a pseudo CFG edge if it's unreachable.
+					if (bb_exc.bb_incoming == Tl) { BasicBlock.add_cfg_edge((bb_try_next == g.g_unreachable) ? bb_try : bb_try_next, bb_exc, CFGMaybeThrow); }
+					var is_reachable = new Ref(!(bb_try_next == g.g_unreachable));
+					var catches = List.map(function (c) {
+						var v = c.v; var e = c.e;
+						var bb_catch = create_node(BKCatch(v), e.etype, e.epos);
+						BasicBlock.add_cfg_edge(bb_exc, bb_catch, CFGGoto);
+						var bb_catch_next = block(bb_catch, e);
+						is_reachable.set(is_reachable.get() || !(bb_catch_next == g.g_unreachable));
+						return {fst:v, snd:bb_catch, trd:bb_catch_next};
+					}, catches);
+					var bb_next = if (is_reachable.get()) { create_node(BKNormal, bb.bb_type, bb.bb_pos); } else { g.g_unreachable; }
+					var catches = List.map(function (c) {
+						var v = c.fst; var bb_catch = c.snd; var bb_catch_next = c.trd;
+						if (bb_catch_next != g.g_unreachable) { BasicBlock.add_cfg_edge(bb_catch_next, bb_next, CFGGoto); }
+						Graph.close_node(g, bb_catch_next);
+						return {v:v, block:bb_catch};
+					}, catches);
+					BasicBlock.set_syntax_edge(bb, SETry(bb_try, bb_exc, catches, bb_next, e.epos));
+					if (bb_try_next != g.g_unreachable) { BasicBlock.add_cfg_edge(bb_try_next, bb_next, CFGGoto); }
+					Graph.close_node(g, bb_try_next);
+					Graph.close_node(g, bb_exc);
+					Graph.close_node(g, bb);
+					bb_next;
+				// control flow
+				case TReturn(None):
+					BasicBlock.add_cfg_edge(bb, bb_exit, CFGGoto);
+					add_terminator(bb, e);
+				case TReturn(Some(e1)) if (core.Type.ExtType.is_void(core.Type.follow(e1.etype))):
+					var bb = block_element(bb, e1);
+					block_element(bb, core.Type.mk(TReturn(None), core.Type.t_dynamic, e.epos));
+				case TReturn(Some(e1)):
+					try {
+						function mk_return (e1:core.Type.TExpr) { return core.Type.mk(TReturn(Some(e1)), core.Type.t_dynamic, e1.epos); }
+						block_element_value(bb, e1, mk_return);
+					}
+					catch (_:ocaml.Exit) {
+						var _tmp = value(bb, e1);
+						var bb = _tmp.bb; var e1 = _tmp.e;
+						BasicBlock.add_cfg_edge(bb, bb_exit, CFGGoto);
+						add_terminator(bb, e.with({eexpr:TReturn(Some(e1))}));
+					}
+				case TBreak:
+					bb_breaks.set(bb::bb_breaks.get());
+					add_terminator(bb, e);
+				case TContinue:
+					switch (bb_continue.get()) {
+						case Some(bb_continue): BasicBlock.add_cfg_edge(bb, bb_continue, CFGGoto);
+						case _: trace("Shall not be seen"); std.Sys.exit(255);
+					}
+					add_terminator(bb, e);
+				case TThrow(e1):
+					try {
+						function mk_throw(e1:core.Type.TExpr) {
+							return core.Type.mk(TThrow(e1), core.Type.t_dynamic, e.epos);
+						}
+						block_element_value(bb, e1, mk_throw);
+					}
+					catch (_:ocaml.Exit) {
+						var _tmp = value(bb, e1);
+						var bb = _tmp.bb; var e1 = _tmp.e;
+						switch (b_try_stack.get()) {
+							case []: BasicBlock.add_cfg_edge(bb, bb_exit, CFGGoto);
+							case _: List.iter(function (bb_exc) { BasicBlock.add_cfg_edge(bb, bb_exc, CFGGoto); }, b_try_stack.get());
+						}
+						add_terminator(bb, e.with({eexpr:TThrow(e1)}));
+					}
+				// side_effects
+				case TCall({eexpr:TIdent(s)}, el) if (AnalyzerTexpr.is_really_unbound(s)):
+					check_unbound_call(s, el);
+					BasicBlock.add_texpr(bb, e);
+					bb;
+				case TCall(e1, el):
+					var _tmp = call(bb, e, e1, el);
+					var bb = _tmp.bb; var e = _tmp.e;
+					BasicBlock.add_texpr(bb, e);
+					bb;
+				case TNew(c, tl, el):
+					var _tmp = ordered_value_list(bb, el);
+					var bb = _tmp.bb; var el = _tmp.el;
+					BasicBlock.add_texpr(bb, e.with({eexpr:TNew(c, tl, el)}));
+					bb;
+				case TCast(e1, Some(mt)):
+					var _tmp = value(bb, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e; // is let b, e1 in code at current commit, seems weird
+					BasicBlock.add_texpr(bb, e.with({eexpr:TCast(e1, Some(mt))}));
+					bb;
+				case TBinop(OpAssignOp(op), ea={eexpr:TArray(e1, e2)}, e3):
+					var bb = array_assign_op(bb, op, e, ea, e1, e2, e3).bb;
+					bb;
+				case TBinop(OpAssignOp(op), ef={eexpr:TField(e1, fa)}, e2):
+					var bb = field_assign_op(bb, op, e, ef, e1, fa, e2).bb;
+					bb;
+				case TBinop(OpAssign, ea={eexpr:TArray(e1, e2)}, e3):
+					var _tmp = switch (ordered_value_list(bb, [e1, e2, e3])) {
+						case {bb:bb, el:[e1, e2, e3]}: {bb:bb, e1:e1, e2:e2, e3:e3};
+						case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+					}
+					var bb = _tmp.bb; var e1 = _tmp.e1; var e2 = _tmp.e2; var e3 = _tmp.e3;
+					BasicBlock.add_texpr(bb, e.with({eexpr:TBinop(OpAssign, ea.with({eexpr:TArray(e1, e2)}), e3)}));
+					bb;
+				case TBinop(op=(OpAssign|OpAssignOp(_)), e1, e2):
+					var _tmp = value(bb, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e;
+					var _tmp = value(bb, e2);
+					var bb = _tmp.bb; var e2 = _tmp.e;
+					BasicBlock.add_texpr(bb, e.with({eexpr:TBinop(op, e1, e2)}));
+					bb;
+				case TUnop(op=(OpIncrement|OpDecrement), flag, e1):
+					var _tmp = value(bb, e1);
+					var bb = _tmp.bb; var e1 = _tmp.e;
+					BasicBlock.add_texpr(bb, e.with({eexpr:TUnop(op, flag, e1)}));
+					bb;
+				case TLocal(_) if (!ctx.config.local_dce):
+					BasicBlock.add_texpr(bb, e);
+					bb;
+				// no-side-effect
+				case TEnumParameter(_), TEnumIndex(_), TFunction(_), TConst(_), TTypeExpr(_), TLocal(_), TIdent(_):
+					bb;
+				// no-side-effect composites
+				case TParenthesis(e1), TMeta(_, e1), TCast(e1, None), TField(e1, _), TUnop(_, _, e1):
+					block_element(bb, e1);
+				case TArray(e1, e2), TBinop(_,e1, e2):
+					var bb = block_element(bb, e1);
+					block_element(bb, e2);
+				case TArrayDecl(el):
+					block_el(bb, el);
+				case TObjectDecl(fl):
+					block_el(bb, List.map(function (f) { return f.expr; }, fl));
+				case TFor(_,_,_), TWhile(_,_,DoWhile):
+					trace("Shall not be seen"); std.Sys.exit(255); throw false;
+			}
+		}
+		block_el = function (bb, el) {
+			return switch (b_try_stack.get()) {
+				case []:
+					function loop(bb:BasicBlock, el:ImmutableList<core.Type.TExpr>) {
+						return switch(el) {
+							case []: bb;
+							case e :: el:
+								var bb = block_element(bb, e);
+								(bb == g.g_unreachable) ? bb : loop(bb, el);
+						}
+					}
+					loop(bb, el);
+				case var bbl:
+					function loop(bb:BasicBlock, el:ImmutableList<core.Type.TExpr>) {
+						return switch (el) {
+							case []: bb;
+							case e :: el:
+								var bb = if (!AnalyzerTexpr.can_throw(e)) {
+									block_element(bb, e);
+								}
+								else {
+									var bb_ = create_node(BKNormal, e.etype, e.epos);
+									BasicBlock.add_cfg_edge(bb, bb_, CFGGoto);
+									List.iter(function (bb_exc) { BasicBlock.add_cfg_edge(bb, bb_exc, CFGMaybeThrow); }, bbl);
+									BasicBlock.set_syntax_edge(bb, SEMerge(bb_));
+									Graph.close_node(g, bb);
+									block_element(bb_, e);
+								}
+								(bb == g.g_unreachable) ? bb : loop(bb, el);
+						}
+					}
+					loop(bb, el);
+			}
+		}
+		block = function (bb, e) {
+			var el:ImmutableList<core.Type.TExpr> = switch (e.eexpr) {
+				case TBlock(el): el;
+				case _: [e];
+			}
+			return block_el(bb, el);
+		}
+		var bb_last = block(bb_root, tf.tf_expr);
+		Graph.close_node(g, bb_last);
+		BasicBlock.add_cfg_edge(bb_last, bb_exit, CFGGoto); // implied return
+		Graph.close_node(g, bb_exit);
+		return {func:bb_root, exit:bb_exit};
 	}
 
 	public static function from_tfunction (ctx:AnalyzerTypes.Analyzer_context, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) {
