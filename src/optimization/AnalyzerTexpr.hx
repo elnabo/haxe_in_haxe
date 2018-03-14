@@ -5,8 +5,11 @@ import core.Type.TExprExpr;
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 
-using ocaml.Cloner;
+import ocaml.DynArray;
+import ocaml.List;
+import ocaml.Ref;
 
+using ocaml.Cloner;
 using equals.Equal;
 
 /*
@@ -110,8 +113,60 @@ class AnalyzerTexpr {
 	}
 
 	public static function map_values (?allow_control_flow:Bool=true, f:core.Type.TExpr->core.Type.TExpr, e:core.Type.TExpr) : {fst:core.Type.TExpr, snd:Option<core.Type.TExpr>} {
-		trace("TODO: map_values");
-		throw false;
+		var branching = new Ref(false);
+		var efinal = new Ref<Option<core.Type.TExpr>>(None);
+		function f (e:core.Type.TExpr) : core.Type.TExpr {
+			return
+			if (branching.get()) {
+				f(e);
+			}
+			else {
+				efinal.set(Some(e));
+				core.Type.mk(TConst(TNull), e.etype, e.epos);
+			}
+		}
+		function loop (complex:Bool, e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TIf(e1, e2, Some(e3)):
+					branching.set(true);
+					var e2 = loop(true, e2);
+					var e3 = loop(true, e3);
+					e.with({eexpr:TIf(e1, e2, Some(e3))});
+				case TSwitch(e1, cases, edef):
+					branching.set(true);
+					var cases = List.map(function (c) { var el = c.values; var e = c.e; return {values:el, e:loop(true, e)}; }, cases);
+					var edef = ocaml.Option.map(loop.bind(true), edef);
+					e.with({eexpr:TSwitch(e1, cases, edef)});
+				case TBlock([e1]):
+					loop(complex, e1);
+				case TBlock(el):
+					switch (List.rev(el)) {
+						case e1 :: el:
+							var e1 = loop(true, e1);
+							var e = e.with({eexpr:TBlock(List.rev(e1::el))});
+							e.with({eexpr:TMeta({name:MergeBlock, params:Tl, pos:e.epos}, e)});
+						case []:
+							f(e);
+					}
+				case TTry(e1, catches):
+					branching.set(true);
+					var e1 = loop(true, e1);
+					var catches = List.map(function (c) { var v = c.v; var e = c.e; return {v:v, e:loop(true, e)}; }, catches);
+					e.with({eexpr:TTry(e1, catches)});
+				case TMeta(m, e1):
+					e.with({eexpr:TMeta(m, loop(complex, e1))});
+				case TParenthesis(e1):
+					e.with({eexpr:TParenthesis(loop(complex, e1))});
+				case TBreak, TContinue, TThrow(_), TReturn(_):
+					if (!allow_control_flow) { throw ocaml.Exit.instance; }
+					e;
+				case _:
+					if (!complex) { throw ocaml.Exit.instance; }
+					f(e);
+			}
+		}
+		var e = loop(false, e);
+		return {fst:e, snd:efinal.get()};
 	}
 
 	public static function can_throw (e:core.Type.TExpr) {
@@ -178,6 +233,23 @@ class AnalyzerTexpr {
 					case _: false;
 				}
 			case _: false;
+		}
+	}
+
+	public static function type_change_ok (com:context.Common.Context, t1:core.Type.T, t2:core.Type.T) : Bool {
+		trace("TODO: type_change_ok");
+		throw false;
+	}
+
+	public static function dynarray_map<A> (f:A->A, d:DynArray<A>) : Void {
+		for (i in 0...d.length) {
+			d[i] = f(d[i]);
+		}
+	}
+
+	public static function dynarray_mapi<A> (f:(Int, A)->A, d:DynArray<A>) : Void {
+		for (i in 0...d.length) {
+			d[i] = f(i, d[i]);
 		}
 	}
 }

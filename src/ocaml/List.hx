@@ -7,7 +7,7 @@ using equals.Equal;
 class List {
 	public static function hd<T> (l:ImmutableList<T>) : T {
 		return switch (l) {
-			case Tl: throw ocaml.Failure.instance;
+			case Tl: throw new ocaml.Failure("List.hd");
 			case Hd(v, _): v;
 		}
 	}
@@ -35,13 +35,25 @@ class List {
 	}
 	public static function tl<T> (l:ImmutableList<T>, ?pos:haxe.PosInfos) : ImmutableList<T> {
 		return switch (l) {
-			case Tl: throw ocaml.Failure.instance;
+			case Tl: throw new ocaml.Failure("List.tl");
 			case Hd(_, tl): tl;
 		}
 	}
 
+	public static function nth<T> (l:ImmutableList<T>, n:Int) : T {
+		if (n < 0) { throw new ocaml.Invalid_argument("List.nth"); }
+		var list = l;
+		while (true) {
+			switch (list) {
+				case Hd(v, _) if (n == 0): return v;
+				case Hd(_, tl): list = tl; n--;
+				case Tl: throw new ocaml.Failure("List.nth");
+			}
+		}
+	}
+
 	public static function init<T> (length:Int, f:Int->T): ImmutableList<T> {
-		if (length < 0) { throw ocaml.Invalid_argument.instance; }
+		if (length < 0) { throw new ocaml.Invalid_argument("List.init"); }
 		var arr = [for (i in 0...length) f(i)];
 		return arr;
 	}
@@ -82,13 +94,13 @@ class List {
 	}
 
 	public static function iter2<A,B> (f:A->B->Void, l1:ImmutableList<A>, l2:ImmutableList<B>) : Void {
-		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		if (length(l1) != length(l2)) { throw new Invalid_argument("List.iter2"); }
 		switch [l1, l2] {
 			case [Tl, Tl]:
 			case [Hd(v1, tl1), Hd(v2, tl2)]:
 				f(v1, v2);
 				iter2(f, tl1, tl2);
-			case _: throw new Invalid_argument();
+			case _: throw new Invalid_argument("List.iter2");
 		}
 	}
 
@@ -99,7 +111,7 @@ class List {
 		}
 	}
 	public static function for_all2<A,B> (f:A->B->Bool, l1:ImmutableList<A>, l2:ImmutableList<B>) : Bool {
-		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		if (length(l1) != length(l2)) { throw new Invalid_argument("List.forall2"); }
 		return switch [l1, l2] {
 			case [Tl, Tl]: true;
 			case [Hd(v1, tl1), Hd(v2, tl2)]:
@@ -109,7 +121,7 @@ class List {
 				else {
 					false;
 				}
-			case _: throw new Invalid_argument();
+			case _: throw new Invalid_argument("List.forall2");
 		}
 	}
 
@@ -143,12 +155,12 @@ class List {
 	}
 
 	public static function map2<A,B,C> (f:A->B->C, l1:ImmutableList<A>, l2:ImmutableList<B>) : ImmutableList<C> {
-		if (length(l1) != length(l2)) { throw new Invalid_argument(); }
+		if (length(l1) != length(l2)) { throw new Invalid_argument("List.map2"); }
 		return switch ({f:l1, s:l2}) {
 			case {f:Tl, s:Tl}: Tl;
 			case {f:Hd(v1, tl1), s:Hd(v2, tl2)}:
 				Hd(f(v1, v2), map2(f, tl1, tl2));
-			case _: throw new Invalid_argument();
+			case _: throw new Invalid_argument("List.map2");
 		}
 	}
 

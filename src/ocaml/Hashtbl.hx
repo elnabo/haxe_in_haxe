@@ -51,6 +51,11 @@ class Hashtbl<K,V> {
 		}
 	}
 
+	public static function clear<A, B> (map:Hashtbl<A, B>) : Void {
+		map.keys = [];
+		map.values = [];
+	}
+
 	public static inline function add<A, B> (map:Hashtbl<A,B>, key:A, value:B) : Void {
 		map.set(key, value);
 	}

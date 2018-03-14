@@ -523,6 +523,10 @@ class Common {
 		}
 	}
 
+	public static function abort (msg:String, p:core.Globals.Pos) : Dynamic {
+		throw new Abort(msg, p);
+	}
+
 	public static function platform (ctx:Context, p:Platform) : Bool {
 		return ctx.platform == p;
 	}

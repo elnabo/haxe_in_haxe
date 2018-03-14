@@ -82,4 +82,9 @@ class Printer {
 		trace("TODO: core.type.Printer.s_tabstract");
 		throw false;
 	}
+
+	public static function s_tvar (v:core.Type.TVar) : String {
+		trace("TODO: core.type.Printer.s_tvar");
+		throw false;
+	}
 }
