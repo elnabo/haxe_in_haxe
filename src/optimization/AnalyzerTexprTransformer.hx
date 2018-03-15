@@ -4,15 +4,14 @@ import core.Type.TExprExpr;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
 import ocaml.Ref;
 
 using ocaml.Cloner;
 
-import optimization.AnalyzerTypes.BasicBlock;
-import optimization.AnalyzerTypes.BlockKind;
-import optimization.AnalyzerTypes.Graph;
+import optimization.AnalyzerTypes;
 
 
 class AnalyzerTexprTransformer {
@@ -22,7 +21,7 @@ class AnalyzerTexprTransformer {
 
 		The created graph is intact and can immediately be transformed back to an expression, or used for analysis first.
 	*/
-	public static function func (ctx:AnalyzerTypes.Analyzer_context, bb:BasicBlock, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) : {func:BasicBlock, exit:BasicBlock} {
+	public static function func (ctx:Analyzer_context, bb:BasicBlock, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) : {func:BasicBlock, exit:BasicBlock} {
 		var g = ctx.graph;
 		function create_node (kind:BlockKind, t:core.Type.T, p:core.Globals.Pos) {
 			var bb = Graph.create_node(g, kind, t, p);
@@ -778,12 +777,114 @@ class AnalyzerTexprTransformer {
 		return {func:bb_root, exit:bb_exit};
 	}
 
-	public static function from_tfunction (ctx:AnalyzerTypes.Analyzer_context, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) {
+	public static function from_tfunction (ctx:Analyzer_context, tf:core.Type.TFunc, t:core.Type.T, p:core.Globals.Pos) {
 		var g = ctx.graph;
 		var _tmp = func(ctx, g.g_root, tf, t, p);
 		var bb_func = _tmp.func; var bb_exit = _tmp.exit;
 		ctx.entry = bb_func;
 		Graph.close_node(g, g.g_root);
 		g.g_exit = bb_exit;
+	}
+
+	public static function block_to_texpr_el (ctx:Analyzer_context, bb:BasicBlock) : ImmutableList<core.Type.TExpr> {
+		return
+		if (bb.bb_dominator == ctx.graph.g_unreachable) {
+			[];
+		}
+		else {
+			function block (bb:BasicBlock) { return block_to_texpr(ctx, bb); }
+			function loop (bb:BasicBlock, se:Syntax_edge) : {fst:Option<BasicBlock>, snd:ImmutableList<core.Type.TExpr>}{
+				var _tmp:ImmutableList<core.Type.TExpr> = bb.bb_el;
+				var el = List.rev(_tmp);
+				return switch [el, se] {
+					case [el, SESubBlock(bb_sub, bb_next)]:
+						{fst:Some(bb_next), snd:(block(bb_sub)::el)};
+					case [el, SEMerge(bb_next)]:
+						{fst:Some(bb_next), snd:el};
+					case [el, SENone]:
+						{fst:None, snd:el};
+					case [(e={eexpr:TWhile(e1,_,flag)})::el, SEWhile(_,bb_body,bb_next)]:
+						var e2 = block(bb_body);
+						{fst:Some(bb_next), snd:e.with({eexpr:TWhile(e1, e2, flag)})::el};
+					case [el, SETry(bb_try, _, bbl, bb_next, p)]:
+						{fst:Some(bb_next), snd:core.Type.mk(TTry(block(bb_try), List.map(function (b) {var v = b.v; var bb = b.block; return {v:v, e:block(bb)}; }, bbl)), ctx.com.basic.tvoid, p)::el};
+					case [e1::el, se]:
+						var e1 = core.Texpr.skip(e1);
+						var _tmp = switch (se) {
+							case SEIfThen(bb_then, bb_next, p): {bbo:Some(bb_next), edef:TIf(e1, block(bb_then), None), t:ctx.com.basic.tvoid, pos:p};
+							case SEIfThenElse(bb_then, bb_else, bb_next, t, p): {bbo:Some(bb_next), edef:TIf(e1, block(bb_then), Some(block(bb_else))), t:t, pos:p};
+							case SESwitch(bbl, bo, bb_next, p): {bbo:Some(bb_next), edef:TSwitch(e1, List.map(function (c) { var el = c.el; var bb = c.block; return {values:el, e:block(bb)}; }, bbl), ocaml.Option.map(block, bo)), t:ctx.com.basic.tvoid, pos:p};
+							case _: context.Common.abort('Invalid node exit: ${AnalyzerTexpr.s_expr_pretty(e1)}', bb.bb_pos);
+						}
+						var bb_next = _tmp.bbo; var e1_def = _tmp.edef; var t = _tmp.t; var p = _tmp.pos;
+						{fst:bb_next, snd:core.Type.mk(e1_def, t, p)::el};
+					case [[], _]: {fst:None, snd:Tl};
+				}
+			}
+			var _tmp = loop(bb, bb.bb_syntax_edge);
+			var bb_next = _tmp.fst; var el = _tmp.snd;
+			var el = switch (bb_next) {
+				case None: el;
+				case Some(bb): List.append(block_to_texpr_el(ctx, bb), el);
+			}
+			el;
+		}
+	}
+
+	public static function block_to_texpr (ctx:Analyzer_context, bb:BasicBlock) : core.Type.TExpr {
+		if (!bb.bb_closed) {
+			trace("Shall not be seen"); std.Sys.exit(255);
+		}
+		var el = block_to_texpr_el(ctx, bb);
+		var e = core.Type.mk(TBlock(List.rev(el)), bb.bb_type, bb.bb_pos);
+		return e;
+	}
+
+	public static function func2 (ctx:Analyzer_context, i:Int) : core.Type.TExpr {
+		var _tmp = Hashtbl.find(ctx.graph.g_functions, i);
+		var bb = _tmp.block; var t = _tmp.t; var p = _tmp.pos; var tf = _tmp.tf;
+		var e = block_to_texpr(ctx, bb);
+		function loop (e:core.Type.TExpr) : core.Type.TExpr {
+			return switch (e.eexpr) {
+				case TLocal(v): e.with({eexpr:TLocal(Graph.get_var_origin(ctx.graph, v))});
+				case TVar(v, eo):
+					var eo = ocaml.Option.map(loop, eo);
+					var v_ = Graph.get_var_origin(ctx.graph, v);
+					e.with({eexpr:TVar(v_,eo)});
+				case TBinop(OpAssign, e1, e4={eexpr:TBinop(op, e2, e3)}):
+					var e1 = loop(e1);
+					var e2 = loop(e2);
+					var e3 = loop(e3);
+					function is_valid_assign_op (op:core.Ast.Binop) : Bool {
+						return switch (op) {
+							case OpAdd, OpMult, OpDiv, OpSub, OpAnd, OpOr, OpXor, OpShl, OpShr, OpUShr, OpMod:
+								true;
+							case OpAssignOp(_), OpInterval, OpArrow, OpIn, OpAssign, OpEq, OpNotEq, OpGt, OpGte, OpLt, OpLte, OpBoolAnd, OpBoolOr:
+								false;
+						}
+					}
+					return
+					switch [e1.eexpr, e2.eexpr] {
+						case [TLocal(v1), TLocal(v2)] if (v1 == v2 && !v1.v_capture && is_valid_assign_op(op)):
+							switch [op, e3.eexpr] {
+								case [OpAdd, TConst(TInt(i32))] if (i32 == 1 && AnalyzerTexpr.target_handles_assign_ops(ctx.com)): e.with({eexpr:TUnop(OpIncrement, Prefix, e1)});
+								case [OpSub, TConst(TInt(i32))] if (i32 == 1 && AnalyzerTexpr.target_handles_assign_ops(ctx.com)): e.with({eexpr:TUnop(OpDecrement, Prefix, e1)});
+								case _: e.with({eexpr:TBinop(OpAssignOp(op), e1, e3)});
+							}
+						case _: e.with({eexpr:TBinop(OpAssign, e1, e4.with({eexpr:TBinop(op, e2, e3)}))});
+					}
+				case TCall({eexpr:TConst(TString("fun"))}, [{eexpr:TConst(TInt(i32))}]):
+					func2(ctx, i32);
+				case TCall({eexpr:TIdent(s)},_) if (AnalyzerTexpr.is_really_unbound(s)):
+					e;
+				case _:
+					core.Type.map_expr(loop, e);
+			}
+		}
+		var e = loop(e);
+		return core.Type.mk(TFunction(tf.with({tf_expr:e})), t, p);
+	}
+	public static function to_texpr (ctx:Analyzer_context) : core.Type.TExpr {
+		return func2(ctx, ctx.entry.bb_id);
 	}
 }

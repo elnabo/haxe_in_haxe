@@ -425,8 +425,38 @@ class Run {
 	}
 
 	public static function back_again (actx:Analyzer_context, is_real_function:Bool) : core.Type.TExpr {
-		trace("TODO: back_again");
-		throw false;
+		var e = with_timer(actx.config.detail_times, ["<-", "to-texpr"], function () { return AnalyzerTexprTransformer.to_texpr(actx); });
+		if (actx.com.debug) { add_debug_expr(actx, "after to-texpr", e); }
+		for (vi in actx.graph.g_var_infos) {
+			vi.vi_var.v_extra = vi.vi_extra;
+		}
+		var e = (actx.config.fusion) ? with_timer(actx.config.detail_times, ["<-", "fusion"], function () { return AnalyzerTexpr.Fusion.apply(actx.com, actx.config, e); }) : e;
+		if (actx.com.debug) { add_debug_expr(actx, "after fusion", e); }
+		var e = with_timer(actx.config.detail_times, ["<-", "cleanup"], function () { return AnalyzerTexpr.Cleanup.apply(actx.com, e); });
+		if (actx.com.debug) { add_debug_expr(actx, "after cleanup", e); }
+		var e = if (is_real_function) {
+			e;
+		}
+		else {
+			// Get rid of the wrapping function and its return expressions.
+			function loop (first:Bool, e:core.Type.TExpr) : core.Type.TExpr {
+				return switch (e.eexpr) {
+					case TReturn(Some(e)): e;
+					case TFunction(tf) if (first):
+						switch (loop(false, tf.tf_expr)) {
+							case {eexpr:(TBlock(_)|TIf(_)|TSwitch(_,_,_)|TTry(_,_))} if (actx.com.platform == Cpp || actx.com.platform == Hl):
+								core.Type.mk(TCall(e, []), tf.tf_type, e.epos);
+							case e:
+								e;
+						}
+					case TBlock([e]): loop(first, e);
+					case TFunction(_): e;
+					case _: core.Type.map_expr(loop.bind(first), e);
+				}
+			}
+			loop(true, e);
+		}
+		return e;
 	}
 
 	public static function run_on_expr (actx:optimization.Analyzer_context, e:core.Type.TExpr) : core.Type.TExpr {
