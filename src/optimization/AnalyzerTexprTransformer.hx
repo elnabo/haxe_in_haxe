@@ -586,6 +586,7 @@ class AnalyzerTexprTransformer {
 					Graph.close_node(g, bb_loop_pre);
 					BasicBlock.add_texpr(bb_loop_pre, e.with({eexpr:TWhile(e1, make_block_meta(bb_loop_body), NormalWhile)}));
 					BasicBlock.add_cfg_edge(bb_loop_body_next, bb_loop_head, CFGGoto);
+					BasicBlock.add_cfg_edge(bb_loop_head, bb_loop_body, CFGGoto);
 					Graph.close_node(g, bb_loop_body_next);
 					Graph.close_node(g, bb_loop_head);
 					bb_next;

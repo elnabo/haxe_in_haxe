@@ -27,7 +27,7 @@ class Filters {
 		return
 		switch (e) {
 			case [{expr:EConst(CString(name)), pos:p}]: {name:name, pos:p};
-			case []: throw ocaml.Not_found;
+			case []: throw ocaml.Not_found.instance;
 			case _: core.Error.error("String expected", mp);
 		}
 	}
@@ -393,14 +393,100 @@ class Filters {
 	/* PASS 1 end */
 
 	/* Saves a class state so it can be restored later, e.g. after DCE or native path rewrite */
+	public static function save_class_state (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c):
+				function mk_field_restore (f:core.Type.TClassField) {
+					function mk_overload_restore (f:core.Type.TClassField) {
+						return {name:f.cf_name, kind:f.cf_kind, expr:f.cf_expr, type:f.cf_type, meta:f.cf_meta, params:f.cf_params};
+					}
+					return {f:f, res:mk_overload_restore(f), overloads:List.map(function (f) { return {fst:f, snd:mk_overload_restore(f)}; }, f.cf_overloads)};
+				}
+				function restore_field (tmp) : core.Type.TClassField {
+					var f:core.Type.TClassField = tmp.f; var res = tmp.res; var overloads = tmp.overloads;
+					function restore_field_ (tmp): core.Type.TClassField {
+						var f:core.Type.TClassField = tmp.fst;
+						var name = tmp.snd.name; var kind = tmp.snd.kind; var expr = tmp.snd.expr; var t = tmp.snd.type; var meta = tmp.snd.meta; var params = tmp.snd.params;
+						f.cf_name = name; f.cf_kind = kind; f.cf_expr = expr; f.cf_type = t; f.cf_meta = meta; f.cf_params = params;
+						return f;
+					}
+					var f = restore_field_({fst:f, snd:res});
+					f.cf_overloads = List.map(restore_field_, overloads);
+					return f;
+				}
+				function mk_pmap (lst:ImmutableList<core.Type.TClassField>) : PMap<String, core.Type.TClassField> {
+					return List.fold_left( function (pmap:PMap<String, core.Type.TClassField>, f:core.Type.TClassField) { return PMap.add(f.cf_name, f, pmap); }, PMap.empty(), lst);
+				}
+				var meta = c.cl_meta; var path = c.cl_path; var ext = c.cl_extern; var over = c.cl_overrides;
+				var sup = c.cl_super; var impl = c.cl_implements;
+				var csr = ocaml.Option.map(mk_field_restore, c.cl_constructor);
+				var ofr = List.map(mk_field_restore, c.cl_ordered_fields);
+				var osr = List.map(mk_field_restore, c.cl_ordered_statics);
+				var init = c.cl_init;
+				c.cl_restore = function () {
+					c.cl_super = sup;
+					c.cl_implements = impl;
+					c.cl_meta = meta;
+					c.cl_extern = ext;
+					c.cl_path = path;
+					c.cl_init = init;
+					c.cl_ordered_fields = List.map(restore_field, ofr);
+					c.cl_ordered_statics = List.map(restore_field, osr);
+					c.cl_fields = mk_pmap(c.cl_ordered_fields);
+					c.cl_statics = mk_pmap(c.cl_ordered_statics);
+					c.cl_constructor = ocaml.Option.map(restore_field, csr);
+					c.cl_overrides = over;
+					c.cl_descendants = Tl;
+				}
 
+			case _:
+		}
+	}
 	/* PASS 2 begin */
 
-	/* Removes extern and macro fields, also checks for Void fields */
+	public static function remove_generic_base (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c) if (FiltersCommon.is_removable_class(c)):
+				c.cl_extern = true;
+			case _:
+		}
+	}
 
+	/* Removes extern and macro fields, also checks for Void fields */
+	public static function remove_extern_fields (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c):
+				if (!context.Common.defined(ctx.com, DocGen)) {
+					c.cl_ordered_fields = List.filter (function (f:core.Type.TClassField) {
+						var b = context.Typecore.is_removable_field(ctx, f);
+						if (b) {
+							c.cl_fields = PMap.remove(f.cf_name, c.cl_fields);
+						}
+						return !b;
+					}, c.cl_ordered_fields);
+					c.cl_ordered_statics = List.filter (function (f:core.Type.TClassField) {
+						var b = context.Typecore.is_removable_field(ctx, f);
+						if (b) {
+							c.cl_statics = PMap.remove(f.cf_name, c.cl_statics);
+						}
+						return !b;
+					}, c.cl_ordered_statics);
+				}
+			case _:
+		}
+	}
 	/* PASS 2 end */
 
 	/* PASS 3 begin */
+
+	/* Removes interfaces tagged with @:remove metadata */
+	public static function check_remove_metadata (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c):
+				c.cl_implements = List.filter(function (tmp:{c:core.Type.TClass, params:core.Type.TParams}) { var c = tmp.c; return !core.Meta.has(Remove, c.cl_meta); }, c.cl_implements);
+			case _:
+		}
+	}
 
 	/* PASS 3 end */
 
@@ -410,6 +496,16 @@ class Filters {
 		var m = core.Type.t_infos(t).mt_module.m_extra;
 		if (m.m_processed == 0) { m.m_processed = pp_counter.get(); }
 		return m.m_processed != pp_counter.get();
+	}
+
+	public static function apply_filters_once (ctx:context.Typecore.Typer, filters:ImmutableList<core.Type.TExpr->core.Type.TExpr>, t:core.Type.ModuleType) : Void {
+		if (!is_cached(t)) {
+			FiltersCommon.run_expression_filters(ctx, filters, t);
+		}
+	}
+
+	public static inline function next_compilation () : Void {
+		pp_counter.set(pp_counter.get() + 1);
 	}
 
 	public static function filter_timer (detailed:Bool, s:ImmutableList<String>) : Void->Void {
@@ -489,6 +585,30 @@ class Filters {
 			rename_local_vars.bind(tctx, reserved),
 			mark_switch_break_loops
 		];
+		var t = filter_timer(detail_times, ["expr 2"]);
+		List.iter(FiltersCommon.run_expression_filters.bind(tctx, filters), new_types);
+		t();
+		next_compilation();
+		var t = filter_timer(detail_times, ["callbacks"]);
+		List.iter(function (f) { f(); }, List.rev(com.callbacks.before_dce)); // macros onGenerate etc.
+		t();
+		var t = filter_timer(detail_times, ["save state"]);
+		List.iter(save_class_state.bind(tctx), new_types);
+		t();
+		var t = filter_timer(detail_times, ["type 2"]);
+		// PASS 2: type filters pre-DCE
+		List.iter( function (t:core.Type.ModuleType) {
+			remove_generic_base(tctx, t);
+			remove_extern_fields(tctx, t);
+			codegen.Codegen.update_cache_dependencies(t);
+			// check @:remove metadata before DCE so it is ignored there (issue #2923)
+			check_remove_metadata(tctx, t);
+
+		}, com.types);
+		t();
+		var t = filter_timer(detail_times, ["dce"]);
+		// DCE
+		trace("Throwing false");
 		throw false;
 	}
 }

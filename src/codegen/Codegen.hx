@@ -40,6 +40,62 @@ class UnificationCallback {
 
 class Codegen {
 
+	/* -------------------------------------------------------------------------- */
+	/* TOOLS */
+
+	public static function update_cache_dependencies (t:core.Type.ModuleType) : Void {
+		var check_field:(m:core.Type.ModuleDef, cf:core.Type.TClassField)->Void = null;
+		function check_t (m:core.Type.ModuleDef, t:core.Type.T) : Void {
+			switch (t) {
+				case TInst(c, tl):
+					core.Type.add_dependency(m, c.cl_module);
+					List.iter(check_t.bind(m), tl);
+				case TEnum(en, tl):
+					core.Type.add_dependency(m, en.e_module);
+					List.iter(check_t.bind(m), tl);
+				case TType(t, tl):
+					core.Type.add_dependency(m, t.t_module);
+					List.iter(check_t.bind(m), tl);
+				case TAbstract(a, tl):
+					core.Type.add_dependency(m, a.a_module);
+					List.iter(check_t.bind(m), tl);
+				case TFun({args:targs, ret:tret}):
+					List.iter(function (arg) { var t = arg.t; check_t(m, t); }, targs);
+					check_t(m, tret);
+				case TAnon(an):
+					PMap.iter(function (_, cf) { check_field(m, cf); }, an.a_fields);
+				case TMono(r):
+					switch (r.get()) {
+						case Some(t): check_t(m, t);
+						case _:
+					}
+				case TLazy(f):
+					check_t(m, core.Type.lazy_type(f));
+				case TDynamic(_.get()=>t):
+					if (t == core.Type.t_dynamic) {}
+					else {
+						check_t(m, t);
+					}
+			}
+		}
+		check_field = function (m, cf) {
+			check_t(m, cf.cf_type);
+		}
+		switch (t) {
+			case TClassDecl(c):
+				List.iter(check_field.bind(c.cl_module), c.cl_ordered_statics);
+				List.iter(check_field.bind(c.cl_module), c.cl_ordered_fields);
+				switch (c.cl_constructor) {
+					case None:
+					case Some(cf): check_field(c.cl_module,cf);
+				}
+			case _:
+		}
+	}
+
+	/* -------------------------------------------------------------------------- */
+	/* FIX OVERRIDES */
+
 	/*
 	 * on some platforms which doesn't support type parameters, we must have the
 	 * exact same type for overridden/implemented function as the original one

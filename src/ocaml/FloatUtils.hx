@@ -14,7 +14,7 @@ class FloatUtils {
 	public static final max_int32:Float = 2147483647;
 
 	public static function float_of_string (f:String) : Float {
-		var _f = Std.parseFloat(f);
+		var _f:Null<Float> = Std.parseFloat(f);
 		if (_f == null) {
 			throw new Failure("float_of_string");
 		}
