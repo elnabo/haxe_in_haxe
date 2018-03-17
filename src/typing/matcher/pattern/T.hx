@@ -4,7 +4,7 @@ import haxe.ds.ImmutableList;
 import typing.matcher.Pattern;
 
 enum T {
-	PatConstructor(t:typing.matcher.constructor.T, l:ImmutableList<Pattern>);
+	PatConstructor(t:typing.matcher.Constructor, l:ImmutableList<Pattern>);
 	PatVariable(v:core.Type.TVar);
 	PatAny;
 	PatBind(v:core.Type.TVar, p:Pattern);

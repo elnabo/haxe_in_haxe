@@ -13,7 +13,7 @@ class Not_exhaustive {
 	function new () {}
 }
 
-typedef TCase = {fst:typing.matcher.constructor.T, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams};
+typedef TCase = {fst:Constructor, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams};
 
 enum Match_kind {
 	SKValue;
@@ -38,7 +38,7 @@ class TexprConverter {
 		return loop(s, e);
 	}
 
-	public static function unify_constructor (ctx:context.Typecore.Typer, params:core.Type.TParams, t:core.Type.T, con:typing.matcher.constructor.T) : Option<{con:typing.matcher.constructor.T, params:core.Type.TParams}> {
+	public static function unify_constructor (ctx:context.Typecore.Typer, params:core.Type.TParams, t:core.Type.T, con:Constructor) : Option<{con:Constructor, params:core.Type.TParams}> {
 		return switch (con) {
 			case ConEnum(en, ef):
 				var t_ef = switch (core.Type.follow(ef.ef_type)) {
@@ -70,7 +70,7 @@ class TexprConverter {
 			case _: Some({con:con, params:params});
 		}
 	}
-	public static function all_ctors (ctx:context.Typecore.Typer, e:core.Type.TExpr, cases:ImmutableList<{fst:typing.matcher.constructor.T, snd:Bool, trd:typing.matcher.decisiontree.Dt}>) : {fst:core.Type.TExpr, snd:ImmutableList<typing.matcher.constructor.T>, trd:Match_kind, frth:typing.matcher.Decision_tree.Type_finiteness} {
+	public static function all_ctors (ctx:context.Typecore.Typer, e:core.Type.TExpr, cases:ImmutableList<{fst:Constructor, snd:Bool, trd:typing.matcher.decisiontree.Dt}>) : {fst:core.Type.TExpr, snd:ImmutableList<Constructor>, trd:Match_kind, frth:typing.matcher.Decision_tree.Type_finiteness} {
 		function infer_type () {
 			return switch (cases) {
 				case []: {fst:e, snd:e.etype, trd:false};
@@ -104,8 +104,8 @@ class TexprConverter {
 			case _: {fst:e, snd:e.etype, trd:false};
 		}
 		var e = _tmp.fst; var t = _tmp.snd; var inferred = _tmp.trd;
-		var h = new Hashtbl<typing.matcher.constructor.T, Bool>();
-		function add(constructor:typing.matcher.constructor.T) {
+		var h = new Hashtbl<Constructor, Bool>();
+		function add(constructor:Constructor) {
 			Hashtbl.replace(h, constructor, true);
 		}
 		function loop (t:core.Type.T) : {fst:Match_kind, snd:Decision_tree.Type_finiteness}{
@@ -153,7 +153,7 @@ class TexprConverter {
 		}
 		var _tmp = loop(t);
 		var kind = _tmp.fst; var finiteness = _tmp.snd;
-		function compatible_kind (con:typing.matcher.constructor.T) {
+		function compatible_kind (con:Constructor) {
 			return switch(con) {
 				case ConEnum(_): kind.match(SKEnum|SKFakeEnum);
 				case ConArray(_): kind.match(SKLength);
@@ -169,17 +169,17 @@ class TexprConverter {
 				Hashtbl.remove(h, con);
 			}
 		}, cases);
-		var unmatched = Hashtbl.fold(function (con, _, acc:ImmutableList<typing.matcher.constructor.T>) {
+		var unmatched = Hashtbl.fold(function (con, _, acc:ImmutableList<Constructor>) {
 			return con::acc;
 		}, h, []);
 		return {fst:e, snd:unmatched, trd:kind, frth:finiteness};
 	}
 
-	public static function report_not_exhaustive (e_subject:core.Type.TExpr, unmatched:ImmutableList<{con:typing.matcher.constructor.T, params:Dynamic}>) : Dynamic { // real = void always throw
+	public static function report_not_exhaustive (e_subject:core.Type.TExpr, unmatched:ImmutableList<{con:Constructor, params:Dynamic}>) : Dynamic { // real = void always throw
 		var sl:ImmutableList<String> = switch (core.Type.follow(e_subject.etype)) {
 			case TAbstract(a={a_impl:Some(c)}, tl) if (core.Meta.has(Enum, a.a_meta)):
 				List.map(function (_tmp) {
-					var con:typing.matcher.constructor.T = _tmp.con;
+					var con:Constructor = _tmp.con;
 					return switch (con) {
 						case ConConst(ct1):
 							var cf = List.find(function (cf:core.Type.TClassField) {
@@ -196,7 +196,7 @@ class TexprConverter {
 				}, unmatched);
 			case _:
 				List.map(function (_tmp) {
-					var con:typing.matcher.constructor.T = _tmp.con;
+					var con:Constructor = _tmp.con;
 					return Constructor.to_string(con);
 				}, unmatched);
 		}
@@ -272,7 +272,7 @@ class TexprConverter {
 						}
 					}, cases);
 					function group (cases:ImmutableList<TCase>) {
-						var h = new Hashtbl<typing.matcher.decisiontree.T, {fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}>();
+						var h = new Hashtbl<typing.matcher.decisiontree.T, {fst:ImmutableList<Constructor>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}>();
 						List.iter(function (c:TCase) {
 							var con = c.fst; var dt = c.snd; var params = c.trd;
 							var l = try {
@@ -289,8 +289,8 @@ class TexprConverter {
 						}, h, []);
 					}
 					var cases = group(cases);
-					var cases = List.sort(function (c1:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}
-							, c2:{fst:ImmutableList<typing.matcher.constructor.T>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}) {
+					var cases = List.sort(function (c1:{fst:ImmutableList<Constructor>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}
+							, c2:{fst:ImmutableList<Constructor>, snd:typing.matcher.decisiontree.Dt, trd:core.Type.TParams}) {
 						var cons1 = c1.fst; var cons2 = c2.fst;
 						return switch [cons1, cons2] {
 							case [con1::_, con2::_]:

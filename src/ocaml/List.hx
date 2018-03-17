@@ -229,6 +229,15 @@ class List {
 				fold_left(f, f(a, v), tl);
 		}
 	}
+	public static function fold_left2<A, B, C>(f:A->B->C->A, a:A, l1:ImmutableList<B>, l2:ImmutableList<C>) : A {
+		if (length(l1) != length(l2)) { throw new Invalid_argument("List.fold_left2"); }
+		return switch [l1, l2] {
+			case [Tl, Tl]: a;
+			case [Hd(v1, tl1), Hd(v2, tl2)]:
+				fold_left2(f, f(a, v1, v2), tl1, tl2);
+			case _: throw new Invalid_argument("List.fold_left2");
+		}
+	}
 
 	public static function exists<T> (f:T->Bool, l:ImmutableList<T>) : Bool {
 		return switch (l) {

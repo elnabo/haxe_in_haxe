@@ -58,7 +58,7 @@ class Compile {
 	public static function fail (mctx:Matcher_context, p:core.Globals.Pos) : typing.matcher.decisiontree.Dt {
 		return hashcons(mctx, Fail, p);
 	}
-	public static function switch_ (mctx:Matcher_context, subject:core.Type.TExpr, cases:ImmutableList<{fst:typing.matcher.constructor.T, snd:Bool, trd:typing.matcher.decisiontree.Dt}>, _default:typing.matcher.decisiontree.Dt) :typing.matcher.decisiontree.Dt {
+	public static function switch_ (mctx:Matcher_context, subject:core.Type.TExpr, cases:ImmutableList<{fst:Constructor, snd:Bool, trd:typing.matcher.decisiontree.Dt}>, _default:typing.matcher.decisiontree.Dt) :typing.matcher.decisiontree.Dt {
 		return hashcons(mctx, Switch(subject, cases, _default), subject.epos);
 	}
 	public static function bind (mctx:Matcher_context, bindings:ImmutableList<Var>, dt:typing.matcher.decisiontree.Dt) : typing.matcher.decisiontree.Dt {
@@ -71,7 +71,7 @@ class Compile {
 		return hashcons(mctx, GuardNull(e, dt1, dt2), core.Ast.punion(dt1.dt_pos, dt2.dt_pos));
 	}
 
-	public static function get_sub_subjects(mctx:Matcher_context, e:core.Type.TExpr, con:typing.matcher.constructor.T) : ImmutableList<core.Type.TExpr> {
+	public static function get_sub_subjects(mctx:Matcher_context, e:core.Type.TExpr, con:Constructor) : ImmutableList<core.Type.TExpr> {
 		return switch (con) {
 			case ConEnum(en, ef):
 				var tl = List.map(function (_) { return core.Type.mk_mono(); }, en.e_params);
@@ -102,7 +102,7 @@ class Compile {
 		}
 	}
 
-	public static function specialize (subject:core.Type.TExpr, con:typing.matcher.constructor.T, cases:ImmutableList<Case>) : ImmutableList<Case> {
+	public static function specialize (subject:core.Type.TExpr, con:Constructor, cases:ImmutableList<Case>) : ImmutableList<Case> {
 		var arity = typing.matcher.Constructor.arity(con);
 		function loop(acc:ImmutableList<Case>, cases:ImmutableList<Case>) :ImmutableList<Case> {
 			return switch (cases) {
@@ -288,8 +288,8 @@ class Compile {
 		}
 		var subject = _tmp.fst; var subjects = _tmp.snd;
 		function get_column_sigma (cases:ImmutableList<Case>) {
-			var sigma = new Hashtbl<typing.matcher.constructor.T, Bool>();
-			var unguarded = new Hashtbl<typing.matcher.constructor.T, Bool>();
+			var sigma = new Hashtbl<Constructor, Bool>();
+			var unguarded = new Hashtbl<Constructor, Bool>();
 			var null_ = new Ref<ImmutableList<Case>>([]);
 			List.iter(function (c:Case) {
 				var case_ = c.fst; var bindings = c.snd; var patterns = c.trd;
@@ -310,7 +310,7 @@ class Compile {
 				}
 				loop(List.hd(patterns));
 			}, cases);
-			var sigma = Hashtbl.fold(function (con:typing.matcher.constructor.T, _, acc) {
+			var sigma = Hashtbl.fold(function (con:Constructor, _, acc) {
 				return {fst:con, snd:Hashtbl.mem(unguarded, con)}::acc;
 			}, sigma, []);
 			return {fst:sigma, snd:List.rev(null_.get())};
@@ -320,7 +320,7 @@ class Compile {
 		if (mctx.match_debug) {
 			Sys.println('compile_switch:\n\tsubject: ${typing.Matcher.s_expr_pretty(subject)}\n\ttsubjects: ${s_subjects(subjects)}\n\tcases: ${s_cases(cases)}');
 		}
-		var switch_cases = List.map(function (s:{fst:typing.matcher.constructor.T, snd:Bool}) {
+		var switch_cases = List.map(function (s:{fst:Constructor, snd:Bool}) {
 			var con = s.fst; var unguarded = s.snd;
 			var subjects = List.append(get_sub_subjects(mctx, subject, con), subjects);
 			var spec = specialize(subject, con, cases);

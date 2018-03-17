@@ -88,7 +88,7 @@ class Pattern {
 					v;
 			}
 		}
-		function con_enum (en:core.Type.TEnum, ef:core.Type.TEnumField, p:core.Globals.Pos) : typing.matcher.constructor.T {
+		function con_enum (en:core.Type.TEnum, ef:core.Type.TEnumField, p:core.Globals.Pos) : Constructor {
 			context.display.DeprecationCheck.check_enum(pctx.ctx.com, en, p);
 			context.display.DeprecationCheck.check_ef(pctx.ctx.com, ef, p);
 			return ConEnum(en, ef);

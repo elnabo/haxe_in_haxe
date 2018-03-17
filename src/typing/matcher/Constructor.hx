@@ -1,12 +1,22 @@
 package typing.matcher;
 
 import haxe.EnumTools.EnumValueTools;
+import haxe.ds.ImmutableList;
 
 import ocaml.List;
 using equals.Equal;
 
-class Constructor {
-	public static function to_string(con:typing.matcher.constructor.T) : String {
+enum Constructor_T {
+	ConConst(c:core.Type.TConstant);
+	ConEnum(e:core.Type.TEnum, ef:core.Type.TEnumField);
+	ConStatic(c:core.Type.TClass, cf:core.Type.TClassField);
+	ConTypeExpr(mt:core.Type.ModuleType);
+	ConFields(l:ImmutableList<String>);
+	ConArray(i:Int);
+}
+
+abstract Constructor (Constructor_T) from Constructor_T to Constructor_T {
+	public static function to_string(con:Constructor) : String {
 		return switch (con) {
 			case ConConst(ct): core.Type.s_const(ct);
 			case ConEnum(en, ef): ef.ef_name;
@@ -17,7 +27,7 @@ class Constructor {
 		}
 	}
 
-	public static function equal(con1:typing.matcher.constructor.T, con2:typing.matcher.constructor.T) : Bool {
+	public static function equal(con1:Constructor, con2:Constructor) : Bool {
 		return switch [con1, con2] {
 			case [ConConst(ct1), ConConst(ct2)]:
 				ct1.equals(ct2);
@@ -33,7 +43,7 @@ class Constructor {
 		}
 	}
 
-	public static function arity (con:typing.matcher.constructor.T) : Int {
+	public static function arity (con:Constructor) : Int {
 		return switch (con) {
 			case ConEnum(_, {ef_type:TFun({args:args})}): List.length(args);
 			case ConEnum(_, _): 0;
@@ -45,7 +55,7 @@ class Constructor {
 		}
 	}
 
-	public static function compare(con1:typing.matcher.constructor.T, con2:typing.matcher.constructor.T) : Int {
+	public static function compare(con1:Constructor, con2:Constructor) : Int {
 		return switch [con1, con2] {
 			case [ConConst(ct1), ConConst(ct2)]:
 				switch [ct1, ct2] {
@@ -73,7 +83,7 @@ class Constructor {
 		}
 	}
 
-	public static function to_texpr (ctx:context.Typecore.Typer, match_debug:Bool, p:core.Globals.Pos, con:typing.matcher.constructor.T) : core.Type.TExpr {
+	public static function to_texpr (ctx:context.Typecore.Typer, match_debug:Bool, p:core.Globals.Pos, con:Constructor) : core.Type.TExpr {
 		return switch (con) {
 			case ConEnum(en, ef):
 				if (core.Meta.has(FakeEnum, en.e_meta)) {
