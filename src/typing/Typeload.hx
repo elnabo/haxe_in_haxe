@@ -2584,7 +2584,7 @@ class Typeload {
 				ctx.curclass = c;
 				c.cl_build = context.Typecore.make_pass(ctx, build);
 				ctx.pass = PBuildModule;
-				ctx.curclass = core.Type.null_class();
+				ctx.curclass = core.Type.null_class;
 				context.Typecore.delay(ctx, PBuildClass, function() { c.cl_build(); });
 				if ((ctx.com.platform.equals(Java) || ctx.com.platform.equals(Cs)) && !c.cl_extern) {
 					context.Typecore.delay(ctx, PTypeField, function () {
@@ -3011,8 +3011,8 @@ class Typeload {
 			pass: PBuildModule,
 			on_error: function (ctx, msg, p) { ctx.com.error(msg, p); },
 			macro_depth: ctx.macro_depth,
-			curclass: core.Type.null_class(),
-			curfield: core.Type.null_field(),
+			curclass: core.Type.null_class,
+			curfield: core.Type.null_field,
 			tthis: ctx.tthis,
 			ret: ctx.ret,
 			locals: PMap.empty(),

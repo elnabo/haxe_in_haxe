@@ -608,6 +608,21 @@ class Filters {
 		t();
 		var t = filter_timer(detail_times, ["dce"]);
 		// DCE
+		var dce_mode = if (context.Common.defined(com, As3)) {
+			"no";
+		}
+		else {
+			try { context.Common.defined_value(com, Dce); }
+			catch (_:Any) { "no"; }
+		}
+		switch (dce_mode) {
+			case "full": optimization.Dce.run(com, main, !context.Common.defined(com, Interp));
+			case "std": optimization.Dce.run(com, main, false);
+			case "no": optimization.Dce.fix_accessors(com);
+			case _: throw ("Unknown DCE mode" + dce_mode);
+		}
+		t();
+		// PASS 3: type filters post-DCE
 		trace("Throwing false");
 		throw false;
 	}

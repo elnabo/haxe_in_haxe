@@ -2,6 +2,7 @@ package core;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
+import ocaml.Hashtbl;
 import ocaml.List;
 import ocaml.PMap;
 
@@ -344,18 +345,20 @@ typedef ModuleDefExtra = {
 	m_dirty : Option<ModuleDef>,
 	m_added : Int,
 	m_mark : Int,
-	m_deps : Map<Int, ModuleDef>,
+	m_deps : PMap<Int, ModuleDef>,
 	m_processed : Int,
 	m_kind : ModuleKind,
-	m_binded_res : Map<String, String>,
+	m_binded_res : PMap<String, String>,
 	m_reuse_macro_calls : ImmutableList<String>,
 	m_if_feature : ImmutableList<{
 		s:String,
-		c:TClass,
-		cf:TClassField,
-		b:Bool
+		v:{
+			c:TClass,
+			cf:TClassField,
+			stat:Bool
+		}
 	}>,
-	m_features : Map<String, Bool>
+	m_features : Hashtbl<String, Bool>
 }
 
 enum ModuleKind {
@@ -525,12 +528,12 @@ class Type {
 			m_mark: 0,
 			m_time: time,
 			m_processed: 0,
-			m_deps: new Map<Int, ModuleDef>(),
+			m_deps: PMap.empty(),
 			m_kind: kind,
-			m_binded_res: new Map<String, String>(),
+			m_binded_res: PMap.empty(),
 			m_reuse_macro_calls: [],
 			m_if_feature: [],
-			m_features: new Map<String, Bool>(),
+			m_features: Hashtbl.create(0),
 			m_check_policy: policy,
 		};
 	}
@@ -566,19 +569,17 @@ class Type {
 		return _null_module;
 	}
 
-	public static function null_class () {
+	public static final null_class:TClass = {
 		var c = mk_class(null_module, new core.Path([],""), core.Globals.null_pos, core.Globals.null_pos);
 		c.cl_private = true;
-		return c;
+		c;
 	}
 
-	public static function null_field () : core.Type.TClassField {
-		return mk_field("", t_dynamic, core.Globals.null_pos, core.Globals.null_pos);
-	}
+	public static final null_field:core.Type.TClassField = mk_field("", t_dynamic, core.Globals.null_pos, core.Globals.null_pos);
 
 	public static function add_dependency(m:ModuleDef, mdep:ModuleDef) : Void {
 		if (!m.equals(null_module) && !m.equals(mdep)) {
-			m.m_extra.m_deps.set(mdep.m_id, mdep);
+			m.m_extra.m_deps = PMap.add(mdep.m_id, mdep, m.m_extra.m_deps);
 		}
 	}
 

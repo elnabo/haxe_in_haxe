@@ -7,7 +7,7 @@ using equals.Equal;
 
 class DeprecationCheck {
 
-	public static var curclass = new Ref<core.Type.TClass>(core.Type.null_class());
+	public static var curclass = new Ref<core.Type.TClass>(core.Type.null_class);
 	public static var warned_positions = new Hashtbl<core.Globals.Pos, Bool>();
 
 	public static function print_deprecation_message (com:context.Common.Context, meta:core.Ast.MetadataEntry, s:String, p_usage:core.Globals.Pos) : Void {

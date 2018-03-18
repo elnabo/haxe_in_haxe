@@ -4990,8 +4990,8 @@ class Typer {
 			ret : core.Type.mk_mono(),
 			locals : PMap.empty(), // <String, core.Type.TVar>
 			type_params : [],
-			curclass : core.Type.null_class(),
-			curfield : core.Type.null_field(),
+			curclass : core.Type.null_class,
+			curfield : core.Type.null_field,
 			tthis : core.Type.mk_mono(),
 			opened : [],
 			vthis : None,

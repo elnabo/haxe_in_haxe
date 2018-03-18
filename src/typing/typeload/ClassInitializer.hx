@@ -1325,7 +1325,7 @@ class ClassInitializer {
 					core.Error.error("You can't declare static fields in interfaces", p);
 				}
 				function set_feature (s) {
-					ctx.m.curmod.m_extra.m_if_feature = ({s:s,c:c,cf:cf,b:fctx.is_static}) :: ctx.m.curmod.m_extra.m_if_feature;
+					ctx.m.curmod.m_extra.m_if_feature = ({s:s,v:{c:c,cf:cf,stat:fctx.is_static}}) :: ctx.m.curmod.m_extra.m_if_feature;
 				}
 				List.iter(set_feature, cl_if_feature);
 				List.iter(set_feature, check_if_feature(cf.cf_meta));
