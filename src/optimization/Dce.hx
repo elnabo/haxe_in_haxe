@@ -334,6 +334,24 @@ class Dce {
 		throw false;
 	}
 
+	public static function check_dynamic_write (dce:Dce, fa:core.Type.TFieldAccess) : Void {
+		var n = core.Type.field_name(fa);
+		check_and_add_feature(dce, "dynamic_write");
+		check_and_add_feature(dce, "dynamic_write."+n);
+	}
+
+	public static function check_anon_optional_write (dce:Dce, fa:core.Type.TFieldAccess) : Void {
+		var n = core.Type.field_name(fa);
+		check_and_add_feature(dce, "anon_optional_write");
+		check_and_add_feature(dce, "anon_optional_write."+n);
+	}
+
+	public static function check_anon_write (dce:Dce, fa:core.Type.TFieldAccess) : Void {
+		var n = core.Type.field_name(fa);
+		check_and_add_feature(dce, "anon_write");
+		check_and_add_feature(dce, "anon_write."+n);
+	}
+
 	public static function is_array (t:core.Type.T) : Bool {
 		return switch (core.Type.follow(t)) {
 			case TAbstract(a, tl) if (!core.Meta.has(CoreType, a.a_meta)):
@@ -368,8 +386,12 @@ class Dce {
 		}
 	}
 
+	public static function expr_field (dce:Dce, e:TExpr, fa:core.Type.TFieldAccess, is_call_expr:Bool) : Void {
+		trace("TODO: Dce.expr_field");
+		throw false;
+	}
+
 	public static function expr (dce:Dce, e:TExpr) : Void {
-		trace("TODO: Dce.expr");
 		mark_t(dce, e.epos, e.etype);
 		switch (e.eexpr) {
 			case TNew(c, pl, el):
@@ -453,10 +475,81 @@ class Dce {
 				check_and_add_feature(dce, "unsafe_string_concat");
 				expr(dce, e1);
 				expr(dce, e2);
+			case TArray(e1={etype:TDynamic(_.get()=>t)}, e2) if (t == core.Type.t_dynamic):
+				check_and_add_feature(dce, "dynamic_array_read");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop((OpAssign|OpAssignOp(_)),e1={eexpr:TArray({etype:TDynamic(_.get()=>t)}, _)}, e2) if (t == core.Type.t_dynamic):
+				check_and_add_feature(dce, "dynamic_array_write");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TArray(e1={etype:t}, e2) if (is_array(t)):
+				check_and_add_feature(dce, "array_read");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop((OpAssign|OpAssignOp(_)),e1={eexpr:TArray({etype:t}, _)}, e2) if (is_array(t)):
+				check_and_add_feature(dce, "array_write");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpAssign, e1={eexpr:TField(_, fa=FDynamic(_))}, e2):
+				check_dynamic_write(dce, fa);
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpAssign, e1={eexpr:TField(_, fa=FAnon(cf))}, e2):
+				if (core.Meta.has(Optional, cf.cf_meta)) {
+					check_anon_optional_write(dce, fa);
+				}
+				else {
+					check_anon_write(dce, fa);
+				}
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpAssignOp(op), e1={eexpr:TField(_, fa=FDynamic(_))}, e2):
+				check_dynamic_write(dce, fa);
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpAssignOp(op), e1={eexpr:TField(_, fa=FAnon(cf))}, e2):
+				if (core.Meta.has(Optional, cf.cf_meta)) {
+					check_anon_optional_write(dce, fa);
+				}
+				else {
+					check_anon_write(dce, fa);
+				}
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpEq, e1={etype:t1}, e2={etype:t2}) if (is_dynamic(t1) || is_dynamic(t2)):
+				check_and_add_feature(dce, "dynamic_binop_==");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpNotEq, e1={etype:t1}, e2={etype:t2}) if (is_dynamic(t1) || is_dynamic(t2)):
+				check_and_add_feature(dce, "dynamic_binop_!=");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop(OpMod, e1, e2):
+				check_and_add_feature(dce, "binop_%");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TBinop((OpUShr|OpAssignOp(OpUShr)), e1, e2):
+				check_and_add_feature(dce, "binop_>>>");
+				expr(dce, e1);
+				expr(dce, e2);
+			case TCall(e2={eexpr:TField(ef, fa)}, el):
+				mark_t(dce, e2.epos, e2.etype);
+				expr_field(dce, ef, fa, true);
+				List.iter(expr.bind(dce), el);
+			case TField(e, fa):
+				expr_field(dce, e, fa, false);
+			case TThrow(e):
+				check_and_add_feature(dce, "has_throw");
+				expr(dce, e);
+				function loop(e:TExpr) {
+					to_string(dce, e.etype);
+					core.Type.iter(loop, e);
+				}
+				loop(e);
 			case _:
-				trace("TODO: finish Dce.expr"); throw false;
+				core.Type.iter(expr.bind(dce), e);
 		}
-		throw false;
 	}
 
 	public static function fix_accessors (com:context.Common.Context) {
