@@ -405,4 +405,11 @@ class Texpr {
 			Type.mk(TWhile(Type.mk(TParenthesis(ehasnext), ehasnext.etype, ehasnext.epos), ebody, NormalWhile), basic.tvoid, e1.epos)
 		]), basic.tvoid, p);
 	}
+
+	/* -------------------------------------------------------------------------- */
+	/* BUILD META DATA OBJECT */
+	public static function build_metadata (api:core.Type.BasicTypes, t:core.Type.ModuleType) : Option<core.Type.TExpr> {
+		trace("TODO: build_metadata");
+		throw false;
+	}
 }

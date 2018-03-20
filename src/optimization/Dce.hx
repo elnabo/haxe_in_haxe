@@ -254,8 +254,19 @@ class Dce {
 	}
 
 	public static function mark_mt (dce:Dce, mt:ModuleType) : Void {
-		trace("TODO: Dce.mark_mt");
-		throw false;
+		switch (mt) {
+			case TClassDecl(c):
+				mark_class(dce, c);
+			case TEnumDecl(e):
+				mark_enum(dce, e);
+			case TAbstractDecl(a):
+				// abstract 'feature' is defined as the abstract type beeing used as a value, not as a type
+				if (!core.Meta.has(ValueUsed, a.a_meta)) {
+					a.a_meta = ({name:ValueUsed, params:Tl, pos:a.a_pos} : core.Ast.MetadataEntry) :: a.a_meta;
+				}
+				mark_abstract(dce, a);
+			case TTypeDecl(_):
+		}
 	}
 
 	/* find all dependent fields by checking implementing/subclassing types */
@@ -298,13 +309,115 @@ class Dce {
 	}
 
 	public static function to_string (dce:Dce, t:core.Type.T) : Void {
-		trace("TODO: Dce.to_string");
-		throw false;
+		switch (t) {
+			case TInst(c, tl):
+				field(dce, c, "toString", false);
+			case TType(tt, tl):
+				if (!List.exists(function (t2) { return core.Type.fast_eq(t, t2); }, dce.ts_stack)) {
+					dce.ts_stack = t :: dce.ts_stack;
+					to_string(dce, core.Type.apply_params(tt.t_params, tl, tt.t_type));
+				}
+			case TAbstract(a={a_impl:Some(c)}, tl):
+				if (core.Meta.has(CoreType, a.a_meta)) {
+					field(dce, c, "toString", false);
+				}
+				else {
+					to_string(dce, core.Abstract.get_underlying_type(a, tl));
+				}
+			case TMono(r):
+				switch (r.get()) {
+					case Some(t): to_string(dce, t);
+					case _:
+				}
+			case TLazy(f):
+				to_string(dce, core.Type.lazy_type(f));
+			case TDynamic(_.get()=>t):
+				if (t == core.Type.t_dynamic) {
+				}
+				else {
+					to_string(dce, t);
+				}
+			case TEnum(_), TFun(_), TAnon(_), TAbstract({a_impl:None},_):
+				// if we to_string these it does not imply that we need all its sub-types
+		}
 	}
 
 	public static function field (dce:Dce, c:TClass, n:String, stat:Bool) : Void {
-		trace("TODO: Dce.field");
-		throw false;
+		function find_field (n:String) : TClassField {
+			return
+			if (n == "new") {
+				switch (c.cl_constructor) {
+					case None: throw ocaml.Not_found.instance;
+					case Some(cf): cf;
+				}
+			}
+			else {
+				PMap.find(n, (stat) ? c.cl_statics : c.cl_fields);
+			}
+		}
+		try {
+			var cf = find_field(n);
+			mark_field(dce, c, cf, stat);
+		}
+		catch (_:ocaml.Not_found) {
+			try {
+				if (c.cl_interface) {
+					function loop (cl:ImmutableList<{c:TClass, params:core.Type.TParams}>) {
+						return
+						switch (cl) {
+							case []: throw ocaml.Not_found.instance;
+							case {c:c} :: cl:
+								try {
+									field(dce, c, n, stat);
+								}
+								catch (_:ocaml.Not_found) {
+									loop(cl);
+								}
+						}
+					}
+					loop(c.cl_implements);
+				}
+				else {
+					switch (c.cl_super) {
+						case Some({c:csup}):
+							field(dce, csup, n, stat);
+						case None: throw ocaml.Not_found.instance;
+					}
+				}
+			}
+			catch (_:ocaml.Not_found) {
+				try {
+					switch (c.cl_kind) {
+						case KTypeParameter(tl):
+							function loop (tl:core.Type.TParams) {
+								switch (tl) {
+									case []: throw ocaml.Not_found.instance;
+									case TInst(c,_) :: cl:
+										try {
+											field(dce, c, n, stat);
+										}
+										catch (_:ocaml.Not_found) {
+											loop(cl);
+										}
+									case t :: tl:
+										loop(tl);
+								}
+							}
+							loop(tl);
+						case _:
+							throw ocaml.Not_found.instance;
+					}
+				}
+				catch (_:ocaml.Not_found) {
+					if (dce.debug) {
+						var stderr = std.Sys.stderr();
+						stderr.writeString("[DCE] Field "+n+" not found on "+core.Globals.s_type_path(c.cl_path));
+						stderr.flush();
+						stderr.close();
+					}
+				}
+			}
+		}
 	}
 
 	public static function mark_directly_used_class (dce:Dce, c:TClass) : Void {
@@ -387,8 +500,69 @@ class Dce {
 	}
 
 	public static function expr_field (dce:Dce, e:TExpr, fa:core.Type.TFieldAccess, is_call_expr:Bool) : Void {
-		trace("TODO: Dce.expr_field");
-		throw false;
+		function do_default () {
+			var n = core.Type.field_name(fa);
+			switch (fa) {
+				case FAnon(cf):
+					if (core.Meta.has(Optional, cf.cf_meta)) {
+						check_and_add_feature(dce, "anon_optional_read");
+						check_and_add_feature(dce, "anon_optional_read."+n);
+					}
+					else {
+						check_and_add_feature(dce, "anon_read");
+						check_and_add_feature(dce, "anon_read."+n);
+					}
+				case FDynamic(_):
+					check_and_add_feature(dce, "dynamic_read");
+					check_and_add_feature(dce, "dynamic_read."+n);
+				case _:
+			}
+			switch (core.Type.follow(e.etype)) {
+				case TInst(c, _):
+					mark_class(dce, c);
+					field(dce, c, n, false);
+				case TAnon(a):
+					switch (a.a_status.get()) {
+						case Statics(c):
+							mark_class(dce, c);
+							field(dce, c, n, true);
+						case _:
+					}
+				case _:
+			}
+		}
+
+		function mark_instance_field_access (c:TClass, cf:TClassField) : Void {
+			if (!is_call_expr && dce.com.platform == Python) {
+				if (c.cl_path.a == Tl && c.cl_path.b == "Array") {
+					check_and_add_feature(dce, "closure_Array");
+					check_and_add_feature(dce, "python.internal.ArrayImpl."+cf.cf_name);
+					check_and_add_feature(dce, "python.internal.ArrayImpl");
+				}
+				else if (c.cl_path.a == Tl && c.cl_path.b == "String") {
+					check_and_add_feature(dce, "closure_String");
+					check_and_add_feature(dce, "python.internal.StringImpl."+cf.cf_name);
+					check_and_add_feature(dce, "python.internal.StringImpl");
+				}
+			}
+		}
+		switch (fa) {
+			case FStatic(c, cf):
+				mark_class(dce, c);
+				mark_field(dce, c, cf, true);
+			case FInstance(c, _, cf):
+				// mark_instance_field_access(c, cf);
+				mark_class(dce, c);
+				mark_field(dce, c, cf, false);
+			case FClosure(Some({c:c}), cf):
+				mark_instance_field_access(c, cf);
+				do_default();
+			case FClosure(_):
+				do_default();
+			case _:
+				do_default();
+		}
+		expr(dce, e);
 	}
 
 	public static function expr (dce:Dce, e:TExpr) : Void {
@@ -553,8 +727,47 @@ class Dce {
 	}
 
 	public static function fix_accessors (com:context.Common.Context) {
-		trace("TODO: Dce.fix_accessors");
-		throw false;
+		List.iter(function (mt:ModuleType) {
+			switch (mt) {
+				// filter empty abstract implementation classes (issue #1885).
+				case TClassDecl(c={cl_kind:KAbstractImpl(_)}) if (c.cl_ordered_statics == Tl && c.cl_ordered_fields == Tl && !core.Meta.has(Used, c.cl_meta)):
+					c.cl_extern = true;
+				case TClassDecl(c={cl_kind:KAbstractImpl(a)}) if (core.Meta.has(Enum, a.a_meta)):
+					function is_runtime_field(cf:TClassField) : Bool {
+						return !core.Meta.has(Enum, cf.cf_meta);
+					}
+					// also filter abstract implementation classes that have only @:enum fields (issue #2858)
+					if (!List.exists(is_runtime_field,c.cl_ordered_statics)) {
+						c.cl_extern = true;
+					}
+				case TClassDecl(c):
+					function has_accessor (c:TClass, n:String, stat:Bool) {
+						return PMap.mem(n, (stat) ? c.cl_statics : c.cl_fields) || (
+							switch (c.cl_super) {
+								case Some({c:csup}): has_accessor(csup, n, stat);
+								case None: false;
+							}
+						);
+					}
+					function check_prop (stat:Bool, cf:TClassField) {
+						switch (cf.cf_kind) {
+							case Var({v_read:AccCall, v_write:a}):
+								var s = "get_" + cf.cf_name;
+								cf.cf_kind = Var({v_read:(has_accessor(c, s, stat)) ? AccCall : AccNever, v_write:a});
+							case _:
+						}
+						switch (cf.cf_kind) {
+							case Var({v_write:AccCall, v_read:a}):
+								var s = "set_" + cf.cf_name;
+								cf.cf_kind = Var({v_write:(has_accessor(c, s, stat)) ? AccCall : AccNever, v_read:a});
+							case _:
+						}
+					}
+					List.iter(check_prop.bind(true), c.cl_ordered_statics);
+					List.iter(check_prop.bind(false), c.cl_ordered_fields);
+				case _:
+			}
+		}, com.types);
 	}
 	public static function run (com:context.Common.Context, main:Option<TExpr>, full:Bool) {
 		var dce:Dce = {

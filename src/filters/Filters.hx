@@ -479,6 +479,292 @@ class Filters {
 
 	/* PASS 3 begin */
 
+	/* Checks if a private class' path clashes with another path */
+	public static function check_private_path (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c) if (c.cl_private):
+				var rpath = new core.Path(c.cl_module.m_path.a, "_"+c.cl_module.m_path);
+				if (Hashtbl.mem(ctx.g.types_module, rpath)) {
+					core.Error.error("This private class name will clash with "+core.Globals.s_type_path(rpath), c.cl_pos);
+				}
+			case _:
+		}
+	}
+
+	/* Rewrites class or enum paths if @:native metadata is set */
+	public static function apply_native_paths (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		function get_real_name (meta:core.Ast.Metadata, name:String) : {meta:core.Ast.MetadataEntry, name:String} {
+			var tmp = get_native_name(meta);
+			var name_ = tmp.name; var p = tmp.pos;
+			var _meta:core.Ast.MetadataEntry = {name:RealPath, params:[{expr:EConst(CString(name)), pos:p}], pos:p};
+			return {meta:_meta, name:name_};
+		}
+		function get_real_path (meta:core.Ast.Metadata, path:core.Path) : {meta:core.Ast.MetadataEntry, path:core.Path} {
+			var tmp = get_native_name(meta);
+			var name = tmp.name; var p = tmp.pos;
+			var _meta:core.Ast.MetadataEntry = {name:RealPath, params:[{expr:EConst(CString(core.Globals.s_type_path(path))), pos:p}], pos:p};
+			return {meta:_meta, path:core.Path.parse_path(name)};
+		}
+		try {
+			switch (t) {
+				case TClassDecl(c):
+					var did_change = new Ref(false);
+					function field (cf:core.Type.TClassField) {
+						try {
+							var _tmp = get_real_name(cf.cf_meta, cf.cf_name);
+							var meta = _tmp.meta; var name = _tmp.name;
+							cf.cf_name = name;
+							cf.cf_meta = meta :: cf.cf_meta;
+							List.iter(function (cf) { cf.cf_name = name; }, cf.cf_overloads);
+							did_change.set(true);
+						}
+						catch (_:ocaml.Not_found) {
+						}
+					}
+					function fields (cfs:ImmutableList<core.Type.TClassField>, old_map:PMap<String, core.Type.TClassField>) : PMap<String, core.Type.TClassField> {
+						did_change.set(false);
+						List.iter(field, cfs);
+						return
+						if (did_change.get()) {
+							List.fold_left(function (map:PMap<String, core.Type.TClassField>, f:core.Type.TClassField) {
+								return PMap.add(f.cf_name, f, map);
+							}, PMap.empty(), cfs);
+						}
+						else {
+							old_map;
+						}
+					}
+					c.cl_fields = fields(c.cl_ordered_fields, c.cl_fields);
+					c.cl_statics = fields(c.cl_ordered_statics, c.cl_statics);
+					var _tmp = get_real_path(c.cl_meta, c.cl_path);
+					var meta = _tmp.meta; var path = _tmp.path;
+					c.cl_meta = meta :: c.cl_meta;
+					c.cl_path = path;
+				case TEnumDecl(e):
+					var _tmp = get_real_path(e.e_meta, e.e_path);
+					var meta = _tmp.meta; var path = _tmp.path;
+					e.e_meta = meta :: e.e_meta;
+					e.e_path = path;
+				case _:
+			}
+		}
+		catch (_:ocaml.Not_found) {
+		}
+	}
+
+	/* Adds the __rtti field if required */
+	public static function add_rtti (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		function has_rtti(c:core.Type.TClass) : Bool {
+			return core.Meta.has(Rtti, c.cl_meta) || (switch (c.cl_super) { case None: false; case Some({c:csup}): has_rtti(csup); });
+		}
+		switch (t) {
+			case TClassDecl(c) if (has_rtti(c) && !PMap.mem("__rtti", c.cl_statics)):
+				var f = core.Type.mk_field("__rtti", ctx.t.tstring, c.cl_pos, core.Globals.null_pos);
+				var str = codegen.Genxml.gen_type_string(ctx.com, t);
+				f.cf_expr = Some(core.Type.mk(TConst(TString(str)), f.cf_type, c.cl_pos));
+				c.cl_ordered_statics = f :: c.cl_ordered_statics;
+				c.cl_statics = PMap.add(f.cf_name, f, c.cl_statics);
+			case _:
+		}
+	}
+
+	/* Adds member field initializations as assignments to the constructor */
+	public static function add_field_inits (reserved:PMap<String, Bool>, ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		var is_as3 = context.Common.defined(ctx.com, As3) && !(ctx.in_macro);
+		function apply (c:core.Type.TClass) : Void {
+			var ethis = core.Type.mk(TConst(TThis), TInst(c, List.map(function (p) { return p.t; }, c.cl_params)), c.cl_pos);
+			// TODO: we have to find a variable name which is not used in any of the functions
+			var v = core.Type.alloc_var("_g", ethis.etype, ethis.epos);
+			var need_this = new Ref(false);
+			var _tmp = List.fold_left (function (tmp:{fst:ImmutableList<core.Type.TClassField>, snd:ImmutableList<core.Type.TClassField>}, cf:core.Type.TClassField) {
+				var inits = tmp.fst; var fields = tmp.snd;
+				return switch [cf.cf_kind, cf.cf_expr] {
+					case [Var(_), Some(_)]:
+						if (is_as3) {
+							{fst:inits, snd:cf::fields};
+						}
+						else {
+							{fst:cf::inits, snd:fields};
+						}
+					case [Method(MethDynamic), Some(e)] if (is_as3):
+						/* TODO : this would have a better place in genSWF9 I think - NC */
+						/* we move the initialization of dynamic functions to the constructor and also solve the
+							'this' problem along the way */
+						function use_this(v:core.Type.TVar, e:core.Type.TExpr) : core.Type.TExpr {
+							return switch (e.eexpr) {
+								case TConst(TThis):
+									need_this.set(true);
+									core.Type.mk(TLocal(v), v.v_type, e.epos);
+								case _:
+									core.Type.map_expr(use_this.bind(v), e);
+							}
+						}
+						var e = core.Type.map_expr(use_this.bind(v), e);
+						var cf2 = cf.with({cf_expr:Some(e)});
+						// if the method is an override, we have to remove the class field to not get invalid overrides
+						var fields = if (List.memq(cf, c.cl_overrides)) {
+							c.cl_fields = PMap.remove(cf.cf_name, c.cl_fields);
+							fields;
+						}
+						else {
+							cf2 :: fields;
+						}
+						{fst:cf2::inits, snd:fields};
+					case _:
+						{fst:inits, snd:cf::fields};
+				}
+			}, {fst:Tl, snd:Tl}, c.cl_ordered_fields);
+			var inits = _tmp.fst; var fields = _tmp.snd;
+			c.cl_ordered_fields = List.rev(fields);
+			switch (inits) {
+				case []:
+				case _:
+					var el = List.map(function (cf:core.Type.TClassField) {
+						return switch (cf.cf_expr) {
+							case None: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+							case Some(e):
+								var lhs = core.Type.mk(TField(ethis, FInstance(c, List.map(function (p) { return p.t; }, c.cl_params), cf)), cf.cf_type, e.epos);
+								cf.cf_expr = None;
+								var eassign = core.Type.mk(TBinop(OpAssign, lhs, e), e.etype, e.epos);
+								if (is_as3) {
+									var echeck = core.Type.mk(TBinop(OpEq, lhs, core.Type.mk(TConst(TNull), lhs.etype, e.epos)), ctx.com.basic.tbool, e.epos);
+									core.Type.mk(TIf(echeck, eassign, None), eassign.etype, e.epos);
+								}
+								else {
+									eassign;
+								}
+						}
+					}, inits);
+					var el = (need_this.get()) ? core.Type.mk(TVar(v, Some(ethis)), ethis.etype, ethis.epos) :: el : el;
+					var cf = switch (c.cl_constructor) {
+						case None:
+							var ct:core.Type.T = TFun({args:[], ret:ctx.com.basic.tvoid});
+							var ce = core.Type.mk(TFunction({
+								tf_args: Tl,
+								tf_type: ctx.com.basic.tvoid,
+								tf_expr: core.Type.mk(TBlock(el), ctx.com.basic.tvoid, c.cl_pos)
+							}), ct, c.cl_pos);
+							var ctor = core.Type.mk_field("new", ct, c.cl_pos, core.Globals.null_pos);
+							ctor.cf_kind = Method(MethNormal);
+							ctor.with({cf_expr:Some(ce)});
+						case Some(cf):
+							switch (cf.cf_expr) {
+								case Some({eexpr:TFunction(f)}):
+									var bl:ImmutableList<core.Type.TExpr> = switch (f.tf_expr) { case {eexpr:TBlock(b)}: b; case x: [x]; };
+									var ce = core.Type.mk(TFunction(f.with({tf_expr:core.Type.mk(TBlock(List.append(el, bl)), ctx.com.basic.tvoid, c.cl_pos)})), cf.cf_type, cf.cf_pos);
+									cf.with({cf_expr:Some(ce)});
+								case _:
+									trace("Shall not be seen"); std.Sys.exit(255); throw false;
+							}
+					}
+					var config = optimization.AnalyzerConfig.get_field_config(ctx.com, c, cf);
+					optimization.Analyzer.Run.run_on_field(ctx, config, c, cf);
+					switch (cf.cf_expr) {
+						case Some(e):
+							// This seems a bit expensive, but hopefully constructor expressions aren't that massive.
+							var e = rename_local_vars(ctx, reserved, e);
+							var e = optimization.Optimizer.sanitize(ctx.com, e);
+							cf.cf_expr = Some(e);
+						case _:
+					}
+					c.cl_constructor = Some(cf);
+			}
+		}
+		switch (t) {
+			case TClassDecl(c) : apply(c);
+			case _:
+		}
+	}
+
+	/* Adds the __meta__ field if required */
+	public static function add_meta_field (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c):
+				switch (core.Texpr.build_metadata(ctx.com.basic, t)) {
+					case None:
+					case Some(e):
+						context.Common.add_feature(ctx.com, "has_metadata");
+						var cf = core.Type.mk_field("__meta__", e.etype, e.epos, core.Globals.null_pos);
+						cf.cf_expr = Some(e);
+						function can_deal_with_interface_metadata () : Bool {
+							return switch (ctx.com.platform) {
+								case Flash if (context.Common.defined(ctx.com, As3)): false;
+								case Cs, Java: false;
+								case _: true;
+							}
+						}
+						if (c.cl_interface && !can_deal_with_interface_metadata()) {
+							// borrowed from gencommon, but I did wash my hands afterwards
+							var path = new core.Path(c.cl_path.a, c.cl_path.b+"_HxMeta");
+							var ncls = core.Type.mk_class(c.cl_module, path, c.cl_pos, core.Globals.null_pos);
+							ncls.cl_ordered_statics = cf :: ncls.cl_ordered_statics;
+							ncls.cl_statics = PMap.add(cf.cf_name, cf, ncls.cl_statics);
+							ctx.com.types = List.append(ctx.com.types, [TClassDecl(ncls)]);
+							c.cl_meta = ({name:Custom(":hasMetadata"), params:Tl, pos:e.epos} : core.Ast.MetadataEntry) :: c.cl_meta;
+						}
+						else {
+							c.cl_ordered_statics = cf :: c.cl_ordered_statics;
+							c.cl_statics = PMap.add(cf.cf_name, cf, c.cl_statics);
+						}
+				}
+			case _:
+		}
+	}
+
+	/* Checks for Void class fields */
+	public static function check_void_field (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c):
+				function check(f:core.Type.TClassField) {
+					switch (core.Type.follow(f.cf_type)) {
+						case TAbstract({a_path:{a:[], b:"Void"}}, _):
+							core.Error.error("Fields of type Void are not allowed", f.cf_pos);
+						case _:
+					}
+				}
+				List.iter(check, c.cl_ordered_fields);
+				List.iter(check, c.cl_ordered_statics);
+			case _:
+		}
+	}
+
+	/* Interfaces have no 'super', but can extend many other interfaces.
+		This makes the first extended (implemented) interface the super for efficiency reasons (you can get one for 'free')
+		and leaves the remaining ones as 'implemented' */
+	public static function promote_first_interface_to_super (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		switch (t) {
+			case TClassDecl(c) if (c.cl_interface):
+				switch (c.cl_implements) {
+					case {c:{cl_path:{a:["cpp", "rtti"]}}} :: _:
+					case first_interface :: remaining:
+						c.cl_super = Some(first_interface);
+						c.cl_implements = remaining;
+					case _:
+				}
+			case _:
+		}
+	}
+
+	public static function commit_features (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		var m = core.Type.t_infos(t).mt_module;
+		Hashtbl.iter(function (k, v) {
+			context.Common.add_feature(ctx.com, k);
+		}, m.m_extra.m_features);
+	}
+
+	public static function check_reserved_type_paths (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
+		function check (path:core.Path, pos:core.Globals.Pos) {
+			if (List.mem(path, ctx.com.config.pf_reserved_type_paths)) {
+				ctx.com.warning("Type path "+core.Globals.s_type_path(path)+ " is reserved on this target", pos);
+			}
+		}
+		switch (t) {
+			case TClassDecl(c) if (!c.cl_extern): check(c.cl_path, c.cl_pos);
+			case TEnumDecl(e) if (!e.e_extern): check(e.e_path, e.e_pos);
+			case _:
+		}
+	}
+
 	/* Removes interfaces tagged with @:remove metadata */
 	public static function check_remove_metadata (ctx:context.Typecore.Typer, t:core.Type.ModuleType) : Void {
 		switch (t) {
@@ -623,7 +909,31 @@ class Filters {
 		}
 		t();
 		// PASS 3: type filters post-DCE
-		trace("Throwing false");
-		throw false;
+		var type_filters:ImmutableList<(context.Typecore.Typer, core.Type.ModuleType)->Void> = [
+			check_private_path,
+			apply_native_paths,
+			add_rtti,
+			switch (com.platform) { case Java, Cs: function (_,_) {}; case _: add_field_inits.bind(reserved); },
+			switch (com.platform) { case Hl: function (_,_) {}; case _: add_meta_field; },
+			check_void_field,
+			switch (com.platform) { case Cpp: promote_first_interface_to_super; case _: function (_,_) {}; },
+			commit_features,
+			(com.config.pf_reserved_type_paths != Tl) ? check_reserved_type_paths : function (_,_) {}
+		];
+		var type_filters = switch (com.platform) {
+			case Cs:
+				// type_filters @ [ fun _ t -> InterfaceProps.run t ]
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
+			case Js:
+				// JsExceptions.inject_callstack com type_filters
+				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
+			case _:
+				type_filters;
+		}
+		var t = filter_timer(detail_times, ["type 3"]);
+		List.iter(function (t:core.Type.ModuleType) {
+			List.iter(function (f) { f(tctx, t); }, type_filters);
+		}, com.types);
+		t();
 	}
 }

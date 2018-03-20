@@ -140,4 +140,14 @@ class AnalyzerConfig {
 			}
 		}, config, meta);
 	}
+
+	public static function get_class_config (com:context.Common.Context, c:core.Type.TClass) : AnalyzerConfig {
+		var config = get_base_config(com);
+		return update_config_from_meta(com, config, c.cl_meta);
+	}
+
+	public static function get_field_config (com:context.Common.Context, c:core.Type.TClass, cf:core.Type.TClassField) : AnalyzerConfig {
+		var config = get_class_config(com, c);
+		return update_config_from_meta(com, config, cf.cf_meta);
+	}
 }

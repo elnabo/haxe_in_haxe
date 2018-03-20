@@ -514,6 +514,10 @@ class Common {
 		raw_define(com, name);
 	}
 
+	public static function add_feature (com:Context, f:String) : Void {
+		Hashtbl.replace(com.features, f, true);
+	}
+
 	public static function has_dce (com:Context) : Bool {
 		try {
 			return defined_value(com, Dce) != "no";
