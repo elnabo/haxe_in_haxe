@@ -836,8 +836,7 @@ class Filters {
 				// 	TryCatchWrapper.configure_java com
 				// ]
 			case Js:
-				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
-				// filters @ [JsExceptions.init tctx];
+				filters = List.append(filters, [JsExceptions.init(tctx)]);
 			case _: filters;
 		}
 		var t = filter_timer(detail_times, ["expr 1"]);
@@ -925,8 +924,7 @@ class Filters {
 				// type_filters @ [ fun _ t -> InterfaceProps.run t ]
 				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
 			case Js:
-				// JsExceptions.inject_callstack com type_filters
-				trace("TODO: finish Filters.run"); std.Sys.exit(255); throw false;
+				JsExceptions.inject_callstack(com, type_filters);
 			case _:
 				type_filters;
 		}

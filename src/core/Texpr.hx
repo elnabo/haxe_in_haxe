@@ -4,7 +4,9 @@ import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.Hashtbl;
 import ocaml.List;
+import ocaml.PMap;
 import ocaml.Ref;
+
 using equals.Equal;
 using ocaml.Cloner;
 
@@ -16,6 +18,16 @@ class Builder {
 		return core.Type.mk(TTypeExpr(TClassDecl(c)), ta, p);
 	}
 
+	public static function make_typeexpr (mt:core.Type.ModuleType, pos:core.Globals.Pos) : core.Type.TExpr {
+		var t:core.Type.T = switch (mt) {
+			case TClassDecl(c): TAnon({a_fields:c.cl_statics, a_status:new Ref(Statics(c))});
+			case TEnumDecl(e): TAnon({a_fields:PMap.empty(), a_status:new Ref(EnumStatics(e))});
+			case TAbstractDecl(a): TAnon({a_fields:PMap.empty(), a_status:new Ref(AbstractStatics(a))});
+			case _: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+		}
+		return core.Type.mk(TTypeExpr(mt), t, pos);
+	}
+
 	public static function make_static_field (c:core.Type.TClass, cf:core.Type.TClassField, p:core.Globals.Pos) : core.Type.TExpr {
 		var e_this = make_static_this(c, p);
 		return core.Type.mk(TField(e_this, FStatic(c, cf)), cf.cf_type, p);
@@ -24,9 +36,15 @@ class Builder {
 	public static function make_int (basic:core.Type.BasicTypes, i:haxe.Int32, p:core.Globals.Pos) : core.Type.TExpr{
 		return core.Type.mk(TConst(TInt(i)), basic.tint, p);
 	}
+
 	public static function make_null (t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr{
 		return core.Type.mk(TConst(TNull), t, p);
 	}
+
+	public static function make_local (v:core.Type.TVar, p:core.Globals.Pos) : core.Type.TExpr {
+		return core.Type.mk(TLocal(v), v.v_type, p);
+	}
+
 	public static function make_const_texpr (basic:core.Type.BasicTypes, ct:core.Type.TConstant, p:core.Globals.Pos) : core.Type.TExpr{
 		return switch (ct) {
 			case TString(s): core.Type.mk(TConst(TString(s)), basic.tstring, p);
@@ -390,6 +408,25 @@ class Texpr {
 		}
 	}
 
+	public static function type_constant_value (basic:core.Type.BasicTypes, expr:core.Ast.Expr) : core.Type.TExpr {
+		var e = expr.expr; var p = expr.pos;
+		return switch (e) {
+			case EConst(c):
+				type_constant(basic, c, p);
+			case EParenthesis(e):
+				type_constant_value(basic, e);
+			case EObjectDecl(el):
+				core.Type.mk(TObjectDecl(List.map(function (tmp:core.Ast.ObjectField) : core.Type.TObjectField {
+					var e = tmp.expr;
+					return {name:tmp.name, pos:tmp.pos, quotes:tmp.quotes, expr:type_constant_value(basic, e)};
+				}, el)), TAnon({a_fields:PMap.empty(), a_status:new Ref(Closed)}), p);
+			case EArrayDecl(el):
+				core.Type.mk(TArrayDecl(List.map(type_constant_value.bind(basic), el)), basic.tarray(core.Type.t_dynamic), p);
+			case _:
+				core.Error.error("Constant value expected", p);
+		}
+	}
+
 	public static function for_remap (basic:BasicTypes, v:TVar, e1:TExpr, e2:TExpr, p:core.Globals.Pos) : TExpr {
 		var v_ = Type.alloc_var(v.v_name, e1.etype, e1.epos);
 		var ev_ = Type.mk(TLocal(v_), e1.etype, e1.epos);
@@ -409,7 +446,65 @@ class Texpr {
 	/* -------------------------------------------------------------------------- */
 	/* BUILD META DATA OBJECT */
 	public static function build_metadata (api:core.Type.BasicTypes, t:core.Type.ModuleType) : Option<core.Type.TExpr> {
-		trace("TODO: build_metadata");
-		throw false;
+		var _tmp = switch (t) {
+			case TClassDecl(c):
+				var fields = List.map(function (f:core.Type.TClassField) { return {fst:f.cf_name, snd:f.cf_meta}; }, List.append(c.cl_ordered_fields, switch (c.cl_constructor) { case None: Tl; case Some(f): [f.with({cf_name:"_"})]; }));
+				var statics = List.map(function (f:core.Type.TClassField) { return {fst:f.cf_name, snd:f.cf_meta}; }, c.cl_ordered_statics);
+				{pos:c.cl_pos, meta:Hd({fst:"", snd:c.cl_meta}, Tl), fields:fields, statics:statics};
+			case TEnumDecl(e):
+				{pos:e.e_pos, meta:Hd({fst:"", snd:e.e_meta}, Tl), fields:List.map(function (n:String) { return {fst:n, snd:PMap.find(n, e.e_constrs).ef_meta}; }, e.e_names), statics:Tl};
+			case TTypeDecl(t):
+				{pos:t.t_pos, meta:Hd({fst:"", snd:t.t_meta}, Tl), fields:switch(core.Type.follow(t.t_type)) { case TAnon(a): PMap.fold(function (f:core.Type.TClassField, acc) { return {fst:f.cf_name, snd:f.cf_meta} :: acc; }, a.a_fields, Tl); case _: Tl; }, statics:Tl};
+			case TAbstractDecl(a):
+				{pos:a.a_pos, meta:Hd({fst:"", snd:a.a_meta}, Tl), fields:Tl, statics:Tl};
+		}
+		var p = _tmp.pos; var meta = _tmp.meta; var fields = _tmp.fields; var statics = _tmp.statics;
+		function filter (l:ImmutableList<{fst:String, snd:core.Ast.Metadata}>) {
+			var l = List.map(function (tmp:{fst:String, snd:core.Ast.Metadata}) {
+				var n = tmp.fst; var ml = tmp.snd;
+				return {fst:n, snd:List.filter_map( function (tmp2:core.Ast.MetadataEntry) {
+					var m = tmp2.name; var el = tmp2.params; var p = tmp2.pos;
+					return switch (m) {
+						case Custom(s) if (s.length > 0 && s.charAt(0)!= ":"):
+							Some({name:s, params:el, pos:p});
+						case _:
+							None;
+					}
+				}, ml)};
+			}, l);
+			return List.filter(function (tmp:{fst:String, snd:ImmutableList<{name:String, params:ImmutableList<core.Ast.Expr>, pos:core.Globals.Pos}>}) { return tmp.snd != Tl; }, l);
+		}
+		var meta = filter(meta); var fields = filter(fields); var statics = filter(statics);
+		function make_meta_field (ml) : core.Type.TExpr {
+			var h:Hashtbl<String, Bool> = Hashtbl.create(0);
+			return core.Type.mk( TObjectDecl(List.map(function (tmp:{name:String, params:ImmutableList<core.Ast.Expr>, pos:core.Globals.Pos}) : core.Type.TObjectField {
+				var f = tmp.name; var el = tmp.params; var p = tmp.pos;
+				if (Hashtbl.mem(h, f)) {
+					core.Error.error("Duplicate metadata '"+f+"'", p);
+				}
+				Hashtbl.add(h, f, true);
+				return {name:f, pos:core.Globals.null_pos, quotes:NoQuotes, expr:core.Type.mk(switch (el) { case []: TConst(TNull); case _: TArrayDecl(List.map(type_constant_value.bind(api), el)); }, api.tarray(core.Type.t_dynamic), p)};
+			}, ml)), core.Type.t_dynamic, p);
+		}
+		function make_meta (l:ImmutableList<{fst:String, snd:ImmutableList<{name:String, params:ImmutableList<core.Ast.Expr>, pos:core.Globals.Pos}>}>) : core.Type.TExpr {
+			return core.Type.mk(TObjectDecl(List.map(function (tmp) : core.Type.TObjectField {
+				var f = tmp.fst; var ml = tmp.snd;
+				return {name:f, pos:core.Globals.null_pos, quotes:NoQuotes, expr:make_meta_field(ml)};
+			}, l)), core.Type.t_dynamic, p);
+		}
+		return
+		if (meta == Tl && fields == Tl && statics == Tl) {
+			None;
+		}
+		else {
+			var meta_obj:ImmutableList<core.Type.TObjectField> = Tl;
+			meta_obj = (fields == Tl) ? meta_obj : ({name:"fields", pos:core.Globals.null_pos, quotes:NoQuotes, expr:make_meta(fields)}:core.Type.TObjectField) :: meta_obj;
+			meta_obj = (statics == Tl) ? meta_obj : ({name:"statics", pos:core.Globals.null_pos, quotes:NoQuotes, expr:make_meta(statics)}:core.Type.TObjectField) :: meta_obj;
+			meta_obj = try {
+				({name:"obj", pos:core.Globals.null_pos, quotes:NoQuotes, expr:make_meta_field(List.assoc("", meta))}:core.Type.TObjectField):: meta_obj;
+			}
+			catch (_:ocaml.Not_found) { meta_obj; }
+			Some(core.Type.mk(TObjectDecl(meta_obj), core.Type.t_dynamic, p));
+		}
 	}
 }

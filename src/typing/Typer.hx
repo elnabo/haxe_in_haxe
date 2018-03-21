@@ -99,7 +99,7 @@ class Typer {
 		else {
 			({name:"methodName", pos:core.Globals.null_pos, quotes:NoQuotes, expr:{expr:EConst(CString(ctx.curfield.cf_name)), pos:p}}: core.Ast.ObjectField )::params;
 		}
-		fields = ({name:"className", pos:core.Globals.null_pos, quotes:NoQuotes, expr:{expr:EConst(CString(core.Globals.s_type_path(ctx.curclass.cl_path))), pos:p}}: core.Ast.ObjectField ) :: params;
+		fields = ({name:"className", pos:core.Globals.null_pos, quotes:NoQuotes, expr:{expr:EConst(CString(core.Globals.s_type_path(ctx.curclass.cl_path))), pos:p}}: core.Ast.ObjectField ) :: fields;
 		fields = ({name:"lineNumber", pos:core.Globals.null_pos, quotes:NoQuotes, expr:{expr:EConst(CInt(Std.string(syntax.Lexer.get_error_line(p)))), pos:p}}: core.Ast.ObjectField ) :: fields;
 		fields = ({name:"fileName", pos:core.Globals.null_pos, quotes:NoQuotes, expr:{expr:EConst(CString(file)), pos:p}}: core.Ast.ObjectField ) :: fields;
 		return { expr:EObjectDecl(fields), pos:p }
@@ -3448,8 +3448,8 @@ class Typer {
 			if (!ctx.untyped_) {
 				switch (PMap.foldi(function (n:String, cf:core.Type.TClassField, acc:ImmutableList<String>) { return (!core.Meta.has(Optional, cf.cf_meta) && !PMap.mem(n, fields.get())) ? n::acc : acc; }, field_map, [])) {
 					case []:
-					case [n]: context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires field "+n)], p);
-					case nl: context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires field "+List.join(", ", nl))], p);
+					case [n]: trace(p); context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires field "+n)], p);
+					case nl: context.Typecore.raise_or_display(ctx, [Unify_custom("Object requires fields "+List.join(", ", nl))], p);
 				}
 				switch (extra_fields.get()) {
 					case []:

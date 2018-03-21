@@ -527,6 +527,52 @@ class Common {
 		}
 	}
 
+	public static function has_feature (com:Context, f:String) : Bool {
+		return
+		try {
+			Hashtbl.find(com.features, f);
+		}
+		catch (_:ocaml.Not_found) {
+			if (com.types == Tl) { !has_dce(com); }
+			else {
+				switch (List.rev(f.split("."))) {
+					case []: trace("Shall not be seen"); std.Sys.exit(255); throw false;
+					case [cl]: has_feature(com, cl + ".*");
+					case meth :: cl :: pack:
+						var r = try {
+							var path = new core.Path(List.rev(pack), cl);
+							switch (List.find(function (t) { return core.Type.t_path(t).equals(path) && !core.Meta.has(RealPath, core.Type.t_infos(t).mt_meta); }, com.types)) {
+								case t if (meth=="*"):
+									switch (t) {
+										case TAbstractDecl(a):
+											core.Meta.has(ValueUsed, a.a_meta);
+										case _:
+											core.Meta.has(Used, core.Type.t_infos(t).mt_meta);
+									}
+								case TClassDecl(c={cl_extern:true}) if (com.platform != Js || (cl !="Array" && cl != "Math")):
+									core.Meta.has(Used, try {
+										PMap.find(meth, c.cl_statics).cf_meta;
+									}
+									catch (_:ocaml.Not_found) {
+										PMap.find(meth, c.cl_fields).cf_meta;
+									});
+								case TClassDecl(c):
+									PMap.exists(meth, c.cl_statics) || PMap.exists(meth, c.cl_fields);
+								case _: false;
+							}
+						}
+						catch (_:ocaml.Not_found) {
+							false;
+						}
+						var r = r || !has_dce(com);
+						Hashtbl.add(com.features, f, r);
+						return r;
+
+				}
+			}
+		}
+	}
+
 	public static function abort (msg:String, p:core.Globals.Pos) : Dynamic {
 		throw new Abort(msg, p);
 	}
