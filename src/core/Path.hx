@@ -196,7 +196,39 @@ class Path {
 		}
 	}
 
-	public static function mkdir_from_path (p:String) {
-		sys.FileSystem.createDirectory(p);
+	public static function mkdir_recursive (base:String, dir_list:ImmutableList<String>) : Void {
+		switch (dir_list) {
+			case []:
+			case dir :: remaining:
+				var path = switch (base) {
+					case "": dir;
+					case "/": "/"+dir;
+					case _: base + "/" + dir;
+				}
+				var path_len = path.length;
+				path = if (path_len > 0 && (path.charAt(path_len -1) == "/" || path.charAt(path_len-1) == "\\")) {
+					path.substr(0, path_len-1);
+				}
+				else {
+					path;
+				}
+				if (!(path=="" || (path_len==2 && path.substr(1,1) == ":"))) {
+					if (!sys.FileSystem.exists(path)) {
+						sys.FileSystem.createDirectory(path);
+					}
+				}
+				mkdir_recursive((path=="") ? "/" : path, remaining);
+		}
+	}
+
+	public static function mkdir_from_path (path:String) : Void {
+		var r = ~/[\/\\]+/g;
+		var parts:ImmutableList<String> = r.split(path);
+		switch (parts) {
+			case []: /* path was "" */
+			case _:
+				var dir_list = List.rev(List.tl(List.rev(parts)));
+				mkdir_recursive("", dir_list);
+		}
 	}
 }

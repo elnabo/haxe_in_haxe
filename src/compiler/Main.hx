@@ -1,5 +1,7 @@
 package compiler;
 
+import generators.*;
+
 import ocaml.Arg;
 import ocaml.Hashtbl;
 import ocaml.List;
@@ -333,7 +335,6 @@ class Main {
 	}
 
 	public static function generate (tctx:context.Typecore.Typer, ext:String, xml_out:Option<String>, interp:Bool, swf_header:Option<{width:Int, height:Int, fps:Float, color:Int}>) : Void {
-		trace("TODO: compiler.Main.generate");
 		var com = tctx.com;
 		/* check file extension. In case of wrong commandline, we don't want
 		to accidentaly delete a source file. */
@@ -344,7 +345,74 @@ class Main {
 		if (com.platform == Flash || com.platform == Cpp || com.platform == Hl) {
 			List.iter(codegen.Codegen.fix_overrides.bind(com), com.types);
 		}
-		throw false;
+
+		if (context.Common.defined(com, Dump)) {
+			codegen.Codegen.Dump.dump_types(com);
+		}
+		if (context.Common.defined(com, DumpDependencies)) {
+			codegen.Codegen.Dump.dump_dependencies(com);
+			if (!tctx.in_macro) {
+				switch (tctx.g.macros) {
+					case None:
+					case Some({t:ctx}):
+						codegen.Codegen.Dump.dump_dependencies(Some("macro"), ctx.com);
+				}
+			}
+		}
+		switch (com.platform) {
+			case Neko, Hl, Eval if (interp):
+			case Cpp if (context.Common.defined(com, Cppia)):
+			case Cpp, Cs, Java, Php: core.Path.mkdir_from_path(com.file+"/.");
+			case _: core.Path.mkdir_from_path(com.file);
+		}
+
+		if (interp) {
+			var t = core.Timer.timer(["interp"]);
+			try {
+				typing.MacroContext.interpret(tctx);
+				t();
+			}
+			catch (e:Any) {
+				t();
+				throw e;
+			}
+		}
+		else if (com.platform == Cross) {}
+		else {
+			var _tmp = switch (com.platform) {
+				case Flash if (context.Common.defined(com, As3)):
+					{generate:Genas3.generate, name:"AS3"};
+				case Flash:
+					{generate:Genswf.generate.bind(swf_header), name:"swf"};
+				case Neko:
+					{generate:Genneko.generate, name:"neko"};
+				case Js:
+					{generate:Genjs.generate, name:"js"};
+				case Lua:
+					{generate:Genlua.generate, name:"lua"};
+				case Php:
+					{generate:Genphp7.generate, name:"php"};
+				case Cpp:
+					{generate:Gencpp.generate, name:"cpp"};
+				case Cs:
+					{generate:Gencs.generate, name:"cs"};
+				case Java:
+					{generate:Genjava.generate, name:"java"};
+				case Python:
+					{generate:Genpy.generate, name:"python"};
+				case Hl:
+					{generate:Genhl.generate, name:"hl"};
+				case Eval:
+					{generate:function (_) { typing.MacroContext.interpret(tctx); }, name:"eval"};
+				case Cross:
+					trace("Shall not be seen"); std.Sys.exit(255); throw false;
+			}
+			var generate = _tmp.generate; var name = _tmp.name;
+			context.Common.log(com, "Generating "+name+": "+com.file);
+			var t = core.Timer.timer(["generate", name]);
+			generate(com);
+			t();
+		}
 	}
 
 	public static function get_std_class_paths () : ImmutableList<String> {
@@ -1180,17 +1248,16 @@ class Main {
 		// 		std.Sys.exit(e.i);
 		// 	}
 		// }
-		catch (e:Bool) { throw e; }
-		// catch (e:Dynamic) {
-		// 	trace("Exception  Dynamic", e);
-		// 	var orp = std.Sys.getEnv("OCAMLRUNPARAM");
-		// 	if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
-		// 		error(ctx, ""+e, core.Globals.null_pos);
-		// 	}
-		// 	else {
-		// 		throw e;
-		// 	}
-		// }
+		catch (e:Dynamic) {
+			trace("Exception  Dynamic", e);
+			var orp = std.Sys.getEnv("OCAMLRUNPARAM");
+			if ((orp == null || (orp != "b" && context.common.CompilationServer.runs())) && !Server.is_debug_run()) {
+				error(ctx, ""+e, core.Globals.null_pos);
+			}
+			else {
+				throw e;
+			}
+		}
 	}
 
 	public static function main () {

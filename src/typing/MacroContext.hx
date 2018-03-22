@@ -21,6 +21,11 @@ class MacroContext {
 		throw false;
 	}
 
+	public static function interpret (ctx:context.Typecore.Typer) : Void {
+		trace("TODO: typing.MacroContext.interpret");
+		throw false;
+	}
+
 	public static function setup () : Void {
 		trace("TODO typing.MacroContext.setup");
 	}

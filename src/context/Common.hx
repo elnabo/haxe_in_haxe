@@ -196,6 +196,14 @@ class Common {
 		return core.Define.defined_value(com.defines, v);
 	}
 
+	public static function defined_value_safe (?default_:Option<Option<String>>=null, com:Context, v:core.Define.StrictDefined) {
+		if (default_ == null) { default_ = None; }
+		return switch (default_) {
+			case Some(s): core.Define.defined_value_safe(s, com.defines, v);
+			case None: core.Define.defined_value_safe(None, com.defines, v);
+		}
+	}
+
 	public static function define_value (com:Context, k:core.Define.StrictDefined, v:String) {
 		core.Define.define_value(com.defines, k, v);
 	}

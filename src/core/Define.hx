@@ -1,6 +1,7 @@
 package core;
 
 import haxe.ds.ImmutableList;
+import haxe.ds.Option;
 import ocaml.List;
 import ocaml.PMap;
 // import ocaml.Ref;
@@ -480,6 +481,20 @@ class Define {
 
 	public static function defined_value (ctx:Define, v:StrictDefined) {
 		return raw_defined_value(ctx, infos(v).a);
+	}
+
+	public static function defined_value_safe (?default_:Option<String>=null, ctx:Define, v:StrictDefined) {
+		if (default_ == null) { default_ = None; }
+		return
+		try {
+			defined_value(ctx, v);
+		}
+		catch (_:ocaml.Not_found) {
+			switch (default_) {
+				case Some(s): s;
+				case None: "";
+			}
+		}
 	}
 
 	public static function raw_define (ctx:Define, v:String) {

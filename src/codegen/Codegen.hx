@@ -8,6 +8,24 @@ import ocaml.Ref;
 
 using equals.Equal;
 
+class Dump {
+	public static function dump_types_(com:context.Common.Context, s_expr:core.Type.TExpr->String) : Void {
+		trace("TODO: dump_types_");
+		throw false;
+	}
+
+	public static function dump_types (com:context.Common.Context) : Void {
+		trace("TODO: dump_types");
+		throw false;
+	}
+
+	public static function dump_dependencies (?target_override:Option<String>=null, com:context.Common.Context) : Void {
+		if (target_override == null) { target_override = None; }
+		trace("TODO: dump_dependencies");
+		throw false;
+	}
+}
+
 class UnificationCallback {
 	public static final tf_stack = new Ref(Tl);
 
@@ -252,6 +270,13 @@ class Codegen {
 					}
 				}, c.cl_ordered_fields);
 			default:
+		}
+	}
+
+	public static function map_source_header (com:context.Common.Context, f:String->Void) : Void {
+		return switch (context.Common.defined_value_safe(com, SourceHeader)) {
+			case "":
+			case s: f(s);
 		}
 	}
 }

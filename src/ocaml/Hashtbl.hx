@@ -10,6 +10,15 @@ class Hashtbl<K,V> {
 		return new Hashtbl<K,V>();
 	}
 
+	public function indexOf (key:K) : Int {
+		for (i in 0...keys.length) {
+			if (keys[i].equals(key)) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
 	public function exists(key:K) : Bool {
 		for (k in keys) {
 			if (k.equals(key)) {
@@ -20,9 +29,13 @@ class Hashtbl<K,V> {
 	}
 
 	public function set(key:K, value:V) : Void {
-		if (!exists(key)) {
+		var index = indexOf(key);
+		if (index < 0) {
 			keys.push(key);
 			values.push(value);
+		}
+		else {
+			values[index] = value;
 		}
 	}
 
