@@ -1,6 +1,14 @@
 package ocaml;
 
 class Option {
+
+	public static function may<A> (f:A->Void, opt:haxe.ds.Option<A>) : Void {
+		switch (opt) {
+			case Some(a): f(a);
+			case None:
+		}
+	}
+
 	public static function map<A,B> (f:A->B, opt:haxe.ds.Option<A>) : haxe.ds.Option<B> {
 		return switch (opt) {
 			case None: None;
