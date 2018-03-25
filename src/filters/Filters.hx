@@ -799,7 +799,6 @@ class Filters {
 	}
 
 	public static function run (com:context.Common.Context, tctx:context.Typecore.Typer, main:Option<core.Type.TExpr>) : Void {
-		trace("TODO: filters.Filters.run");
 		var detail_times = context.Common.raw_defined(com, "filter-times");
 		var new_types = List.filter(function (t:core.Type.ModuleType) {
 			switch (t) {

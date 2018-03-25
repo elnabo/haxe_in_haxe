@@ -1,5 +1,8 @@
 package codegen;
 
+import core.Type.TClass;
+import core.Type.TClassField;
+
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
 import ocaml.List;
@@ -60,6 +63,36 @@ class Codegen {
 
 	/* -------------------------------------------------------------------------- */
 	/* TOOLS */
+
+	public static function has_properties (c:TClass) : Bool {
+		return List.exists(function (f:TClassField) {
+			return switch (f.cf_kind) {
+				case Var({v_read:AccCall}): true;
+				case Var({v_write:AccCall}): true;
+				case _ if (core.Meta.has(Accessor, f.cf_meta)): true;
+				case _: false;
+			}
+		}, c.cl_ordered_fields) || (switch (c.cl_super) { case Some({c:c}): has_properties(c); case _: false;});
+	}
+
+	public static function get_properties (fields:ImmutableList<TClassField>) : ImmutableList<{fst:String, snd:String}> {
+		return List.fold_left( function (acc:ImmutableList<{fst:String, snd:String}>, f:TClassField) {
+			return
+			if (core.Meta.has(Accessor, f.cf_meta)) {
+				{fst:f.cf_name, snd:f.cf_name} :: acc;
+			}
+			else {
+				var acc =  switch (f.cf_kind) {
+					case Var({v_read:AccCall}): {fst:"get_"+f.cf_name, snd:"get_"+f.cf_name} :: acc;
+					case _: acc;
+				}
+				switch (f.cf_kind) {
+					case Var({v_write:AccCall}): {fst:"set_"+f.cf_name, snd:"set_"+f.cf_name} :: acc;
+					case _: acc;
+				}
+			}
+		}, Tl, fields);
+	}
 
 	public static function update_cache_dependencies (t:core.Type.ModuleType) : Void {
 		var check_field:(m:core.Type.ModuleDef, cf:core.Type.TClassField)->Void = null;
@@ -278,5 +311,12 @@ class Codegen {
 			case "":
 			case s: f(s);
 		}
+	}
+
+	/* -------------------------------------------------------------------------- */
+	/* MISC FEATURES */
+
+	public static inline function bytes_serialize (data:String) {
+		return haxe.crypto.Base64.encode(haxe.io.Bytes.ofString(data));
 	}
 }

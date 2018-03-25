@@ -162,7 +162,7 @@ class Context {
 	public var types : ImmutableList<core.Type.ModuleType>;
 	public var resources : Hashtbl<String, String>;
 	public var neko_libs : ImmutableList<String>;
-	public var include_files : ImmutableList<{a:String, b:String}>;
+	public var include_files : ImmutableList<{fst:String, snd:String}>;
 	// ocaml type: (string * (unit -> Swf.swf) * (unit -> ((string list * string),As3hl.hl_class) Hashtbl.t)) list;
 	public var swf_libs : ImmutableList<Dynamic>;
 	// ocaml type: (string * bool * (unit -> unit) * (unit -> (path list)) * (path -> ((JData.jclass * string * string) option))) list; (* (path,std,close,all_files,lookup) *)
@@ -533,6 +533,18 @@ class Common {
 		catch (_:ocaml.Not_found) {
 			return false;
 		}
+	}
+
+	/*
+		TODO: The has_dce check is there because we mark types with @:directlyUsed in the DCE filter,
+		which is not run in dce=no and thus we can't know if a type is used directly or not,
+		so we just assume that they are.
+
+		If we had dce filter always running (even with dce=no), we would have types marked with @:directlyUsed
+		and we wouldn't need to generate unnecessary imports in dce=no, but that's good enough for now.
+	*/
+	public static inline function is_directly_used (com:Context, meta:core.Ast.Metadata) : Bool {
+		return !has_dce(com) || core.Meta.has(DirectlyUsed, meta);
 	}
 
 	public static function has_feature (com:Context, f:String) : Bool {

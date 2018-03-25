@@ -379,6 +379,13 @@ class Texpr {
 		}
 	}
 
+	public static function set_default (basic:core.Type.BasicTypes, a:core.Type.TVar, c:core.Type.TConstant, p:core.Globals.Pos) : core.Type.TExpr {
+		var t = a.v_type;
+		var ve = core.Type.mk(TLocal(a), t, p);
+		var cond = TBinop(OpEq, ve, core.Type.mk(TConst(TNull), t, p));
+		return core.Type.mk(TIf(Builder.mk_parent(core.Type.mk(cond, basic.tbool, p)), core.Type.mk(TBinop(OpAssign, ve, core.Type.mk(TConst(c), t, p)), t, p), None), basic.tvoid, p);
+	}
+
 	public static function type_constant (basic:core.Type.BasicTypes, c:core.Ast.Constant, p:core.Globals.Pos) : core.Type.TExpr {
 		return switch (c) {
 			case CInt(s):
