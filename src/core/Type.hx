@@ -410,8 +410,12 @@ enum Eq_kind {
 }
 
 class ExtType {
-	public static inline function is_void (t:core.Type.T) : Bool {
-		return t.match(TAbstract({a_path:{a:[], b:"Void"}}, _));
+	public static inline function is_void (t:core.T) : Bool {
+		return
+		switch (t) {
+			case TAbstract({a_path:{a:Tl, b:"Void"}}, _): true;
+			case _: false;
+		}
 	}
 }
 
@@ -421,7 +425,7 @@ class Type {
 
 	// ======= General utility =======
 
-	public static function alloc_var (n:String, t:core.Type.T, p:core.Globals.Pos) : core.Type.TVar {
+	public static function alloc_var (n:String, t:T, p:core.Globals.Pos) : TVar {
 		uid++;
 		return {
 			v_name: n,
@@ -555,19 +559,12 @@ class Type {
 		};
 	}
 
-	static var _null_module:ModuleDef = null;
-	public static var null_module(get, never): ModuleDef;
-	static function get_null_module() : ModuleDef {
-		if (_null_module == null) {
-			_null_module = {
-				m_id: alloc_mid(),
-				m_path: new core.Path([], ""),
-				m_types: [],
-				m_extra: module_extra("", "", 0.0, MFake, [])
-			};
-		}
-		return _null_module;
-	}
+	public static final null_module:ModuleDef = {
+		m_id: alloc_mid(),
+		m_path: new core.Path([], ""),
+		m_types: [],
+		m_extra: module_extra("", "", 0.0, MFake, [])
+	};
 
 	public static final null_class:TClass = {
 		var c = mk_class(null_module, new core.Path([],""), core.Globals.null_pos, core.Globals.null_pos);
@@ -1867,7 +1864,11 @@ class Type {
 					switch (c.cl_kind) {
 						case KTypeParameter(pl):
 							// one of the constraints must unify with { }
-							if (!List.exists(function (t:T) { return t.match(TInst(_, _)|TAnon(_)); }, pl)) {
+							if (!List.exists(function (t:T) {
+								return switch(t) {
+									case TInst(_,_),TAnon(_): true;
+									case _: false;
+								}}, pl)) {
 								error([cannot_unify(a, b)]);
 							}
 						case _:
@@ -2555,14 +2556,14 @@ class Type {
 					case KTypeParameter(_), KGeneric: et;
 					case _: ft(TInst(c, pl));
 				}
-				var c = null; var pl = null;
 				var _tmp = switch (follow(t)) {
-					case TInst(_c, _pl):
-						c = _c; pl = _pl;
-					case TAbstract({a_impl:Some(_c)}, _pl):
-						c = _c; pl = _pl;
+					case TInst(c, pl):
+						{c:c, pl:pl};
+					case TAbstract({a_impl:Some(c)}, pl):
+						{c:c, pl:pl};
 					case t: error([has_no_field(t, "new")]);
 				}
+				var c = _tmp.c; var pl = _tmp.pl;
 				e.with({
 					eexpr:core.TExprExpr.TNew(c, pl, List.map(f, el)),
 					etype: ft(e.etype)

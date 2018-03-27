@@ -2664,21 +2664,21 @@ class Typeload {
 					switch (e) {
 						case EVars([{type:Some({ct:CTAnonymous(fields), pos:p}), expr:None}]):
 							constructs.set(List.map(function (f:core.Ast.ClassField): core.Ast.EnumConstructor {
-								var args = []; var params = []; var t = null;
-								switch (f.cff_kind) {
-									case FVar(_t, None): t = _t;
-									case FFun({f_params:pl, f_type:_t, f_expr:(None|Some({expr:EBlock([])})), f_args:al}):
-										args = List.map(function (fa:core.Ast.FunArg) {
+								var _tmp = switch (f.cff_kind) {
+									case FVar(t, None): {args:Tl, params:Tl, t:t};
+									case FFun({f_params:pl, f_type:t, f_expr:(None|Some({expr:EBlock([])})), f_args:al}):
+										{args:List.map(function (fa:core.Ast.FunArg) {
 											return switch (fa.type) {
 												case None: core.Error.error("Missing function parameter type", f.cff_pos);
 												case Some(t): {name:fa.name.pack, opt:fa.opt, type:t};
 											}
-										}, al);
-										params = pl;
-										t = _t;
+										}, al),
+										params: pl,
+										t: t};
 									case _:
 										core.Error.error("Invalid enum constructor in @:build result", p);
 								}
+								var args = _tmp.args; var params = _tmp.params; var t = _tmp.t;
 								return {
 									ec_name: f.cff_name,
 									ec_doc: f.cff_doc,

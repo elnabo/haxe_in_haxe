@@ -133,7 +133,7 @@ class Typer {
 			case TAnon(a):
 				if (a.a_status.get() != Closed) { throw ocaml.Not_found.instance; }
 				switch [core.Type.follow(PMap.find("hasNext", a.a_fields).cf_type), core.Type.follow(PMap.find("next", a.a_fields).cf_type)] {
-					case [TFun({args:[], ret:tb}), TFun({args:[], ret:t})] if (core.Type.follow(tb).match(TAbstract({a_path:{a:[], b:"Bool"}}, _))):
+					case [TFun({args:[], ret:tb}), TFun({args:[], ret:t})] if ( switch (core.Type.follow(tb)) { case TAbstract({a_path:{a:[], b:"Bool"}}, _): true; case _: false; }):
 						if (PMap.fold(function (_, acc:Int) { return acc + 1; }, a.a_fields, 0) != 2) { throw ocaml.Not_found.instance; }
 						t;
 					case _: throw ocaml.Not_found.instance;
@@ -473,7 +473,7 @@ class Typer {
 							}
 							return PMap.add(n, core.Type.mk_field(n, t, List.hd(el).epos, core.Globals.null_pos), acc);
 						}, fields, PMap.empty());
-						core.Type.T.TAnon({a_fields:fields, a_status:new Ref<core.Type.AnonStatus>(Closed)});
+						TAnon({a_fields:fields, a_status:new Ref<core.Type.AnonStatus>(Closed)});
 					}
 					catch (_:ocaml.Not_found) {
 					/* Second pass: Get all base types (interfaces, super classes and their interfaces) of most general type.
@@ -607,7 +607,7 @@ class Typer {
 						case name::_: call_error(Cannot_skip_non_nullable(name), callp);
 					}
 					[];
-				case [_, [{name:name, opt:false, t:t}]] if (core.Type.follow(t).match(TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, _))):
+				case [_, [{name:name, opt:false, t:t}]] if ( switch (core.Type.follow(t)) { case TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, _): true; case _: false; }):
 					switch (core.Type.follow(t)) {
 						case TAbstract({a_path:{a:["haxe", "extern"], b:"Rest"}}, [t]):
 							try {
@@ -1922,7 +1922,10 @@ class Typer {
 
 	public static function unify_int (ctx:context.Typecore.Typer, e:core.Type.TExpr, k:Type_class) : Bool {
 		function is_dynamic(t:core.Type.T) : Bool {
-			return core.Type.follow(t).match(TDynamic(_));
+			return switch (core.Type.follow(t)) {
+				case TDynamic(_): true;
+				case _: false;
+			}
 		}
 		function is_dynamic_array(t:core.Type.T) : Bool {
 			return switch (core.Type.follow(t)) {
@@ -4717,21 +4720,20 @@ class Typer {
 			case None: return None;
 			case Some(cl):
 				var t = typing.Typeload.load_type_def(ctx, core.Globals.null_pos, {tpackage:cl.a, tname:cl.b, tparams:[], tsub:None});
-				var fmode : core.Type.TFieldAccess = null;
-				var ft : core.Type.T = null;
-				var r: core.Type.T = null;
-				switch (t) {
+				var _tmp = switch (t) {
 					case TEnumDecl(_), TTypeDecl(_), TAbstractDecl(_):
 						core.Error.error("Invalid -main : "+core.Globals.s_type_path(cl)+ " is not a class", core.Globals.null_pos);
 					case TClassDecl(c):
-						try  {
+						try {
 							var f = PMap.find("main",c.cl_statics);
 							var t = core.Type.field_type(f);
 							switch (t) {
-								case TFun({args:[], ret:_r}):
-									fmode = core.Type.TFieldAccess.FStatic(c,f);
-									ft = t;
-									r = _r;
+								case TFun({args:[], ret:r}):
+									{
+										fmode: core.Type.TFieldAccess.FStatic(c,f),
+										ft: t,
+										r: r
+									};
 								default:
 									core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
 							}
@@ -4740,6 +4742,7 @@ class Typer {
 							core.Error.error("Invalid -main : " + core.Globals.s_type_path(cl) + " does not have static function main", c.cl_pos);
 						}
 				}
+				var fmode = _tmp.fmode; var ft = _tmp.ft; var r = _tmp.r;
 				var emain = type_type(ctx, cl, core.Globals.null_pos);
 				var main = core.Type.mk(core.Type.TExprExpr.TCall(core.Type.mk(core.Type.TExprExpr.TField(emain, fmode), ft, core.Globals.null_pos), []), r, core.Globals.null_pos);
 				main = try {
@@ -4754,7 +4757,7 @@ class Typer {
 					var p = core.Globals.null_pos;
 					var _et = core.Type.mk(
 						core.Type.TExprExpr.TTypeExpr(et),
-						core.Type.T.TAnon({a_fields: PMap.empty(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
+						TAnon({a_fields: PMap.empty(), a_status: new ocaml.Ref(core.Type.AnonStatus.Statics(ec))}),
 						p
 					);
 					var call = core.Type.mk(

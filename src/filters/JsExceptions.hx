@@ -2,7 +2,6 @@ package filters;
 
 import haxe.ds.ImmutableList;
 import haxe.ds.Option;
-import core.Type.T;
 import core.Type.TExprExpr;
 
 import ocaml.List;
@@ -44,7 +43,7 @@ class JsExceptions {
 		}
 
 		function static_wrap (e:core.Type.TExpr) : core.Type.TExpr {
-			return e.with({eexpr:TNew(cHaxeError, [], [e]), etype:TInst(cHaxeError, [])});
+			return e.with({eexpr:TNew(cHaxeError, [], [e]), etype:core.Type.T.TInst(cHaxeError, [])});
 		}
 
 		function loop (vrethrow:Option<core.Type.TExpr>, e:core.Type.TExpr) : core.Type.TExpr {
@@ -84,7 +83,7 @@ class JsExceptions {
 					var eSyntax = context.Typecore.make_static_this(cSyntax, e.epos);
 					var eHaxeError = context.Typecore.make_static_this(cHaxeError, e.epos);
 					var eInstanceof = core.Texpr.Builder.fcall(eSyntax, "instanceof", [ecatchall, eHaxeError], ctx.com.basic.tbool, e.epos);
-					var eval = core.Texpr.Builder.field(ecatchall.with({etype:TInst(cHaxeError, [])}), "val", core.Type.t_dynamic, e.epos);
+					var eval = core.Texpr.Builder.field(ecatchall.with({etype:core.Type.T.TInst(cHaxeError, [])}), "val", core.Type.t_dynamic, e.epos);
 					var eunwrap = core.Type.mk(TIf(eInstanceof, eval, Some(ecatchall)), core.Type.t_dynamic, e.epos);
 
 					var vunwrapped = core.Type.alloc_var(catchall_name, core.Type.t_dynamic, e.epos);

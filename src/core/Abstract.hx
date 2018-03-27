@@ -61,7 +61,7 @@ class Abstract {
 
 	public static function get_underlying_type (a:core.Type.TAbstract, pl:core.Type.TParams) : core.Type.T {
 		function maybe_recurse (t:core.Type.T) {
-			underlying_type_stack.set(core.Type.T.TAbstract(a, pl)::underlying_type_stack.get());
+			underlying_type_stack.set((TAbstract(a, pl) : core.Type.T) ::underlying_type_stack.get());
 			function loop (t:core.Type.T) : core.Type.T {
 				return switch(t) {
 					case TMono(r):

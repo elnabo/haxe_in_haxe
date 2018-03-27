@@ -179,7 +179,7 @@ class AbstractCast {
 							let's construct the underlying type. */
 						switch (core.Abstract.get_underlying_type(a, pl)) {
 							case t=TInst(c, tl): e.with({{eexpr:core.Type.TExprExpr.TNew(c, tl, el), etype:t}});
-							case _: core.Error.error("Cannot construct "+core.Type.s_type(core.Type.print_context(), core.Type.T.TAbstract(a, pl)), e.epos);
+							case _: core.Error.error("Cannot construct "+core.Type.s_type(core.Type.print_context(), TAbstract(a, pl)), e.epos);
 						}
 					}
 					else {
@@ -189,7 +189,7 @@ class AbstractCast {
 						var e = make_static_call(ctx, c, cf, a, pl, core.Type.mk(TConst(TNull), TAbstract(a, pl), e.epos)::el, m, e.epos);
 						e.with({etype:m});
 					}
-				case TCall({eexpr:TField(_, FStatic({cl_path:{a:[], b:"Std"}}, {cf_name:"string"}))}, [e1]) if (core.Type.follow(e1.etype).match(TAbstract({a_impl:Some(_)}, _))):
+				case TCall({eexpr:TField(_, FStatic({cl_path:{a:[], b:"Std"}}, {cf_name:"string"}))}, [e1]) if ( switch (core.Type.follow(e1.etype)) { case TAbstract({a_impl:Some(_)}, _): true; case _: false; }):
 					switch (core.Type.follow(e1.etype)) {
 						case TAbstract(a={a_impl:Some(c)}, tl):
 							try {

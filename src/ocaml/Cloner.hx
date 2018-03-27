@@ -70,6 +70,7 @@ class Cloner {
 				Reflect.setField(base, field, Reflect.field(v, field));
 			}
 		}
+		if (base == null) { throw false; }
 		return cast base;
 	}
 

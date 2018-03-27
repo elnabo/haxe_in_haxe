@@ -264,7 +264,7 @@ class Codegen {
 							case None:
 								switch (core.Type.follow(ff2.cf_type)) {
 									case TFun(tf):
-										f.cf_type = core.Type.T.TFun({args:tf.args, ret:tf.ret});
+										f.cf_type = TFun({args:tf.args, ret:tf.ret});
 									default:
 										throw false;
 								}
