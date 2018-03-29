@@ -26,6 +26,8 @@ enum WhileFlag {
 	DoWhile;
 }
 
+typedef EObjectElement = {s:String, e:Expr};
+
 enum ExprDecl {
 	EConst(c:Constant);
 	EBlock(l:ImmutableList<Expr>);
@@ -43,7 +45,7 @@ enum ExprDecl {
 	EBreak(eo:Option<Expr>);
 	EContinue;
 	ENext(e1:Expr, e2:Expr);
-	EObject(ol:ImmutableList<{s:String, e:Expr}>);
+	EObject(ol:ImmutableList<EObjectElement>);
 	ELabel(s:String);
 	ESwitch(e:Expr, cases:ImmutableList<{e1:Expr, e2:Expr}>, guard:Option<Expr>);
 	ENeko(s:String);

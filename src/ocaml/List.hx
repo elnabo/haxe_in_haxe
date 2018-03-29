@@ -229,6 +229,15 @@ class List {
 				fold_left(f, f(a, v), tl);
 		}
 	}
+
+	public static function fold_right<A, B>(f:A->B->B, l:ImmutableList<A>, b:B) : B {
+		return switch (l) {
+			case Tl: b;
+			case Hd(v, tl):
+				f(v, fold_right(f, tl, b));
+		}
+	}
+
 	public static function fold_left2<A, B, C>(f:A->B->C->A, a:A, l1:ImmutableList<B>, l2:ImmutableList<C>) : A {
 		if (length(l1) != length(l2)) { throw new Invalid_argument("List.fold_left2"); }
 		return switch [l1, l2] {

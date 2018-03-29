@@ -244,6 +244,10 @@ class Main {
 	}
 
 	public static function add_libs (com:context.Common.Context, libs:ImmutableList<String>) : ImmutableList<String> {
+		trace("TODO: Main.add_libs");
+		if (libs != Tl) {
+			throw false;
+		}
 		return [];
 		// let call_haxelib() =
 		// 	let t = Timer.timer ["haxelib"] in

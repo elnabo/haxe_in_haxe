@@ -411,7 +411,7 @@ class Dce {
 				catch (_:ocaml.Not_found) {
 					if (dce.debug) {
 						var stderr = std.Sys.stderr();
-						stderr.writeString("[DCE] Field "+n+" not found on "+core.Globals.s_type_path(c.cl_path));
+						stderr.writeString("[DCE] Field "+n+" not found on "+core.Globals.s_type_path(c.cl_path)+"\n");
 						stderr.flush();
 						stderr.close();
 					}
@@ -795,6 +795,7 @@ class Dce {
 				}
 			}, m.m_extra.m_if_feature);
 		}, com.modules);
+
 		// first step: get all entry points, which is the main method and all class methods which are marked with @:keep
 		List.iter( function (t:ModuleType) {
 			switch (t) {
@@ -805,8 +806,10 @@ class Dce {
 							mark_field(dce, c, cf, stat);
 						}
 					}
+
 					List.iter(loop.bind(true), c.cl_ordered_statics);
 					List.iter(loop.bind(false), c.cl_ordered_fields);
+
 					switch (c.cl_constructor) {
 						case Some(cf): loop(false, cf);
 						case None:
@@ -826,7 +829,7 @@ class Dce {
 		}, com.types);
 		if (dce.debug) {
 			List.iter(function (tmp) {
-				var c = tmp.c; var cf = tmp.cf;
+				var c:TClass = tmp.c; var cf = tmp.cf;
 				switch (cf.cf_expr) {
 					case None:
 					case Some(_):
@@ -842,7 +845,7 @@ class Dce {
 					dce.added_fields = Tl;
 					// extend to dependent (= overriding/implementing) class fields
 					List.iter( function (tmp) {
-						var c = tmp.c; var cf = tmp.cf; var stat = tmp.stat;
+						var c:TClass = tmp.c; var cf = tmp.cf; var stat = tmp.stat;
 						mark_dependent_fields(dce, c, cf.cf_name, stat);
 					}, cfl);
 					// mark fields as used

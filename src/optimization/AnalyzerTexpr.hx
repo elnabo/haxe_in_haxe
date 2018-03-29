@@ -902,7 +902,7 @@ class Cleanup {
 					}
 			}
 		}
-		function loop (e:core.Type.TExpr) : core.Type.TExpr {
+		function loop (e:core.Type.TExpr, ?pos:haxe.PosInfos) : core.Type.TExpr {
 			return switch (e.eexpr) {
 				case TIf(e1, e2, Some(e3)):
 					var e1 = loop(e1);
@@ -960,7 +960,7 @@ class Cleanup {
 					}, c.cl_ordered_statics);
 					e;
 				case _:
-					core.Type.map_expr(loop, e);
+					core.Type.map_expr(loop.bind(_, pos), e);
 			}
 		}
 		var e = loop(e);

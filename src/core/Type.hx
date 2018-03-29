@@ -574,10 +574,16 @@ class Type {
 
 	public static final null_field:core.Type.TClassField = mk_field("", t_dynamic, core.Globals.null_pos, core.Globals.null_pos);
 
+
 	public static function add_dependency(m:ModuleDef, mdep:ModuleDef) : Void {
 		if (!m.equals(null_module) && !m.equals(mdep)) {
 			m.m_extra.m_deps = PMap.add(mdep.m_id, mdep, m.m_extra.m_deps);
 		}
+	}
+
+	public static function arg_name (tmp:{v:TVar, c:Option<TConstant>}) : String {
+		var a = tmp.v;
+		return a.v_name;
 	}
 
 	public static function t_infos(mt:ModuleType) : TInfos {
@@ -1308,45 +1314,57 @@ class Type {
 	}
 
 	public static function s_const (c:TConstant) : String {
-		trace("TODO: s_const");
-		throw false;
+		return switch (c) {
+			case TInt(i): ""+i;
+			case TFloat(s): s;
+			case TString(s):  '"${core.Ast.s_escape(s)}"';
+			case TBool(b): (b) ? "true" : "false";
+			case TNull: "null";
+			case TThis: "this";
+			case TSuper: "super";
+		}
 	}
 
-	public static function s_expr(s_type:core.Type.T->String, e:core.Type.TExpr) : String {
+	public static function s_expr(s_type:T->String, e:core.Type.TExpr) : String {
 		function slist<A>(f:A->String, l:ImmutableList<A>) { return List.join(",", List.map(f, l)); }
 		var loop = s_expr.bind(s_type);
 		function s_var (v:core.Type.TVar):String { return v.v_name + ":" + v.v_id + ((v.v_capture) ? "[c]" : ""); }
-		// var str = switch (e.eexpr) {
-		// 	case TConst(c): "Const " + s_const(c);
-		// 	case TLocal(v): "Local " + s_var(v);
-		// 	case TArray(e1, e2):
-		// 		'${loop(e1)}[${loop(e2)}]';
-		// 	case TBinop(op, e1, e2):
-		// 		'(${loop(e1)} ${core.Ast.s_binop(op)} ${loop(e2)})';
-		// 	case TEnumIndex(e1):
-		// 		'EnumIndex ${loop(e1)}';
-		// 	case TEnumParameter(e1, _, i):
-		// 		'${loop(e1)}[${i}]';
-		// 	case TField(e, f):
-		// 		var fstr = switch (f) {
-		// 			case FStatic(c, f): "static("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
-		// 			case FInstance(c, _, f): "inst("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
-		// 			case FClosure(c, f): "closure("+switch (c) { case None: f.cf_name; case Some({c:c}): core.Globals.s_type_path(c.cl_path) + "."+f.cf_name} + ")";
-		// 			case FAnon(f): "anon("+f.cf_name+")";
-		// 			case FEnum(en, f): "enum("+core.Globals.s_type_path(en.e_path)+"." + f.ef_name +")";
-		// 			case FDynamic(f): "dynamic("+f+")";
-		// 		}
-		// 		'${loop(e)}.${fstr}';
-		// 	case TTypeExpr(m):
-		// 		'TypeExpr ${core.Globals.s_type_path(t_path(m))}';
-		// 	case TParenthesis(e):
-		// 		'Parenthesis ${loop(e)}';
-		// 	case TObjectDecl(fl):
-		// 		'ObjectDecl {${slist()}}'
-
-		// }
-		trace("TODO: finish Type.s_expr");
-		throw false;
+		var str = switch (e.eexpr) {
+			case TConst(c): "Const " + s_const(c);
+			case TLocal(v): "Local " + s_var(v);
+			case TArray(e1, e2):
+				'${loop(e1)}[${loop(e2)}]';
+			case TBinop(op, e1, e2):
+				'(${loop(e1)} ${core.Ast.s_binop(op)} ${loop(e2)})';
+			case TEnumIndex(e1):
+				'EnumIndex ${loop(e1)}';
+			case TEnumParameter(e1, _, i):
+				'${loop(e1)}[${i}]';
+			case TField(e, f):
+				var fstr = switch (f) {
+					case FStatic(c, f): "static("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
+					case FInstance(c, _, f): "inst("+core.Globals.s_type_path(c.cl_path) + "."+ f.cf_name+")";
+					case FClosure(c, f): "closure("+(switch (c) { case None: f.cf_name; case Some({c:c}): core.Globals.s_type_path(c.cl_path) + "."+f.cf_name;}) + ")";
+					case FAnon(f): "anon("+f.cf_name+")";
+					case FEnum(en, f): "enum("+core.Globals.s_type_path(en.e_path)+"." + f.ef_name +")";
+					case FDynamic(f): "dynamic("+f+")";
+				}
+				'${loop(e)}.${fstr}';
+			case TTypeExpr(m):
+				'TypeExpr ${core.Globals.s_type_path(t_path(m))}';
+			case TParenthesis(e):
+				'Parenthesis ${loop(e)}';
+			// case TObjectDecl(fl):
+			// 	'ObjectDecl {${slist()}}';
+			case TArrayDecl(el):
+				'ArrayDecl [${slist(loop, el)}]';
+			case TCall(e, el):
+				'Call ${loop(e)}(${slist(loop, el)})';
+			case e:
+				trace("TODO: finish Type.s_expr", haxe.EnumTools.EnumValueTools.getName(e));
+				throw false;
+		}
+		return '(${str} : ${s_type(e.etype)})';
 	}
 
 	public static function s_expr_pretty (print_var_ids:Bool, tabs:String, top_level:Bool, s_type:T->String, e:TExpr) : String {

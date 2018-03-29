@@ -319,4 +319,13 @@ class Codegen {
 	public static inline function bytes_serialize (data:String) {
 		return haxe.crypto.Base64.encode(haxe.io.Bytes.ofString(data));
 	}
+
+	/*
+		Build a default safe-cast expression :
+		{ var $t = <e>; if( Std.is($t,<t>) ) $t else throw "Class cast error"; }
+	*/
+	public static function default_cast (?vtmp:String="$t", com:context.Common.Context, e:core.Type.TExpr, texpr:core.Type.ModuleType, t:core.Type.T, p:core.Globals.Pos) : core.Type.TExpr {
+		trace("TODO: default_cast");
+		throw false;
+	}
 }
